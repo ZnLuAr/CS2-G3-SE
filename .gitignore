@@ -1,0 +1,32 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# ---- Node / 前端（如后续用到） ----
+node_modules/
+
+# ---- IDE ----
+.idea/
+.vscode/
+*.swp
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 运行时与本地文件 ----
+data/
+*.log
+
+# ---- 环境变量与密钥（严禁提交） ----
+.env
+.env.*

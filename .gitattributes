@@ -1,0 +1,34 @@
+# 文本文件统一按 LF 入库，检出时按平台处理
+* text=auto
+
+# Windows 脚本保持 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Unix 脚本保持 LF
+*.sh   text eol=lf
+
+# 源码与文档显式声明为文本
+*.py   text
+*.md   text
+*.txt  text
+*.json text
+*.yml  text
+*.yaml text
+*.toml text
+*.csv  text
+
+# 二进制文件（不做换行符转换）
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.zip  binary
+*.gz   binary
+*.exe  binary
