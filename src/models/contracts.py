@@ -21,7 +21,7 @@ SessionStatus = Literal["scheduled", "completed", "cancelled"]
 BookingStatus = Literal["reserved", "cancelled", "checked_in", "completed", "no_show"]
 EquipmentStatus = Literal["available", "maintenance", "retired"]
 PaymentMethod = Literal["cash", "card", "transfer"]  # 现金、刷卡、转账；仅记账
-OperationName = Literal["sell_card", "create_session", "cancel_session", "book", "cancel_booking", "register_entry"]
+OperationName = Literal["sell_product", "create_session", "cancel_session", "book", "cancel_booking", "register_entry"]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -85,7 +85,7 @@ class AccountLinkInput:
 @dataclass(frozen=True, kw_only=True)
 class MemberInput:
     name: str
-    phone: str | None = None
+    phone: str | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -475,3 +475,52 @@ class CsvExport:
     filename: str  # 建议文件名，不含路径
     content: bytes  # 已编码的 UTF-8 BOM CSV
     row_count: int  # 不含表头在内的行数
+
+
+# ================== 日志查询 ==================
+
+@dataclass(frozen=True, kw_only=True)
+class LogFrame:
+    """日志堆栈帧。"""
+
+    filename: str
+    line_number: int
+    function_name: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AttendanceChange:
+    """签到状态变更记录。"""
+
+    before: Literal["reserved", "checked_in"]
+    after: Literal["reserved", "checked_in"]
+
+
+@dataclass(frozen=True, kw_only=True)
+class LogEntry:
+    """日志条目（查询结果）。"""
+
+    timestamp: datetime  # 时间戳（UTC）
+    level: str  # "INFO" | "WARNING" | "ERROR"
+    operation: str  # 操作名称
+    outcome: str  # "success" | "rejected" | "failed" | "unknown"
+    actor_id: int | None  # 操作人编号
+    request_id: str | None  # 请求编号
+    result_id: int | None  # 结果记录编号
+    error_type: str | None  # 异常类型
+    error_message: str | None  # 脱敏后的错误消息
+    attendance_change: AttendanceChange | None = None  # 签到状态变更
+    frames: tuple[LogFrame, ...] = ()  # 堆栈帧
+    truncated: bool = False  # 堆栈是否被截断
+
+
+@dataclass(frozen=True, kw_only=True)
+class LogQuery:
+    """日志查询条件。"""
+
+    window: DateWindow | None = None  # 时间范围
+    level: str | None = None  # "INFO" | "WARNING" | "ERROR"
+    operation: str | None = None  # 操作名称
+    actor_id: int | None = None  # 操作人编号
+    request_id: str | None = None  # 请求编号
+    paging: PageRequest = field(default_factory=PageRequest)

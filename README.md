@@ -10,11 +10,7 @@
 
 本仓库用于 **JC2001 Introduction to Software Engineering** 课程的小组大作业：一个软件产品开发项目（software product development project）。
 
-**项目主题：健身房管理系统。** 面向会员、教练、前台和管理员。会员卡用于门禁，并按卡类型赠送私教课；围绕“办卡 → 约私教 → 签到 → 消课 → 评价”组织业务，提供器械管理、体测记录和营收报表。当前只做私教课，每节最长 2.5 小时。
-
-月／季／年卡分别有效 30／90／365 天，赠送 20／64／256 节私教；赠课随来源卡到期失效，不能转到新卡。次卡无期限，包含 10 次入场、不赠私教，同一天只扣一次。期限卡续购自动接续，签到只允许在结算前更正。具体规则见[系统设计](./docs/architecture.md)。
-
-**架构与文件骨架已建立，已写入数据字段、类和函数签名，具体实现待补充。** 目前可以按暂定分工在对应方法中实现功能；输入输出格式以设计和共用数据类型为准。
+**项目主题：健身房管理系统。** 面向会员、教练、前台和管理员。提供私教课产品（附赠门禁权限）和入场次卡；围绕”购买产品 → 约私教 → 签到 → 消课 → 评价”组织业务，提供器械管理、体测记录和营收报表。
 
 ### 📚 文档导航
 
@@ -67,49 +63,54 @@
 
 ```
 .
-├── main.py                         # 参数解析与启动函数签名
+├── main.py                         # 程序入口，解析参数并启动
 ├── src/                            # 应用代码包
-│   ├── app.py                      # 生命周期、服务集合与登录身份
-│   ├── config.py                   # 启动参数、配置字段与加载签名
-│   ├── logging_config.py           # 日志配置与记录签名
-│   ├── errors/                     # 异常定义与统一处理入口
-│   ├── models/                     # 数据模型与固定输入输出类型
-│   │   └── contracts.py            # 共用 Input、View 与 Page 字段定义
-│   ├── services/                   # 业务权限、规则与事务
-│   │   ├── member_service.py       # 会员服务签名
-│   │   └── booking_service.py      # 预约服务签名；其余按业务分文件
-│   ├── db/                         # 数据库连接与数据访问
-│   │   ├── connection.py           # 连接、会话工厂与事务签名
-│   │   └── member_repo.py          # 会员读写签名；其余按业务分文件
-│   └── ui/                         # 交互界面
-│       ├── cli/                    # 默认命令行：循环、菜单、输入与展示
-│       │   ├── app.py              # 操作边界与主循环签名
-│       │   ├── menus.py            # 菜单类型与构造函数签名
-│       │   ├── prompts.py          # 输入、确认与取消签名
-│       │   ├── formatters.py       # 文本格式化签名
-│       │   └── handlers/           # 按业务模块组织交互步骤
-│       └── tui/                    # 可选终端界面
-│           └── app.py              # TUI 启动与关闭签名
-├── tests/                          # 已有文档/源码格式检查，业务测试待补
+│   ├── app.py                      # 应用协调层：服务管理、登录状态
+│   ├── config.py                   # 配置读取：数据库连接、日志、时区
+│   ├── cmd/                        # 数据库维护命令（独立于主程序）
+│   │   └── db.py                   # init：建表；seed：生成演示数据
+│   ├── utils/                      # 工具模块（基础设施）
+│   │   └── logging_config.py       # 日志系统：配置、记录、脱敏、查询
+│   ├── errors/                     # 异常定义与统一处理
+│   ├── models/                     # 数据模型与类型定义
+│   │   └── contracts.py            # 公共类型：Input、View、Page
+│   ├── services/                   # 业务服务层（权限、规则、事务）
+│   │   ├── auth_service.py         # 账号与权限
+│   │   ├── member_service.py       # 会员档案
+│   │   ├── product_service.py      # 产品销售与门禁
+│   │   └── ...                     # 其他业务服务
+│   ├── db/                         # 数据访问层
+│   │   ├── connection.py           # 连接池管理
+│   │   ├── models.py               # ORM 模型定义
+│   │   └── repositories/           # 数据访问对象（DAO）
+│   │       └── ...                 # 各表的 Repository
+│   └── ui/                         # 用户界面层
+│       ├── cli/                    # 命令行界面（默认）
+│       │   ├── app.py              # CLI 主循环
+│       │   ├── menus.py            # 菜单定义
+│       │   ├── prompts.py          # 输入收集
+│       │   ├── formatters.py       # 结果展示
+│       │   └── handlers/           # 业务交互处理器
+│       └── tui/                    # 终端界面（可选）
+│           └── app.py              # TUI 启动与关闭
+├── tests/                          # 测试代码（格式检查已有，业务测试待补）
 │   ├── models/
 │   ├── services/
 │   ├── db/
 │   ├── errors/
 │   └── ui/
-├── sql/                            # 建表与结构变更脚本的存放位置
-│   └── 001_initial_schema.sql       # 仅注释占位，未写入可执行 SQL
-├── docs/                           # 课程资料与项目文档（索引见 docs/README.md）
-│   ├── README.md                   # 阅读顺序与文档索引
-│   ├── project-introduction.md     # Practical 1 讲义（完整中文翻译）
-│   ├── (Week1)-JC2001-...pdf       # Practical 1 原始 PDF
-│   ├── 功能列表.csv               # 功能、优先级、负责人、状态与验收要点
-│   ├── project-standards.md       # 代码规范、质量要求与完成标准
-│   ├── architecture.md            # 系统设计与框架方案（架构已确认）
-│   └── dev-materials-for-report/   # 报告素材：决策记录 / 开发日志 / 测试笔记 / 会议记录
-├── .gitattributes
+├── sql/                            # SQL 脚本（如果不用 ORM 迁移工具）
+│   └── 001_initial_schema.sql      # 初始建表脚本（占位）
+├── docs/                           # 文档目录
+│   ├── README.md                   # 文档索引
+│   ├── architecture.md             # 系统设计与架构方案
+│   ├── collaboration.md            # 小组协作规范
+│   ├── conventions.md              # 代码与文档规范
+│   ├── features.md                 # 功能清单与实现状态
+│   └── dev-materials-for-report/   # 报告素材（开发日志、决策记录等）
 ├── .gitignore
-├── AGENTS.md                        # 持续适用的协作与说明要求
-└── README.md
+├── AGENTS.md                       # Agent 协作规范
+└── README.md                       # 本文件
 ```
 
 `__init__.py` 标识 Python 包，异常包还统一导出公共类型；`.gitkeep` 用来保留尚无用例的测试目录。共用的数据类型在 [contracts.py](./src/models/contracts.py)，可从 [MemberService](./src/services/member_service.py) 查看方法签名和中文说明的写法。
@@ -120,19 +121,13 @@
 
 ## 小组协作规范
 
-> 以下说明覆盖分支选择、日常提交、冲突处理与 PR 审阅，按当前操作查阅即可。
-
-先认识几个会用到的词：**分支**是可以单独开发的一条版本线；**暂存（add）**是选出本次要提交的文件；**提交（commit）**是在本地记录一次修改；**推送（push）**是把本地提交传到 GitHub；**拉取（pull）**是把远程更新取回并合并；
-
-推荐使用的是 **合并请求（PR）**，是请队友检查并合入改动。提交与推送是两步，只提交还不会让队友看到。
-
-下面命令在仓库根目录执行，也就是能看到本 README 和 `docs/` 的目录。`<文件名>`、`<功能名>` 是占位符，执行时替换为实际名称，去掉尖括号；只复制命令行，注释用于解释。
+> 以下说明覆盖日常开发流程、提交规范与 PR 审阅。下面命令在仓库根目录执行（能看到本 README 和 `docs/` 的目录）。`<文件名>`、`<功能名>` 是占位符，执行时替换为实际名称，去掉尖括号。
 
 ### 核心原则
 
 **重要：不要直接在 `main` 分支上改代码。**
 
-`main` 分支是稳定版本，只接受经过验证的代码。日常开发请在 `dev` 分支上进行。
+`main` 分支是稳定版本，只接受经过验证的代码。所有开发都在功能分支上进行，通过 Pull Request 合入 `dev`。
 
 ---
 
@@ -141,66 +136,178 @@
 | 分支 | 用途 | 谁可以直接提交 |
 |------|------|----------------|
 | `main` | 稳定版本，用于里程碑提交 | 仅通过合并 `dev` 更新 |
-| `dev` | 日常开发分支 | 所有人 |
-| `feat/<功能名>` | 个人功能分支（可选） | 创建者 |
-| `fix/<功能名>` | 个人修补 bug 用分支（可选） | 创建者 |
-
-**建议工作方式：**
-
-- 日常小改动可直接在 `dev` 分支上完成。
-- 独立功能或需要审阅的改动使用 `feat/xxx` 分支，通过 PR 合入 `dev`。
+| `dev` | 开发集成分支 | 仅通过 PR 合入 |
+| `feat/<功能名>` | 功能开发分支 | 创建者，通过 PR 合入 `dev` |
+| `fix/<问题描述>` | Bug 修复分支 | 创建者，通过 PR 合入 `dev` |
 
 ---
 
-### 日常工作流
+### 标准工作流程
 
-下面以 `dev` 分支为例；开始前用 `git status` 确认当前分支和未提交修改。个人功能分支的提交与合入步骤见[PR 工作流](#合并请求pr工作流)。
+这是所有开发任务的统一流程，从克隆仓库到功能合并的完整步骤。
 
-#### 第一次克隆仓库
+#### 第一次使用：克隆仓库
 
 ```bash
 # 1. 克隆仓库到本地
 git clone git@github.com:ZnLuAr/CS2-G3-SE.git
 cd CS2-G3-SE
 
-# 2. 切换到 dev 分支（日常开发分支）
+# 2. 切换到 dev 分支
 git checkout dev
 
 # 3. 确认当前分支
 git branch
 # 应该看到 * dev（星号表示当前分支）
+
+# 4. 复制配置文件模板
+cp config.json.example config.json
+# 然后编辑 config.json，填入实际的数据库配置
+# 注意：config.json 已在 .gitignore 中，不会被提交
 ```
 
-#### 每次开始工作前
+#### 1. 开始新任务
 
 ```bash
-# 拉取最新代码（避免基于过时的代码修改）
+# 确保 dev 是最新的
+git checkout dev
 git pull origin dev
+
+# 创建功能分支（根据任务类型选择前缀）
+git checkout -b feat/member-crud        # 新功能
+# 或
+git checkout -b fix/booking-conflict    # Bug 修复
+
+# 确认当前在新分支上
+git branch
+# 应该看到 * feat/member-crud
 ```
 
-**为什么要先 pull？**
-- 其他组员可能已经推送了新代码
-- 如果你基于旧代码修改，推送时会产生冲突
-- 先 pull 可以提前发现冲突，更容易解决
-
-#### 完成修改后提交
+#### 2. 开发和提交
 
 ```bash
-# 1. 查看你修改了哪些文件
+# 开发代码...
+
+# 查看修改
 git status
+git diff
 
-# 2. 添加修改的文件到暂存区
-git add <文件名>              # 添加单个文件
-git add .                     # 添加所有修改（小心，确认没有不该提交的文件）
+# 提交前自查
+# （如果使用 Agents，可以让 AI 遵循 .agents/skills/code-review/SKILL.md）：
+# - 业务逻辑：返回类型、异常、事务、业务规则
+# - 安全性：输入验证、SQL 注入、密码处理
+# - 代码质量：命名、职责、复杂度、错误处理
+# - 文档同步：architecture.md 是否需要更新
 
-# 3. 提交修改（附上说明信息）
-git commit -m "feat: 添加了 XXX 功能"
-
-# 4. 推送到远程仓库
-git push origin dev
+# 暂存和提交
+git add <文件名>
+git commit -m "feat(member): 实现会员建档功能"
 ```
 
-**常见问题：**
+#### 3. 推送并创建 Pull Request
+
+```bash
+# 推送到远程（首次推送会创建远程分支）
+git push origin feat/member-crud
+
+# 访问 GitHub 仓库页面会看到 "Compare & pull request" 提示
+# 或直接访问：https://github.com/ZnLuAr/CS2-G3-SE/pulls
+
+# 创建 PR：
+# - Base: dev
+# - Compare: feat/member-crud
+# - 填写标题和描述（参考下文"PR 标题与描述"）
+```
+
+#### 4. 响应审阅意见
+
+```bash
+# 如果审阅者提出修改建议：
+
+# 在本地修改代码后提交
+git add <文件名>
+git commit -m "fix: 根据审阅意见修改验证逻辑"
+
+# 推送更新（PR 会自动更新）
+git push origin feat/member-crud
+```
+
+#### 5. 合并后清理
+
+```bash
+# PR 合并后，切回 dev 并删除（可选）本地分支
+git checkout dev
+git pull origin dev
+git branch -d feat/member-crud
+```
+
+---
+
+### 查看项目状态的常用命令
+
+```bash
+git status              # 查看当前修改了哪些文件
+git log --oneline       # 查看提交历史（简洁版）
+git diff                # 查看具体修改了什么内容
+git branch              # 查看所有分支，* 表示当前分支
+```
+
+---
+
+### 提交信息格式
+
+写清楚做了什么即可，建议格式：
+
+```
+<类型>: <简要描述>
+```
+
+常用类型：
+
+| 类型 | 含义 |
+|------|------|
+| `feat` | 新增功能 |
+| `fix` | 修复 bug |
+| `docs` | 文档更新 |
+| `test` | 添加或修改测试 |
+| `refactor` | 重构（不改变功能） |
+| `chore` | 杂项（依赖更新、配置修改等） |
+
+示例：
+- `feat: 添加用户登录功能`
+- `fix: 修复表单提交时的编码错误`
+- `docs: 更新 README 成员信息`
+
+---
+
+### PR 标题与描述
+
+标题沿用提交格式：`<类型>(<范围>): <简要描述>`，例如 `feat(member): 添加会员建档与查询`。
+
+描述建议按下面的结构写（复制即用）：
+
+```markdown
+## 概述
+
+这个 PR 做了什么、为什么做（一两句话）。
+
+## 变更内容
+
+- 按文件 / 模块列出改了什么
+- 关键设计点、对外接口的变化（如果有的话）
+
+## 自查清单
+
+- [ ] 已运行代码审计（参考 `.agents/skills/code-review/SKILL.md`）
+- [ ] 已运行相关测试（或说明为什么没有测试）
+- [ ] 文档与实际代码一致（改了行为就同步改文档）
+```
+
+**完整的 PR 示例和审阅指南**见 [`docs/pr-workflow-examples.md`](./docs/pr-workflow-examples.md)。
+
+---
+
+### 常见问题与解决方法
 
 <details>
 <summary><b>推送时提示 "rejected" 或 "non-fast-forward"</b></summary>
@@ -271,113 +378,6 @@ git reset --soft HEAD~1     # 撤销最后一次提交记录，修改仍保留�
 
 ---
 
-### 查看项目状态的常用命令
-
-```bash
-git status              # 查看当前修改了哪些文件
-git log --oneline       # 查看提交历史（简洁版）
-git diff                # 查看具体修改了什么内容
-git branch              # 查看所有分支，* 表示当前分支
-```
-
-### 提交信息格式（commit）
-
-写清楚做了什么即可，建议格式：
-
-```
-<类型>: <简要描述>
-```
-
-常用类型：
-
-| 类型 | 含义 |
-|------|------|
-| `feat` | 新增功能 |
-| `fix` | 修复 bug |
-| `docs` | 文档更新 |
-| `test` | 添加或修改测试 |
-| `refactor` | 重构（不改变功能） |
-| `chore` | 杂项（依赖更新、配置修改等） |
-
-示例：
-- `feat: 添加用户登录功能`
-- `fix: 修复表单提交时的编码错误`
-- `docs: 更新 README 成员信息`
-
----
-
-### 合并请求（PR）工作流
-
-日常小改动可直接 push 到 `dev`。跨模块、数据库结构和重要业务规则变更通过 PR 复核，与[项目规范](./docs/project-standards.md#协作与完成标准)一致；以下情况也建议开 PR：
-
-- **较大的功能**，或同时动了多个模块的改动
-- 需要大家**确认 / 讨论**的内容（架构调整、接口变更、协作规范修改）
-- 自己拿不准、想在合并前让人**帮忙把关**的代码
-
-PR 用于提交前后的代码审阅，也为接口变更和讨论结果保留记录。
-
-#### PR 的完整流程
-
-```bash
-# ① 基于 dev 创建功能分支
-git checkout dev
-git pull origin dev
-git checkout -b feat/xxx
-
-# ② 在分支上完成开发，commit 并推送
-git push origin feat/xxx
-
-# ③ 创建 Pull Request（feat/xxx → dev）
-#    push 后 GitHub 仓库页面会出现 "Compare & pull request" 按钮，点它即可
-#    命令行党也可以用 GitHub CLI：gh pr create --base dev
-
-# ④ 组员审阅：看改了什么、有没有问题，在 PR 页面留评论
-
-# ⑤ 确认无误后在 GitHub 上合并，然后删除功能分支
-```
-
-#### PR 标题与描述
-
-标题沿用提交格式：`<类型>(<范围>): <简要描述>`，例如 `feat(member): 添加会员建档与查询`。
-
-描述建议按下面的结构写（复制即用）：
-
-```markdown
-## 概述
-
-这个 PR 做了什么、为什么做（一两句话）。
-
-## 变更内容
-
-- 按文件 / 模块列出改了什么
-- 关键设计点、对外接口的变化（如果有的话）
-
-## 自查清单
-
-- [ ] 已运行相关测试（或说明为什么没有测试）
-- [ ] 文档与实际代码一致（改了行为就同步改文档）
-```
-
-#### 真实示例（上学期 OOP 仓库）
-
-以下都是 [CS2-G10-OOP](https://github.com/ZnLuAr/CS2-G10-OOP) 里真实发生过的 PR，可以直接点进去围观：
-
-| PR | 看点 |
-|----|------|
-| [#2 · PR 流程示例](https://github.com/ZnLuAr/CS2-G10-OOP/pull/2) | 当年为教学专门开的 PR，演示完整流程与描述写法 |
-| [#16 · feat(player)](https://github.com/ZnLuAr/CS2-G10-OOP/pull/16) | 规范的功能 PR：概述 → 背景 → 变更文件 → 功能实现，逐层展开 |
-| [#13 · feat(inventory)](https://github.com/ZnLuAr/CS2-G10-OOP/pull/13) | PR + Code Review 完整案例：review 指出模块落位、接口对齐、边界条件等问题，作者迭代后才真正落地 |
-
-#### 审阅时看什么
-
-- **能不能跑**：导入路径、命名冲突、明显笔误
-- **位置对不对**：改动是否落在约定的模块位置，接口是否与文档一致
-- **边界条件**：非法输入、失败路径会不会留下副作用（改了一半才抛异常）
-- **测试**：新行为有没有对应的测试覆盖
-
-> 审阅时指出具体问题、原因和建议，帮助队友一起完善实现。
-> PR 与审阅记录会留档在 GitHub 上，最终报告里可以用它们说明团队协作与质量保证过程。
-
 ### 文件管理
 
 - **不要提交**虚拟环境目录（`venv/`、`__pycache__/` 等，已在 `.gitignore` 中配置）。
@@ -389,9 +389,11 @@ git push origin feat/xxx
 
 ### 注
 
-- 如果你要修改别人负责的模块，请**提前沟通**。
+- 如果你要修改别人负责的模块，应**提前沟通**。
 - 遇到合并冲突或不确定的操作，在群里问一声，避免覆盖他人的工作。
 - 如果实在想不出或懒得写 commit，可以去看看 https://github.com/AptS-1547/gcop-rs
+
+---
 
 ## 技术栈
 

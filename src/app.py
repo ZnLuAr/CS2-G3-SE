@@ -9,7 +9,7 @@ from src.models.contracts import Actor
 from src.services.attendance_service import AttendanceService
 from src.services.auth_service import AuthService
 from src.services.booking_service import BookingService
-from src.services.card_service import CardService
+from src.services.product_service import ProductService
 from src.services.course_service import CourseService
 from src.services.equipment_service import EquipmentService
 from src.services.measurement_service import MeasurementService
@@ -24,7 +24,7 @@ class ServiceBundle:
 
     auth: AuthService
     members: MemberService
-    cards: CardService
+    products: ProductService
     courses: CourseService
     bookings: BookingService
     attendance: AttendanceService

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from src.ui.cli.handlers.attendance import AttendanceHandler
 from src.ui.cli.handlers.auth import AuthHandler
 from src.ui.cli.handlers.booking import BookingHandler
-from src.ui.cli.handlers.card import CardHandler
+from src.ui.cli.handlers.product import ProductHandler
 from src.ui.cli.handlers.course import CourseHandler
 from src.ui.cli.handlers.equipment import EquipmentHandler
 from src.ui.cli.handlers.measurement import MeasurementHandler
@@ -32,7 +32,7 @@ class CliHandlers:
 
     auth: AuthHandler
     member: MemberHandler
-    card: CardHandler
+    product: ProductHandler
     course: CourseHandler
     booking: BookingHandler
     attendance: AttendanceHandler
@@ -56,11 +56,11 @@ def member_menu(handler: MemberHandler) -> list[MenuItem]:
     raise NotImplementedError("member_menu 尚未实现")
 
 
-def card_menu(handler: CardHandler) -> list[MenuItem]:
+def product_menu(handler: ProductHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("card_menu 尚未实现")
+    raise NotImplementedError("product_menu 尚未实现")
 
 
 def course_menu(handler: CourseHandler) -> list[MenuItem]:

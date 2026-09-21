@@ -25,8 +25,18 @@ desktop.ini
 
 # ---- 运行时与本地文件 ----
 data/
+tmp/
 *.log
 
 # ---- 环境变量与密钥（严禁提交） ----
 .env
 .env.*
+config.json
+!config.example.json
+
+# ----  Agent 工具 ----
+.claude/
+
+# ---- 内部文档 ----
+docs/archive/
+docs/internal/

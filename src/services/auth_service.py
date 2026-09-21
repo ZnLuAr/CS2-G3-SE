@@ -10,6 +10,8 @@ from src.models.contracts import (
     AccountLinkInput,
     AccountView,
     Actor,
+    LogEntry,
+    LogQuery,
     NamedQuery,
     Page,
 )
@@ -78,3 +80,28 @@ class AuthService:
     def verify_actor(self, session: Session, actor: Actor) -> Actor:
         """内部共用方法：在调用方的事务中重验账号和档案关联；不自行提交。"""
         raise NotImplementedError("AuthService.verify_actor 尚未实现")
+
+    def query_logs(self, actor: Actor, query: LogQuery) -> Page[LogEntry]:
+        """查询日志记录。
+
+        权限：只有管理员可以查询日志
+
+        参数：
+        - actor: 当前操作人
+        - query: LogQuery
+          - window: 时间范围
+          - level: 日志级别
+          - operation: 操作名称
+          - actor_id: 操作人编号
+          - request_id: 请求编号
+          - paging: 分页参数（默认每页 20 条，最多 100 条）
+
+        返回：Page[LogEntry]
+
+        注意：
+        - 使用快照读取（读取时不会被写入阻塞）
+        - 跨进程文件锁保护
+        - 只有管理员可以查询日志
+
+        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        raise NotImplementedError("AuthService.query_logs 尚未实现")

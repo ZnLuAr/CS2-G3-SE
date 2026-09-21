@@ -25,6 +25,7 @@ class MeasurementService:
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
     输入字段见 models/contracts.py；实现后的异常和事务约定见设计第 4 节。
     会员只查本人；教练历史查看权永久保留，最后有效预约结束后停止更新，再预约恢复。
+    前台和管理员不能查看个人体测明细，也不能调用详情、列表或对比接口绕过限制。
     截止时间由本教练的预约记录计算，按体测 created_at 过滤，不按可补录的 measured_at。
     详情、历史总数及内容、对比两条记录共用同一范围和 as_of；不能只在界面隐藏。
     当前所有方法仅占位，调用会抛 NotImplementedError。
@@ -49,6 +50,7 @@ class MeasurementService:
     def get_measurement(self, actor: Actor, measurement_id: int) -> MeasurementView:
         """查看体测详情。
 
+        会员只能查看本人；教练只能查看授权范围；前台和管理员无权查看明细。
         数据访问必须带服务生成的身份范围和查询时刻；范围外或不存在均抛 NotFoundError。
         返回：MeasurementView。不修改业务数据。
         异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
@@ -57,6 +59,7 @@ class MeasurementService:
     def list_measurements(self, actor: Actor, query: MeasurementQuery) -> Page[MeasurementView]:
         """分页查看体测历史。
 
+        会员只能查询本人；前台和管理员无权查询个人体测历史。
         教练只得到可见截止内的记录，total 也按该范围统计；没有历史授权时为正常空 Page。
         返回：Page[MeasurementView]。不修改业务数据。
         异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
@@ -65,6 +68,7 @@ class MeasurementService:
     def compare(self, actor: Actor, before_id: int, after_id: int) -> MeasurementComparison:
         """对比同会员先后两次体测。
 
+        会员只能对比本人记录；教练只能对比授权范围；前台和管理员无权对比明细。
         两条记录使用同一 as_of 和身份范围；任一条不可见抛 NotFoundError，不泄露差值。
         返回：MeasurementComparison。不修改业务数据。
         异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""

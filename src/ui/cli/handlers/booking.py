@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 from src.models.contracts import Actor
 from src.services.booking_service import BookingService
-from src.services.card_service import CardService
+from src.services.product_service import ProductService
 from src.services.course_service import CourseService
 
 
@@ -22,7 +22,7 @@ class BookingHandler:
         service: BookingService,
         get_actor: Callable[[], Actor],
         course_service: CourseService,
-        card_service: CardService,
+        product_service: ProductService,
         *, timezone_name: str,
     ) -> None:
         """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""

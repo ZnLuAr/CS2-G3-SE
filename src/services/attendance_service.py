@@ -51,6 +51,7 @@ class AttendanceService:
     def complete(self, actor: Actor, booking_id: int) -> ConsumptionView:
         """本课教练或管理员在下课后登记消课，扣除 1 节私教并释放 1 节占用。
 
+        当前时刻须大于或等于课次 ends_at；否则抛 InvalidState。
         只处理 checked_in 预约；重复消课返回原 ConsumptionView，不扣门禁次数。
         来源卡日期资格按原上课日期检查，不因事后结算时卡过期而拒绝。
         界面须在调用前确认结算，完成后首版不提供退节数或修改签到入口。
@@ -62,6 +63,7 @@ class AttendanceService:
     def mark_no_show(self, actor: Actor, booking_id: int) -> BookingView:
         """本课教练或管理员在下课后将 reserved 预约登记为缺席，释放 1 节占用。
 
+        当前时刻须大于或等于课次 ends_at；否则抛 InvalidState。
         不扣私教节数、不创建消费记录；重复处理返回当前 BookingView。
         界面须先确认，结算后首版不再开放补签。
 

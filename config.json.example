@@ -1,0 +1,18 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 3306,
+    "database": "gym_system",
+    "username": "your_db_username",
+    "password": "your_db_password",
+    "charset": "utf8mb4",
+    "pool_size": 5
+  },
+  "timezone_name": "Asia/Shanghai",
+  "log": {
+    "directory": "logs",
+    "level": "INFO",
+    "max_bytes": 5242880,
+    "backup_count": 3
+  }
+}
