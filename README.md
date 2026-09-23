@@ -59,7 +59,7 @@
 
 ## 仓库结构
 
-下面展示主要文件，省略各包的 `__init__.py` 和同类业务文件；模块分工见[系统设计](./docs/architecture.md#2-建议目录与模块分工)。
+下面展示主要文件，省略各包的 `__init__.py` 和同类业务文件；模块分工见[系统设计](./docs/architecture.md#系统架构与目录结构)。
 
 ```
 .
@@ -68,7 +68,8 @@
 │   ├── app.py                      # 应用协调层：服务管理、登录状态
 │   ├── config.py                   # 配置读取：数据库连接、日志、时区
 │   ├── cmd/                        # 数据库维护命令（独立于主程序）
-│   │   └── db.py                   # init：建表；seed：生成演示数据
+│   │   ├── db.py                   # init：建表；seed：生成演示数据
+│   │   └── test.py                 # unit/mysql/all：统一测试入口
 │   ├── utils/                      # 工具模块（基础设施）
 │   │   └── logging_config.py       # 日志系统：配置、记录、脱敏、查询
 │   ├── errors/                     # 异常定义与统一处理
@@ -81,9 +82,8 @@
 │   │   └── ...                     # 其他业务服务
 │   ├── db/                         # 数据访问层
 │   │   ├── connection.py           # 连接池管理
-│   │   ├── models.py               # ORM 模型定义
-│   │   └── repositories/           # 数据访问对象（DAO）
-│   │       └── ...                 # 各表的 Repository
+│   │   ├── *_repo.py               # 各模块数据访问对象（DAO）
+│   │   └── ...
 │   └── ui/                         # 用户界面层
 │       ├── cli/                    # 命令行界面（默认）
 │       │   ├── app.py              # CLI 主循环
@@ -93,20 +93,17 @@
 │       │   └── handlers/           # 业务交互处理器
 │       └── tui/                    # 终端界面（可选）
 │           └── app.py              # TUI 启动与关闭
-├── tests/                          # 测试代码（格式检查已有，业务测试待补）
-│   ├── models/
-│   ├── services/
-│   ├── db/
-│   ├── errors/
-│   └── ui/
+├── tests/                          # pytest 测试与 MySQL fixture
+│   ├── conftest.py                 # 测试配置和数据库 fixture
+│   ├── test_contract_consistency.py # 文档、源码和 SQL 契约检查
+│   └── test_sys_base.py            # SYS 基础功能测试
 ├── sql/                            # SQL 脚本（如果不用 ORM 迁移工具）
-│   └── 001_initial_schema.sql      # 初始建表脚本（占位）
+│   └── 001_initial_schema.sql      # 版本 1 的 18 张表建表脚本
 ├── docs/                           # 文档目录
 │   ├── README.md                   # 文档索引
 │   ├── architecture.md             # 系统设计与架构方案
-│   ├── collaboration.md            # 小组协作规范
-│   ├── conventions.md              # 代码与文档规范
-│   ├── features.md                 # 功能清单与实现状态
+│   ├── project-standards.md        # 代码与文档规范
+│   ├── 功能列表.csv                # 功能清单与实现状态
 │   └── dev-materials-for-report/   # 报告素材（开发日志、决策记录等）
 ├── .gitignore
 ├── AGENTS.md                       # Agent 协作规范
@@ -115,7 +112,17 @@
 
 `__init__.py` 标识 Python 包，异常包还统一导出公共类型；`.gitkeep` 用来保留尚无用例的测试目录。共用的数据类型在 [contracts.py](./src/models/contracts.py)，可从 [MemberService](./src/services/member_service.py) 查看方法签名和中文说明的写法。
 
-**当前还不能运行业务流程。** 所有手写函数、构造方法和计算属性都用 `raise NotImplementedError(...)` 占位；调用时表示该方法尚未实现，不代表数据库或环境故障。数据类只定义字段，不执行业务校验。`python main.py`（包括 `--help`、`--tui`）目前也会报未实现；依赖安装和正式运行命令在功能实现并验证后补充。
+**当前状态**：SYS 基础层已经提供参数解析、配置读取、资源装配、公共 CLI 输入/分页和统一测试入口；业务服务、账号登录、日志与统一错误处理仍按分工逐步接入。未实现的方法继续用 `NotImplementedError` 明确标记。`--help` 和 `python -m src.cmd.test` 不需要 MySQL；正式业务启动需要配置文件、MySQL 结构和已接入的登录服务。
+
+常用命令（均在仓库根目录执行）：
+
+```bash
+python main.py --help
+python -m src.cmd.db init --config config.json
+python -m src.cmd.db seed --config config.json
+python -m src.cmd.test
+python -m src.cmd.test mysql --config config.test.json
+```
 
 文档组织与协作方式沿用上学期 [CS2-G10-OOP](https://github.com/ZnLuAr/CS2-G10-OOP) 的经验，具体设计随本项目开发逐步补充。
 
@@ -397,8 +404,8 @@ git reset --soft HEAD~1     # 撤销最后一次提交记录，修改仍保留�
 
 ## 技术栈
 
-已确定 **Python 3 + MySQL**。设计语法要求 Python 3.10+、MySQL 8.0.16+（支持 CHECK 约束），具体部署版本在搭建时验证并锁定。默认使用文本菜单 CLI，`--tui` 启用可选终端界面；核心功能先在 CLI 完成。CLI 和 TUI 共用业务服务，TUI 未完成或未安装其依赖不影响 CLI。
+已确定 **Python 3.10+ + MySQL 8.4**。默认使用文本菜单 CLI，`--tui` 启用可选终端界面；核心功能先在 CLI 完成。CLI 和 TUI 共用业务服务，TUI 未完成或未安装其依赖不影响 CLI。
 
-建议使用 SQLAlchemy + PyMySQL 组织数据库读写，pytest 运行测试，venv + pip + requirements.txt 管理独立环境与依赖版本，标准库 logging 记录日志；TUI 候选库为 Textual。这些库与精确版本在搭建时验证后确定，再补实测安装命令。Git / GitHub 用于团队协作。
+数据库访问使用 SQLAlchemy 2 + PyMySQL，密码哈希使用 argon2-cffi，测试使用 pytest；依赖分别列在 `requirements.txt` 和 `requirements-dev.txt`，Windows 环境安装 `tzdata` 提供时区数据。日志使用项目约定的日志模块；TUI 依赖按可选界面单独接入。Git / GitHub 用于团队协作。
 
 第一版面向可信教学终端，直接连接 MySQL；以后若面向不可信的会员设备，再增加由服务器保管数据库凭据的接口。分层与使用方式见[系统设计](./docs/architecture.md)。

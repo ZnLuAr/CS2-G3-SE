@@ -1,4 +1,4 @@
-"""预约服务接口。当前仅声明字段与签名，方法尚未实现。"""
+"""预约服务接口。构造函数已实现，业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class BookingService:
 
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
     输入字段见 models/contracts.py；实现后的异常和事务约定见设计第 4 节。
-    当前所有方法仅占位，调用会抛 NotImplementedError。
+    构造函数保存依赖；业务方法仍为占位。
     """
 
     def __init__(
@@ -25,11 +25,13 @@ class BookingService:
         *, timezone_name: str,
     ) -> None:
         """接收会话工厂、共用身份校验服务和门店时区；时区由 App 配置传入。"""
-        raise NotImplementedError("BookingService.__init__ 尚未实现")
+        self._session_factory = session_factory
+        self._auth = auth
+        self._timezone_name = timezone_name
 
     def book(self, actor: Actor, data: BookingInput, request_id: str) -> BookingView:
         """校验权限、私教课次时间和私教节数；同事务保存预约与节数占用。
-        membership_id 固定为提供资格及赠课的同一张卡，不得组合旧赠课与新门禁卡。
+        membership_id 固定为提供门禁资格及已购课节的同一张卡，不得组合旧卡课节与新门禁卡。
         对期限卡按课次开始时刻转门店日期检查 valid_from <= 上课日期 < valid_until。
         次卡不能约私教；未来生效的期限卡可约其有效期内的课，失败不写预约或占用余额。
         卡不适用抛 CardNotEligible；私教节数不足抛 InsufficientCredits；

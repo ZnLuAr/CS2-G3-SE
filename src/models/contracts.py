@@ -169,7 +169,7 @@ class CardQuery:
     status: CardStatus | None = None
     valid_on: date | None = None  # 仅筛在该门店日期有效且未作废的卡
     expires_before: date | None = None  # valid_until 严格早于此日期
-    private_lessons_at_most: int | None = None  # 只筛赠课产品，按剩余减占用筛选，包含阈值
+    private_lessons_at_most: int | None = None  # 只筛私教课产品，按剩余减占用筛选，包含阈值
     paging: PageRequest = field(default_factory=PageRequest)
 
 
@@ -302,7 +302,7 @@ class SessionQuery:
 class BookingInput:
     member_id: int
     session_id: int
-    membership_id: int  # 同一张卡提供预约资格及赠课；旧赠课不得搭配新卡
+    membership_id: int  # 同一张卡提供预约资格及已购课节；旧卡课节不得搭配新卡
 
 
 @dataclass(frozen=True, kw_only=True)

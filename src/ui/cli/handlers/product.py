@@ -1,4 +1,4 @@
-"""按业务划分的 CLI 交互接口。当前仅声明字段与签名，方法尚未实现。"""
+"""按业务划分的 CLI 交互接口。构造函数已实现，业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ class ProductHandler:
         timezone_name: str,
     ) -> None:
         """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
-        raise NotImplementedError("ProductHandler.__init__ 尚未实现")
+        self._service = service
+        self._get_actor = get_actor
+        self._timezone_name = timezone_name
 
     def create_product(self) -> None:
         """组织 ProductService.create_product 的交互步骤。

@@ -88,12 +88,20 @@ def init_database(connection: Connection) -> InitResult:
     ]
     if not schema_statements:
         raise StorageError("数据库初始化脚本为空")
+    expected_tables = (
+        "schema_versions", "accounts", "members", "coaches", "card_products", "memberships",
+        "payments", "gym_entries", "courses", "rooms", "course_sessions", "bookings",
+        "consumptions", "reviews", "equipment", "maintenance_records", "body_measurements",
+        "operation_records",
+    )
     table_steps: list[tuple[str, str]] = []
     for statement in schema_statements:
         match = re.match(r"CREATE TABLE\s+(\w+)", statement, re.IGNORECASE)
         if match is None:
             raise StorageError("数据库初始化脚本包含不支持的语句")
         table_steps.append((match.group(1), statement))
+    if tuple(name for name, _ in table_steps) != expected_tables:
+        raise StorageError("数据库初始化脚本的表名、顺序或数量不符合版本 1 设计")
     lock_name = "cs2g3:init:" + hashlib.sha256(
         str(connection.engine.url.database).encode("utf-8")
     ).hexdigest()[:40]
@@ -136,12 +144,22 @@ def init_database(connection: Connection) -> InitResult:
         # 记录版本号
         current_step = "schema_versions.version"
         connection.execute(text("INSERT INTO schema_versions (version) VALUES (1)"))
-        connection.commit()
+        try:
+            connection.commit()
+        except BaseException as exc:
+            raise InitializationError(
+                "版本记录提交结果未知，请核实 schema_versions",
+                completed_tables=tuple(completed_tables),
+                failed_step="schema_versions.version",
+                outcome_unknown=True,
+            ) from exc
         current_step = None
 
         return InitResult(tables_created=tables_created, schema_version=1)
 
     except InvalidState:
+        raise
+    except InitializationError:
         raise
     except KeyboardInterrupt as exc:
         if current_step is None and not completed_tables:
@@ -167,8 +185,12 @@ def init_database(connection: Connection) -> InitResult:
         if lock_acquired:
             try:
                 connection.execute(text("SELECT RELEASE_LOCK(:lock_name)"), {"lock_name": lock_name})
-            except Exception:
-                pass
+            except BaseException:
+                # 专用连接即将关闭；使连接失效，避免物理连接回池后继续持有命名锁。
+                try:
+                    connection.invalidate()
+                except BaseException:
+                    pass
 
 
 def seed_demo_data(
@@ -207,13 +229,20 @@ def seed_demo_data(
     注意：不删除已有数据，不覆盖
     """
     from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
     import random
     from src.errors.base import GymError
-    from src.errors.business import InvalidState, ConflictError
+    from src.errors.business import InvalidState, ConflictError, InvalidInputError
     from src.errors.storage import StorageError
     from src.utils.passwords import hash_password
 
     try:
+        password_values = (
+            passwords.member_password, passwords.coach_password,
+            passwords.receptionist_password, passwords.admin_password,
+        )
+        if any(not isinstance(password, str) for password in password_values):
+            raise InvalidInputError("演示账号密码必须是字符串")
         # 检查数据库是否已初始化
         result = session.execute(
             text(
@@ -233,9 +262,12 @@ def seed_demo_data(
         result = session.execute(
             text(
                 """SELECT COUNT(*) FROM accounts
-                WHERE username IN ('demo_member', 'demo_coach',
-                    'demo_receptionist', 'demo_admin')"""
-            )
+                WHERE username IN (:member, :coach, :receptionist, :admin)"""
+            ),
+            {
+                "member": "demo_member", "coach": "demo_coach",
+                "receptionist": "demo_receptionist", "admin": "demo_admin",
+            },
         )
         row = result.fetchone()
         if row and row[0] > 0:
@@ -298,6 +330,12 @@ def seed_demo_data(
 
         return SeedResult(accounts_created=4, members_created=1, coaches_created=1)
 
+    except IntegrityError as exc:
+        original = getattr(exc, "orig", None)
+        details = getattr(original, "args", ())
+        if (details and details[0] == 1062) or "duplicate" in str(original).lower():
+            raise ConflictError("演示数据与已有记录冲突") from exc
+        raise StorageError("生成演示数据失败") from exc
     except GymError:
         raise
     except Exception as e:
@@ -324,13 +362,14 @@ def main(argv: list[str] | None = None) -> int:
     from src.config import load_config
     from src.db.connection import (
         close_engine,
+        check_connection,
         check_schema,
         create_engine,
         create_session_factory,
         transaction,
     )
     from src.errors.base import GymError
-    from src.errors.storage import StorageError
+    from src.errors.storage import InitializationError, StorageError
     from src.ui.cli.prompts import prompt_password
 
     parser = argparse.ArgumentParser(description="数据库初始化和演示数据命令")
@@ -347,19 +386,21 @@ def main(argv: list[str] | None = None) -> int:
         return int(exc.code or 0)
 
     engine = None
+    exit_code = 1
     try:
         settings = load_config(options.config_path)
         engine = create_engine(settings)
 
         if options.command == "init":
+            check_connection(engine)
             print("正在初始化数据库...")
             with engine.connect() as conn:
                 result = init_database(conn)
             print(f"✓ 成功创建 {result.tables_created} 张表")
             print(f"✓ 数据库版本：{result.schema_version}")
-            return 0
+            exit_code = 0
 
-        if options.command == "seed":
+        elif options.command == "seed":
             check_schema(engine, required_version=1)
             print("正在生成演示数据...")
             passwords: dict[str, str] = {}
@@ -393,24 +434,31 @@ def main(argv: list[str] | None = None) -> int:
             print("  - demo_coach        (教练)")
             print("  - demo_receptionist (前台)")
             print("  - demo_admin        (管理员)")
-            return 0
-        return 2
+            exit_code = 0
     except (KeyboardInterrupt, EOFError):
         print("\n操作已取消", file=sys.stderr)
-        return 0
+        exit_code = 0
     except GymError as exc:
-        label = "数据库错误" if isinstance(exc, StorageError) else "操作失败"
-        print(f"{label}：{exc}", file=sys.stderr)
-        return 1
+        if isinstance(exc, InitializationError):
+            completed = "、".join(exc.completed_tables) or "无"
+            print(
+                f"初始化失败：{exc.message}；已确认完成：{completed}；"
+                f"失败步骤：{exc.failed_step}；结果未知：{'是' if exc.outcome_unknown else '否'}",
+                file=sys.stderr,
+            )
+        else:
+            label = "数据库错误" if isinstance(exc, StorageError) else "操作失败"
+            print(f"{label}：{exc}", file=sys.stderr)
     except Exception:
         print("未知错误，请查看日志", file=sys.stderr)
-        return 1
     finally:
         if engine is not None:
             try:
                 close_engine(engine)
-            except Exception:
+            except (Exception, KeyboardInterrupt):
                 print("关闭数据库资源失败", file=sys.stderr)
+                exit_code = 1
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""体测服务接口。当前仅声明字段与签名，方法尚未实现。"""
+"""体测服务接口。构造函数已实现，业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -28,12 +28,13 @@ class MeasurementService:
     前台和管理员不能查看个人体测明细，也不能调用详情、列表或对比接口绕过限制。
     截止时间由本教练的预约记录计算，按体测 created_at 过滤，不按可补录的 measured_at。
     详情、历史总数及内容、对比两条记录共用同一范围和 as_of；不能只在界面隐藏。
-    当前所有方法仅占位，调用会抛 NotImplementedError。
+    构造函数保存依赖；业务方法仍为占位。
     """
 
     def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
         """接收会话工厂及共用身份校验服务。"""
-        raise NotImplementedError("MeasurementService.__init__ 尚未实现")
+        self._session_factory = session_factory
+        self._auth = auth
 
     def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView:
         """录入会员体测。

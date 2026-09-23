@@ -1,4 +1,4 @@
-"""收款查询与报表服务接口。当前仅声明字段与签名，方法尚未实现。"""
+"""收款查询与报表服务接口。构造函数已实现，业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class ReportService:
 
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
     输入字段见 models/contracts.py；实现后的异常和事务约定见设计第 4 节。
-    当前所有方法仅占位，调用会抛 NotImplementedError。
+    构造函数保存依赖；业务方法仍为占位。
     """
 
     def __init__(
@@ -38,7 +38,9 @@ class ReportService:
         *, timezone_name: str,
     ) -> None:
         """接收会话工厂、共用身份校验服务和门店时区；时区由 App 配置传入。"""
-        raise NotImplementedError("ReportService.__init__ 尚未实现")
+        self._session_factory = session_factory
+        self._auth = auth
+        self._timezone_name = timezone_name
 
     def get_payment(self, actor: Actor, payment_id: int) -> PaymentView:
         """查询收款详情。
