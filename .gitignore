@@ -32,7 +32,9 @@ tmp/
 .env
 .env.*
 config.json
-!config.example.json
+config.test.json
+!config.json.example
+!config.test.json.example
 
 # ----  Agent 工具 ----
 .claude/

@@ -97,7 +97,7 @@ def check_schema(engine: Engine, required_version: int) -> None:
                 SELECT table_name
                 FROM information_schema.tables
                 WHERE table_schema = DATABASE()
-                  AND table_type IN ('BASE TABLE', 'VIEW')
+                  AND table_type = 'BASE TABLE'
                 """
                 )
             )
@@ -138,26 +138,33 @@ def transaction(session: Session) -> AbstractContextManager[Session]:
     def _transaction():
         try:
             yield session
-        except Exception:
+        except BaseException:
             try:
                 session.rollback()
-            except Exception:
+            except BaseException:
                 pass
             raise
         try:
             session.commit()
-        except Exception as exc:
+        except BaseException as exc:
             from src.errors.storage import OutcomeUnknownError
 
+            try:
+                session.rollback()
+            except BaseException:
+                pass
             raise OutcomeUnknownError("事务提交结果未知") from exc
 
     return _transaction()
 
 
 def close_engine(engine: Engine) -> None:
-    """关闭引擎管理的连接资源；清理失败不覆盖原异常。"""
+    """释放连接池；失败抛安全 StorageError，由调用方保留主流程故障。"""
+    from src.errors.storage import StorageError
+
     try:
         engine.dispose()
-    except Exception:
-        # 关闭阶段不覆盖正在处理的业务异常。
-        pass
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception as exc:
+        raise StorageError("关闭数据库资源失败") from exc

@@ -2,7 +2,7 @@
 
 > 更新：2026-09-20
 > 
-> **阅读建议**：这份文档按"你要做什么 → 怎么做 → 具体规则"组织。如果你是第一次阅读，先看[你的模块](#你要实现哪个模块)，了解自己的任务；需要对接其他模块时，查看[模块接口](#模块接口详解)；遇到具体问题时，查阅[业务规则](#业务规则详解)。
+> **阅读建议**：这份文档按"你要做什么 → 怎么做 → 具体规则"组织。先看[你的模块](#你要实现哪个模块)了解任务；需要对接时查看对应的[模块详细说明](#基础框架与公共-cli)；遇到具体问题时查阅[业务规则](#业务规则详解)。
 
 ---
 
@@ -71,7 +71,8 @@ MySQL 数据库
 **技术选型**：
 - Python 3.10+
 - MySQL 8.4
-- SQLAlchemy（候选，待验证）
+- SQLAlchemy 2、PyMySQL
+- argon2-cffi（Argon2id 密码哈希）
 - 标准库 logging
 
 **交互方式**：
@@ -224,13 +225,14 @@ cs2-group3-se/
 │
 ├── docs/                           # 文档目录
 │   ├── architecture.md             # 本文件：系统设计与架构方案
-│   ├── collaboration.md            # 小组协作规范（Git 工作流、PR 流程）
-│   ├── conventions.md              # 代码与文档规范
-│   ├── features.md                 # 功能清单与实现状态
+│   ├── README.md                   # 阅读入口、操作步骤与文档索引
+│   ├── project-standards.md        # 代码与文档规范
+│   ├── 功能列表.csv                # 功能清单与实现状态
 │   └── dev-materials-for-report/   # 报告素材（开发日志、决策记录等）
 │
 ├── README.md                       # 项目概述与快速入口
-├── requirements.txt                # Python 依赖（待完善）
+├── requirements.txt                # 核心运行依赖
+├── requirements-dev.txt            # 测试与开发依赖
 └── .gitignore                      # Git 忽略规则
 ```
 
@@ -240,7 +242,7 @@ cs2-group3-se/
 
 #### 启动与配置
 - **`main.py`**：程序入口，解析 `--tui` 和 `--config` 参数，启动界面
-- **`src/config.py`**：从环境变量读取数据库连接、日志级别、时区配置
+- **`src/config.py`**：从 JSON 配置文件读取数据库连接、日志目录和时区；`DB_PASSWORD` 可覆盖数据库密码
 - **`src/app.py`**：创建所有服务实例，管理登录状态，协调应用生命周期
 
 #### 业务核心
@@ -502,7 +504,7 @@ def get_member(self, actor, member_id):
 ```python
 # member_repo.py
 class MemberRepository:
-    def save(self, data):
+    def create(self, data):
         member = Member(**data)
         self.session.add(member)
         self.session.commit()  # ❌ 不要在这里提交
@@ -513,12 +515,16 @@ class MemberRepository:
 ```python
 # member_service.py
 class MemberService:
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
+
     def create_member(self, actor, data):
-        with self.session_factory() as session:
+        with self._session_factory() as session:
             with session.begin():  # ✅ 在服务层管理事务
-                self.auth.verify_actor(session, actor)
+                self._auth.verify_actor(session, actor)
                 repo = MemberRepository(session)
-                member = repo.save(data)
+                member = repo.create(data)
                 return member  # 退出 with 时自动提交
 ```
 
@@ -660,7 +666,8 @@ def main(argv: list[str] | None = None) -> int:
     加载配置、启动应用并在退出时关闭资源
 
     参数：argv 为参数列表；None 使用进程参数
-    返回：正常退出为 0，启动失败为 1，参数错误为 2
+    返回：正常退出为 0，启动、运行或资源关闭失败为 1，参数错误为 2
+    清理：先保留主流程结果和安全提示，再关闭资源；关闭失败追加安全提示。
     """
 ```
 
@@ -678,7 +685,11 @@ class App:
         """运行 CLI 或可选 TUI，返回退出码。"""
 
     def close(self) -> None:
-        """关闭已创建的数据库和日志资源；允许重复调用。"""
+        """清除身份与界面引用并关闭资源；成功后清空引擎，允许重复调用。
+
+        异常：StorageError（数据库资源关闭失败）；保留引擎供再次 close。
+        关闭中断向调用方传播，资源归属同样保留。
+        """
 
     def get_actor(self) -> Actor:
         """取得当前身份；未登录抛 AuthenticationError。"""
@@ -753,6 +764,8 @@ def seed_demo_data(
     """
 ```
 
+演示电话只写入会员档案；教练表没有电话字段，因此不生成或写入教练电话。
+
 **数据库命令入口**：
 ```python
 # src/cmd/db.py
@@ -775,8 +788,26 @@ def check_schema(engine: Engine, required_version: int) -> None:
     """只读检查结构版本和 18 张必需表；不提交事务。"""
 
 def close_engine(engine: Engine) -> None:
-    """释放连接池；清理失败不覆盖原业务异常。"""
+    """调用 dispose 释放连接池，成功返回 None。
+
+    异常：StorageError（关闭失败，固定安全提示，原异常作为 cause）；
+          EOFError、KeyboardInterrupt 向调用方传播。
+    调用方负责保留主流程错误，并单独报告关闭失败。
+    """
+
+def create_engine(settings: AppSettings) -> Engine:
+    """创建 MySQL 连接池；连接超时 5 秒、读写超时 30 秒、池等待 5 秒，溢出连接数为 0。"""
+
+def create_session_factory(engine: Engine) -> Callable[[], Session]:
+    """每次调用返回独立会话，由调用方关闭。"""
+
+def transaction(session: Session) -> AbstractContextManager[Session]:
+    """成功提交；事务体失败或中断时回滚；提交确认丢失抛 OutcomeUnknownError。"""
 ```
+
+应用、数据库维护和测试命令在关闭前保存主流程结果；关闭失败或关闭中断时返回 1，
+保留已有安全提示并追加资源关闭提示。数据库写入的已提交结果保持原义。
+App 关闭失败后保留引擎，成功重试关闭后才允许重新启动；pytest 将 fixture 关闭失败记为清理错误。
 
 
 #### 3. 公共交互
@@ -809,7 +840,8 @@ def invoke_action(
 
     参数：action 为交互函数，其余参数为操作名称、操作人和请求编号
     返回：ErrorResult，保留错误处理返回的 request_id 和 record_id
-          成功时 message=""、action="continue"；结束输入时 action="exit"
+          成功或取消时 message=""、action="continue"
+    异常：EOFError、KeyboardInterrupt 传播到程序入口，清理后正常退出
     """
 ```
 
@@ -820,6 +852,7 @@ def invoke_action(
 class MenuItem:
     key: str
     label: str
+    operation: str
     action: Callable[[], None]
 
 @dataclass(frozen=True, kw_only=True)
@@ -847,6 +880,331 @@ def product_menu(handler: ProductHandler) -> list[MenuItem]:
     返回：list[MenuItem]
     """
 ```
+
+**统一测试命令**：
+```python
+# src/cmd/test.py
+@dataclass(frozen=True, kw_only=True)
+class TestSettings:
+    test_database: bool
+    app: AppSettings
+
+def load_test_config(config_path: str) -> TestSettings:
+    """读取测试配置；根对象必须包含 test_database=true 和 app 配置。"""
+
+def main(argv: list[str] | None = None) -> int:
+    """运行 pytest；默认排除 mysql 标记，mysql/all 模式需显式测试配置。"""
+```
+
+`python -m src.cmd.test` 运行不依赖 MySQL 的测试；`mysql --config PATH` 运行 MySQL
+测试；`all --config PATH` 运行全部测试。测试命令自身的参数错误返回 2，测试或环境失败返回 1。
+
+测试库名以 `_test` 结尾，只使用 `TEST_DB_PASSWORD` 覆盖密码（包含空字符串）。
+控制连接持有 `cs2g3:test:` 加库名 SHA-256 摘要前 40 位的命名锁，等待时间为 0，
+保持到 pytest 子进程结束。子进程通过 `GYM_TEST_CONFIG`、`GYM_TEST_MODE` 和
+`GYM_TEST_LOCK_OWNER` 接收绝对配置路径、模式和持锁连接编号；fixture 核验持锁者。
+默认模式清除上述变量及两个数据库密码变量。MySQL 模式也清除 `DB_PASSWORD`。
+清理前核验测试标记、当前数据库名和对象集合；按固定逆外键顺序清理设计中的表。
+未知表或视图使测试失败。`empty_mysql_database` 提供空库；
+`initialized_mysql_database` 提供版本 1 结构，清除业务记录并保留版本行。
+
+**CLI 测试进程**：
+```python
+# tests/conftest.py：run_cli fixture 提供的调用接口
+def run_cli_process(
+    argv: list[str], *, env: dict[str, str] | None = None,
+    timeout: float = 120.0,
+) -> CompletedProcess[str]:
+    """从仓库根目录使用当前解释器运行 main.py，发送 0\\n 并关闭标准输入。
+
+    返回：退出码、UTF-8 stdout 和 stderr；超时必须为有限正数。
+    异常：TimeoutExpired、KeyboardInterrupt 等在子进程回收后传播。
+    失败清理：terminate 后等待 5 秒；仍未结束则 kill，再 wait 确认退出。
+    所有退出路径关闭管道；测试在返回后检查登录菜单文字和退出码。
+    """
+```
+
+run_cli fixture 在自身结束时回收尚存进程；数据库测试同时依赖 run_cli 和数据库 fixture，
+数据库清理前再次回收本用例进程。pytest 运行在独立进程组；Windows 的 Ctrl+Break
+由测试钩子转换为 KeyboardInterrupt，POSIX 使用 SIGINT。测试父进程中断时，统一测试命令给 pytest 10 秒完成
+进程回收和 fixture 清理，超时后终止 pytest 进程树并确认结束，再释放测试库命名锁。
+主入口集成测试从测试配置解析 AppSettings，以临时普通应用 JSON 和子进程独立环境启动；
+密码经子进程 DB_PASSWORD 提供。只有登录菜单输出及退出码均正确，才算启动验收通过。
+
+**普通输入与分页**：
+```python
+# src/ui/cli/prompts.py
+def prompt_text(label: str, *, allow_empty: bool = False) -> str:
+    """去首尾空白；q/Q 抛 InputCancelled；非法空值提示重输。"""
+
+def prompt_optional_text(label: str) -> str | None:
+    """空输入返回 None；q/Q 取消。"""
+
+def prompt_int(label: str, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    """读取十进制整数，检查包含边界，非法时重输。"""
+
+def prompt_decimal(label: str, *, minimum: Decimal | None = None) -> Decimal:
+    """读取有限十进制数，最多两位小数，检查包含下界，非法时重输。"""
+
+def prompt_date(label: str) -> date:
+    """按 YYYY-MM-DD 读取有效日期。"""
+
+def prompt_datetime(label: str, *, timezone_name: str) -> datetime:
+    """按 YYYY-MM-DD HH:MM 读取门店时刻，返回 UTC；夏令时重复或不存在的时刻重输。"""
+
+def prompt_confirm(label: str) -> bool:
+    """y 返回 True，n 返回 False，q/Q 取消；其余重输。"""
+
+def prompt_member_id() -> int:
+    """读取正整数会员编号。"""
+
+# src/ui/cli/menus.py
+def browse_pages(fetch_page: Callable[[PageRequest], Page[T]], format_page: Callable[[Page[T]], str], *, page_size: int = 20) -> None:
+    """从第一页查询并展示；n/p 翻页、0 返回；每页 1～100 条，非法大小抛 InvalidInputError。"""
+
+# src/ui/cli/app.py
+class GymCLI:
+    def __init__(self, handlers: CliHandlers, get_actor: Callable[[], Actor], logout: Callable[[], None]) -> None:
+        """保存交互处理器及身份回调。"""
+
+    def run(self) -> int:
+        """运行登录、主菜单及子菜单；顶层 0 退出，子菜单 0 返回，退出登录清除身份。"""
+```
+
+**构造接口**：
+```python
+# src/services/attendance_service.py
+class AttendanceService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/auth_service.py
+class AuthService:
+    def __init__(self, session_factory: Callable[[], Session]) -> None:
+        """保存数据库会话依赖，由 App 统一装配；日志接口的资源由日志模块负责。"""
+
+# src/services/booking_service.py
+class BookingService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/course_service.py
+class CourseService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/equipment_service.py
+class EquipmentService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/measurement_service.py
+class MeasurementService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/member_service.py
+class MemberService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/product_service.py
+class ProductService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/report_service.py
+class ReportService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/review_service.py
+class ReviewService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/attendance.py
+class AttendanceHandler:
+    def __init__(self, service: AttendanceService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/auth.py
+class AuthHandler:
+    def __init__(self, service: AuthService, get_actor: Callable[[], Actor], set_actor: Callable[[Actor], None], logout: Callable[[], None], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/booking.py
+class BookingHandler:
+    def __init__(self, service: BookingService, get_actor: Callable[[], Actor], course_service: CourseService, product_service: ProductService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/course.py
+class CourseHandler:
+    def __init__(self, service: CourseService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/equipment.py
+class EquipmentHandler:
+    def __init__(self, service: EquipmentService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/measurement.py
+class MeasurementHandler:
+    def __init__(self, service: MeasurementService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/member.py
+class MemberHandler:
+    def __init__(self, service: MemberService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/product.py
+class ProductHandler:
+    def __init__(self, service: ProductService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/report.py
+class ReportHandler:
+    def __init__(self, service: ReportService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/review.py
+class ReviewHandler:
+    def __init__(self, service: ReviewService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+```
+
+**服务和处理器装配**：各构造函数保存现有参数，分别使用 `_session_factory`、`_auth`、
+`_service`、`_get_actor`、`_set_actor`、`_logout`、`_timezone_name` 等同名私有属性。
+`App.start` 检查版本 1，再创建固定的 `ServiceBundle` 和 `CliHandlers`。
+`App.close` 清除身份和界面引用、释放引擎；成功后清空引擎，失败时保留以便重试。
+部分启动和重复清理均可调用；主流程错误与关闭错误分别保留安全提示。
+菜单函数返回已交付操作的 `list[MenuItem]`，空列表显示待接入提示。
+账号管理面向管理员，报表面向管理员和前台，体测面向会员和教练；各服务继续验证实际权限。
+
+**格式化接口**：
+```python
+# src/ui/cli/formatters.py
+def format_account(view: AccountView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_member(member: MemberView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_card_product(view: CardProductView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_card(view: CardView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_sale(view: SaleView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_entry(view: EntryView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach(view: CoachView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_course(view: CourseView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_room(view: RoomView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session(view: SessionView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_booking(view: BookingView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_consumption(view: ConsumptionView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_review(view: ReviewView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_equipment(view: EquipmentView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_maintenance(view: MaintenanceView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurement(view: MeasurementView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurement_comparison(view: MeasurementComparison, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_payment(view: PaymentView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_revenue(view: RevenueView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_membership_stats(view: MembershipStats, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session_stats(view: SessionStatsView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach_stats(view: CoachStatsView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_accounts(page: Page[AccountView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_members(page: Page[MemberView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_products(page: Page[CardProductView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_cards(page: Page[CardView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coaches(page: Page[CoachView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_courses(page: Page[CourseView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_rooms(page: Page[RoomView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_sessions(page: Page[SessionView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_bookings(page: Page[BookingView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_reviews(page: Page[ReviewView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_equipment_list(page: Page[EquipmentView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_maintenance_records(page: Page[MaintenanceView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurements(page: Page[MeasurementView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_payments(page: Page[PaymentView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session_stats_page(page: Page[SessionStatsView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach_stats_page(page: Page[CoachStatsView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+```
+
+**格式化规则**：`src/ui/cli/formatters.py` 的详情函数显式读取对应 View 字段，
+分页函数接收 `Page[View]`，返回中文文本。金额两位小数，状态译成中文，空值显示“—”，
+时刻按 `timezone_name` 转换并显示时区偏移，日期原样显示。会员联系方式遮住中间四位；
+卡的 `valid_until` 标为“不含当日”，剩余和占用分别显示。分页显示页码、总数及空页提示。
+业务说明和备注中的控制字符转为可见转义文本。
 
 ---
 
@@ -881,7 +1239,7 @@ def create_account(self, actor: Actor, data: AccountInput) -> AccountView:
     注意：
     - 密码要用哈希算法加密后存储
     - 用户名转小写并去首尾空白
-    - 密码原样存储（不转小写、不去空白）
+    - 密码按原值校验并哈希（不转小写、不去空白）
     """
 ```
 
@@ -940,16 +1298,11 @@ def verify_actor(self, session: Session, actor: Actor) -> Actor:
 
 **创建账号服务**：
 ```python
-def __init__(
-    self,
-    session_factory: Callable[[], Session],
-    *,
-    log_directory: Path,
-) -> None:
+def __init__(self, session_factory: Callable[[], Session]) -> None:
     """
     创建账号服务
 
-    参数：session_factory 为数据库会话工厂，log_directory 为 App 传入的日志目录
+    参数：session_factory 为数据库会话工厂
     返回：None
     """
 ```
@@ -1254,7 +1607,7 @@ def open_log_snapshot(self, actor: Actor) -> LogSnapshot:
     """
     取得一次日志浏览的快照
 
-    参数：actor 为管理员身份，目录使用构造时传入的 log_directory
+    参数：actor 为管理员身份；日志资源按既定日志模块接口取得
     返回：LogSnapshot
     异常：PermissionDenied（非管理员）、ResourceError（读取失败）
     """
@@ -1314,13 +1667,14 @@ def main(argv: list[str] | None = None) -> int:
 # 在 MemberService 中
 class MemberService:
     def __init__(self, session_factory, auth: AuthService):
-        self.auth = auth  # 注入 AuthService
+        self._session_factory = session_factory
+        self._auth = auth  # 注入 AuthService
     
     def create_member(self, actor, data):
-        with self.session_factory() as session:
+        with self._session_factory() as session:
             with session.begin():
                 # 1. 调用你的身份校验
-                current = self.auth.verify_actor(session, actor)
+                current = self._auth.verify_actor(session, actor)
                 
                 # 2. 检查权限
                 if current.role not in ("admin", "receptionist"):
@@ -1730,7 +2084,7 @@ def list_cards(self, actor: Actor, query: CardQuery) -> Page[CardView]:
       - 只筛选有到期日的产品（排除次卡）
       - valid_until < 指定日期
     - private_lessons_at_most:
-      - 只筛选赠课的产品（排除次卡）
+      - 只筛选私教课产品（排除次卡）
       - remaining_private_lessons - reserved_private_lessons <= 阈值
     
     用途示例：
@@ -1844,13 +2198,14 @@ from src.services.auth_service import AuthService
 
 class MemberService:
     def __init__(self, session_factory, auth: AuthService):
-        self.auth = auth
+        self._session_factory = session_factory
+        self._auth = auth
     
     def create_member(self, actor, data):
-        with self.session_factory() as session:
+        with self._session_factory() as session:
             with session.begin():
                 # 1. 校验身份
-                self.auth.verify_actor(session, actor)
+                self._auth.verify_actor(session, actor)
                 
                 # 2. 检查权限
                 if actor.role not in ("admin", "receptionist"):
@@ -1864,7 +2219,7 @@ from src.db.payment_repo import PaymentRepository
 
 class ProductService:
     def sell_product(self, actor, data, request_id):
-        with self.session_factory() as session:
+        with self._session_factory() as session:
             with session.begin():
                 # ... 创建产品快照 ...
                 
@@ -1884,20 +2239,22 @@ class ProductService:
 
 **其他模块调用你的方法**：
 ```python
-# 预约模块需要检查会员的产品
-from src.services.product_service import ProductService
+# 预约模块在自己的事务中读取会员卡
+from src.db.membership_repo import MembershipRepository
 
 class BookingService:
-    def __init__(self, ..., product: ProductService):
-        self.product = product
+    def __init__(self, session_factory, auth: AuthService, *, timezone_name: str):
+        self._session_factory = session_factory
+        self._auth = auth
     
     def book(self, actor, data, request_id):
-        # 检查会员持有的产品
-        card = self.product.get_card(actor, data.membership_id)
-        
-        # 检查课节余额
-        if card.available_private_lessons <= 0:
-            raise InsufficientCredits("课节余额不足")
+        with self._session_factory() as session:
+            with session.begin():
+                # 卡、预约及课次均在此事务中通过对应 Repository 检查和锁定
+                card_repo = MembershipRepository(session)
+                card = card_repo.lock(data.membership_id)
+                if card is None or card.remaining_private_lessons <= card.reserved_private_lessons:
+                    raise InsufficientCredits("课节余额不足")
         
         # 继续预约流程...
 ```
@@ -2204,7 +2561,7 @@ def create_session(
     
     业务规则：
     1. 检查课程、教练、场地都存在且启用
-    2. 检查时长：ends_at - starts_at <= 150 分钟
+    2. 检查时长：ends_at - starts_at 必须等于课程模板时长，且不超过 150 分钟
     3. 检查教练时间冲突：
        - 锁定教练
        - 查询教练在 [starts_at, ends_at) 是否有其他课次
@@ -2242,7 +2599,7 @@ def get_session(self, actor: Actor, session_id: int) -> SessionView:
     查询课次详情
     
     权限：
-    - 会员：只能看到自己预约的课次
+    - 会员：可以查看可预约课次的公开详情；已预约课次可查看自己的预约状态
     - 教练：可以看自己的课次
     - 管理员、前台：可以看所有课次
     
@@ -2301,7 +2658,7 @@ def cancel_session(
     返回：SessionView（status 变为 "cancelled"）
     
     业务规则：
-    1. 检查课次存在且为 "scheduled"
+    1. 检查课次存在、为 "scheduled" 且当前时刻早于 starts_at
     2. 收集所有预约：
        - 查询该课次的所有 reserved/checked_in 预约
        - 按会员 ID 排序
@@ -2336,7 +2693,8 @@ def complete_session(self, actor: Actor, session_id: int) -> SessionView:
     - 调用此方法将课次状态改为 "completed"
     
     业务规则：
-    - 只有 "scheduled" 课次可以完成
+    - 已为 "completed" 时返回当前 SessionView
+    - 首次完成必须是 "scheduled"；已取消 → InvalidState
     - 必须没有 reserved/checked_in 预约
     - 有未处理预约 → InvalidState
     """
@@ -2466,8 +2824,9 @@ def cancel(
     2. 检查权限（会员只能取消自己的）
     3. 锁定：会员 → 产品 → 预约
     4. 检查预约状态：
-       - 必须是 "reserved"
-       - 已签到/已完成/已取消 → InvalidState
+       - 已签到 → 返回当前 BookingView
+       - 已完成/已取消 → InvalidState
+       - 首次签到必须是 "reserved"
     5. 检查时间：
        - 只能在课次开始前取消
        - 已到开课时间 → InvalidState
@@ -2533,13 +2892,14 @@ from src.services.auth_service import AuthService
 
 class CourseService:
     def __init__(self, session_factory, auth: AuthService):
-        self.auth = auth
+        self._session_factory = session_factory
+        self._auth = auth
     
     def create_coach(self, actor, data):
-        with self.session_factory() as session:
+        with self._session_factory() as session:
             with session.begin():
                 # 1. 校验身份
-                self.auth.verify_actor(session, actor)
+                self._auth.verify_actor(session, actor)
                 
                 # 2. 检查权限
                 if actor.role != "admin":
@@ -2548,21 +2908,23 @@ class CourseService:
                 # 3. 执行业务
                 ...
 
-# 调用产品模块
-from src.services.product_service import ProductService
+# 在预约事务中通过数据访问层锁定会员卡
+from src.db.membership_repo import MembershipRepository
 
 class BookingService:
-    def __init__(self, session_factory, auth: AuthService, product: ProductService, ...):
-        self.product = product
+    def __init__(self, session_factory, auth: AuthService, *, timezone_name: str):
+        self._session_factory = session_factory
+        self._auth = auth
     
     def book(self, actor, data, request_id):
-        with self.session_factory() as session:
+        with self._session_factory() as session:
             with session.begin():
-                # 检查产品
-                card = self.product.get_card(actor, data.membership_id)
+                # 在当前事务中锁定预约使用的会员卡
+                card_repo = MembershipRepository(session)
+                card = card_repo.lock(data.membership_id)
                 
                 # 检查课节余额
-                if card.available_private_lessons <= 0:
+                if card is None or card.remaining_private_lessons <= card.reserved_private_lessons:
                     raise InsufficientCredits("...")
                 
                 # 继续预约...
@@ -2570,22 +2932,19 @@ class BookingService:
 
 **其他模块调用你们的方法**：
 ```python
-# 签到模块需要查询预约
-from src.services.booking_service import BookingService
+# 签到模块在自己的事务中读取预约
+from src.db.booking_repo import BookingRepository
 
 class AttendanceService:
-    def __init__(self, ..., booking: BookingService):
-        self.booking = booking
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
     
     def check_in(self, actor, booking_id):
-        # 查询预约
-        booking = self.booking.get_booking(actor, booking_id)
-        
-        # 检查状态
-        if booking.status != "reserved":
-            raise InvalidState("...")
-        
-        # 继续签到...
+        with self._session_factory() as session:
+            with session.begin():
+                booking = BookingRepository(session).lock(booking_id)
+                # 先处理已签到重试，再校验首次签到状态和课次开始时间
 ```
 
 ### 测试要点
@@ -2638,7 +2997,7 @@ def check_in(self, actor: Actor, booking_id: int) -> BookingView:
     
     权限：
     - 会员：只能给自己签到
-    - 前台、管理员：可以代签到
+    - 本课教练、前台、管理员：可以代签到
     
     参数：
     - booking_id: 预约编号
@@ -2647,11 +3006,12 @@ def check_in(self, actor: Actor, booking_id: int) -> BookingView:
     
     业务规则：
     1. 检查预约存在
-    2. 检查权限（会员只能签到自己的）
+    2. 检查权限（会员只能签到自己的；本课教练、前台和管理员可代签到）
     3. 锁定预约
     4. 检查预约状态：
-       - 必须是 "reserved"
-       - 已签到/已完成/已取消 → InvalidState
+       - 已签到 → 返回当前 BookingView
+       - 已完成/已取消 → InvalidState
+       - 首次签到必须是 "reserved"
     5. 检查时间：
        - 必须从课次开始时间起才能签到
        - 早于开课时间 → InvalidState
@@ -2759,15 +3119,14 @@ def complete(self, actor: Actor, booking_id: int) -> ConsumptionView:
     业务规则：
     1. 检查预约存在
     2. 检查权限（教练只能消自己课次的）
-    3. 锁定：预约 → 产品
+    3. 锁定：产品 → 预约
     4. 检查预约状态：
-       - 必须是 "checked_in"（已签到）
+       - 已完成且存在消课记录 → 返回原 ConsumptionView
+       - 首次消课必须是 "checked_in"（已签到）
        - 未签到/已取消 → InvalidState
     5. 检查时间：
        - 当前时刻必须大于或等于课次 ends_at；否则抛 InvalidState
-    6. 检查消课记录：
-       - 查询是否已有消课记录
-       - 已消课 → 返回原 ConsumptionView（不重复扣课节）
+    6. 完成首次消课并写入消课记录
     7. 扣除课节：
        - remaining_private_lessons -= 1
        - reserved_private_lessons -= 1
@@ -2813,9 +3172,10 @@ def mark_no_show(self, actor: Actor, booking_id: int) -> BookingView:
     业务规则：
     1. 检查预约存在
     2. 检查权限（教练只能标记自己课次的）
-    3. 锁定：预约 → 产品
+    3. 锁定：产品 → 预约
     4. 检查预约状态：
-       - 必须是 "reserved"（未签到）
+       - 已缺席 → 返回当前 BookingView
+       - 首次标记必须是 "reserved"（未签到）
        - 已签到/已完成/已取消 → InvalidState
     5. 检查时间：
        - 当前时刻必须大于或等于课次 ends_at；否则抛 InvalidState
@@ -2898,7 +3258,7 @@ def get_review(self, actor: Actor, review_id: int) -> ReviewView:
     
     权限：
     - 会员：只能查自己的评价
-    - 管理员：可以查所有评价
+    - 管理员：首版不提供评价查询入口
     """
     
 def list_reviews(self, actor: Actor, paging: PageRequest) -> Page[ReviewView]:
@@ -2907,7 +3267,7 @@ def list_reviews(self, actor: Actor, paging: PageRequest) -> Page[ReviewView]:
     
     权限：
     - 会员：只能查自己的评价
-    - 管理员：可以查所有评价
+    - 管理员：首版不提供评价查询入口
     
     参数：
     - paging: 分页参数
@@ -2941,39 +3301,20 @@ reserved → no_show（缺席）
 
 **你需要调用的方法**：
 ```python
-# 调用预约模块
-from src.services.booking_service import BookingService
+# 预约状态通过同一事务中的 Repository 读取和更新
+from src.db.booking_repo import BookingRepository
 
 class AttendanceService:
-    def __init__(self, ..., booking: BookingService):
-        self.booking = booking
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
     
     def check_in(self, actor, booking_id):
-        # 查询预约
-        booking = self.booking.get_booking(actor, booking_id)
-        
-        # 检查状态
-        if booking.status != "reserved":
-            raise InvalidState("...")
-        
-        # 继续签到...
-
-# 调用课程模块
-from src.services.course_service import CourseService
-
-class AttendanceService:
-    def __init__(self, ..., course: CourseService):
-        self.course = course
-    
-    def check_in(self, actor, booking_id):
-        # 查询预约（包含课次信息）
-        booking = self.booking.get_booking(actor, booking_id)
-        
-        # 检查开课时间
-        if datetime.now(UTC) < booking.session.starts_at:
-            raise InvalidState("课次尚未开始")
-        
-        # 继续签到...
+        with self._session_factory() as session:
+            with session.begin():
+                booking_repo = BookingRepository(session)
+                booking = booking_repo.lock(booking_id)
+                # 先检查已签到重试，再校验首次签到状态和开课时间
 ```
 
 ### 测试要点
@@ -3377,8 +3718,7 @@ def retire_equipment(self, actor: Actor, equipment_id: int) -> EquipmentView:
     1. 检查器械存在
     2. 锁定器械
     3. 检查维修状态：
-       - 如果有未完成的维修，先完成维修再报废
-       - 或者标记维修为"因报废不再处理"
+       - 如果有未完成的维修 → InvalidState
     4. 更新器械状态 → "retired"
     5. 提交
     
@@ -3415,32 +3755,7 @@ def list_maintenance(
 
 ### 与其他模块的对接
 
-**你们需要调用的方法**：
-```python
-# 调用预约模块（体测权限判断）
-from src.services.booking_service import BookingService
-
-class MeasurementService:
-    def __init__(self, ..., booking: BookingService):
-        self.booking = booking
-    
-    def record(self, actor, data):
-        # 检查教练是否有权限录入该会员的体测
-        # 查询会员对该教练的预约
-        bookings = self.booking.list_bookings(
-            actor,
-            BookingQuery(
-                member_id=data.member_id,
-                # 查询该教练的所有课次的预约
-            )
-        )
-        
-        # 计算授权截止时刻
-        if not bookings.items:
-            raise PermissionDenied("没有权限录入该会员的体测")
-        
-        # 继续录入...
-```
+**体测录入授权**：会员锁定与身份范围检查在体测服务的同一事务中完成。教练新增体测前，使用 `BookingRepository.has_current_coaching_booking(member_id, coach_id, at)` 检查当前有效授课关系；历史查看权不授予新增权。
 
 ### 测试要点
 
@@ -3829,7 +4144,7 @@ from src.db.payment_repo import PaymentRepository
 
 class ProductService:
     def sell_product(self, actor, data, request_id):
-        with self.session_factory() as session:
+        with self._session_factory() as session:
             with session.begin():
                 # 1. 创建产品快照
                 card = membership_repo.create(...)
@@ -3884,7 +4199,7 @@ class ProductService:
    - CSV 注入防护（=、+、-、@ 转义）
    - 金额两位小数
    - 时间 ISO 格式
-   - 空数据导出只有表头
+    - 空明细导出只有表头；汇总报表在无业务记录时输出一行零值快照
 
 ---
 
@@ -3901,10 +4216,9 @@ class ProductService:
 - 64 节课 + 90 天门禁  
 - 256 节课 + 365 天门禁
 
-**固定赠课数**：
-- 创建或编辑产品时，不能随意修改赠课数
-- 20/64/256 是固定的，数据库有约束检查
-- 如果需要其他赠课数，需要修改设计和约束
+**随私教课购买的权益**：
+- 购买 20/64/256 节私教课时，分别获得 30/90/365 天门禁
+- 节数和门禁天数固定，数据库有约束检查
 
 **有效期计算**：
 - valid_from 是生效日（包含）
@@ -3930,7 +4244,7 @@ class ProductService:
 
 **课节初始化**：
 - 购买时：
-  - remaining_private_lessons = 赠课数（20/64/256）
+  - remaining_private_lessons = 购买的私教课节数（20/64/256）
   - reserved_private_lessons = 0
 - 旧产品余额不转入新产品
 - 每个产品的课节独立计算
@@ -3984,15 +4298,12 @@ class ProductService:
 - 同一天后续入场：沿用同一条记录，不再扣次
 
 **例子**：
-- 9 月 20 日上午 10:00：会员用次卡入场
+- 9 月 20 日上午 10:00：会员用剩余 1 次的次卡入场
   - 创建入场记录，accesses_used = 1
-  - 次卡 remaining_accesses 从 10 变为 9
+  - 次卡 remaining_accesses 从 1 变为 0
 - 9 月 20 日下午 15:00：会员再次入场（选任意卡）
   - 返回上午的入场记录
   - 不再扣次
-- 9 月 20 日晚上 18:00：会员用掉次卡最后 1 次（remaining_accesses 变为 0）
-- 9 月 20 日晚上 20:00：会员再次入场
-  - 仍返回当天的入场记录（允许）
 - 9 月 21 日：会员入场
   - 次卡已用尽 → InsufficientCredits
 
@@ -4070,12 +4381,13 @@ class ProductService:
 #### 取消课次的处理
 
 **业务规则**：
-1. 收集该课次的所有 reserved/checked_in 预约
-2. 按会员 ID 排序（固定锁顺序）
-3. 逐个锁定会员和产品
-4. 释放课节占用
-5. 更新预约状态为 cancelled
-6. 更新课次状态为 cancelled
+1. 当前时刻早于 starts_at 才允许首次取消
+2. 收集该课次的所有 reserved/checked_in 预约
+3. 按会员 ID 排序（固定锁顺序）
+4. 逐个锁定会员和产品
+5. 释放课节占用
+6. 更新预约状态为 cancelled
+7. 更新课次状态为 cancelled
 
 **并发问题**：
 - 取消课次和新预约可能同时发生
@@ -4094,8 +4406,9 @@ class ProductService:
 
 **谁能签到**：
 - 会员：自己签到（扫码或手动）
+- 本课教练：代为签到
 - 前台、管理员：代签到
-- 教练：更正签到（补签或取消签到）
+- 教练、管理员：更正签到（补签或取消签到）
 
 **教练更正规则**：
 - 只能更正自己课次的预约
@@ -4124,6 +4437,7 @@ class ProductService:
 
 **标记缺席**：
 - 必须是 reserved（未签到）
+- 重复标记已为 no_show 的预约，返回当前状态
 - 已签到应该消课，不应该标记缺席
 
 **释放占用**：
@@ -4448,7 +4762,7 @@ class ProductService:
 - 用户名转小写，密码不转
 
 **哈希存储**：
-- 使用专用哈希算法（Argon2id 候选）
+- 使用 argon2-cffi 提供的 Argon2id 哈希算法
 - 32 位限制针对输入密码
 - 哈希长度不限制，数据库用 VARCHAR(255)
 
@@ -4518,13 +4832,11 @@ class ProductService:
 
 **Ctrl+C**：
 - 捕获 KeyboardInterrupt
-- 正常关闭资源
-- 退出码 0
+- 关闭资源，成功返回 0；关闭失败或再次中断返回 1
 
 **EOF**（输入结束）：
 - 捕获 EOFError
-- 正常关闭资源
-- 退出码 0
+- 关闭资源，成功返回 0；关闭失败或关闭中断返回 1
 
 **不是系统故障**：
 - 不记录 ERROR 级别日志
@@ -4605,11 +4917,11 @@ CREATE TABLE members (
 - name 去首尾空白后不能为空
 - phone 可空
 
-（其余表结构省略，详见备份文档）
+（其余表结构见 [`sql/001_initial_schema.sql`](../sql/001_initial_schema.sql)）
 
 ### 索引策略
 
-**主键索引**：所有表都有 BIGINT AUTO_INCREMENT 主键
+**主键索引**：业务表使用 BIGINT AUTO_INCREMENT 主键；`schema_versions` 使用 INT 版本号主键
 
 **唯一索引**：
 - accounts.username
@@ -5186,7 +5498,3 @@ from src.models.contracts import Page, Role, Actor, PageRequest
 - 不能重新赋值字段（如 `page.items = [...]`）
 - 但 items 仍是 list，调用方应只读使用
 - 界面排序时另复制列表
-
----
-
-_架构文档补充完成。完整的表结构 SQL 见备份文档 architecture-backup-*.md_

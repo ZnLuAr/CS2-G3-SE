@@ -107,7 +107,7 @@ def _parse_log(data: object, config_path: Path) -> LogConfig:
     if not directory.is_absolute():
         directory = (config_path.parent / directory).resolve()
     level = data.get("level", "INFO")
-    if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    if not isinstance(level, str) or level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
         raise ValueError("log.level 不是有效级别")
     max_bytes = _integer(
         data.get("max_bytes", 5 * 1024 * 1024),
@@ -126,50 +126,51 @@ def _parse_log(data: object, config_path: Path) -> LogConfig:
     )
 
 
-def load_config(config_path: str | None = None) -> AppSettings:
-    """读取配置文件并校验必需项。
-
-    优先级：
-    1. 从 config_path 指定的 JSON 文件读取（如果提供）
-    2. 从 config.json 读取（当前目录）
-    3. 敏感字段（如 password）支持从环境变量覆盖：DB_PASSWORD
-
-    JSON 格式参考 config.json.example。
-
-    返回：AppSettings。
-    缺项或格式非法抛 InvalidInputError，不打印数据库凭据，也不创建目录。
-    """
+def _read_config(path: Path) -> object:
+    """读取 UTF-8 JSON；只在安全提示中展示路径和行号。"""
     import json
-    import os
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     from src.errors.business import InvalidInputError
 
-    path = Path(config_path) if config_path else Path("config.json")
     try:
-        with path.open("r", encoding="utf-8") as config_file:
-            data = json.load(config_file)
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise InvalidInputError(f"找不到配置文件：{path}") from exc
     except json.JSONDecodeError as exc:
         raise InvalidInputError(f"配置文件格式错误：第 {exc.lineno} 行") from exc
+    except UnicodeError as exc:
+        raise InvalidInputError("配置文件必须使用 UTF-8 编码") from exc
     except OSError as exc:
         raise InvalidInputError(f"无法读取配置文件：{path}") from exc
+
+
+def _parse_settings(data: object, path: Path, password: str | None) -> AppSettings:
+    """应用与测试共用字段校验，环境变量由各自入口选择。"""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    from src.errors.business import InvalidInputError
 
     try:
         if not isinstance(data, dict):
             raise ValueError("配置文件根节点必须是对象")
         _reject_unknown(data, {"database", "timezone_name", "log"}, "配置文件")
-        database = _parse_database(data.get("database"), os.environ.get("DB_PASSWORD"))
-        timezone_name = data.get("timezone_name", "Asia/Shanghai")
-        if not isinstance(timezone_name, str) or not timezone_name.strip():
-            raise ValueError("timezone_name 必须是非空字符串")
-        timezone_name = timezone_name.strip()
+        database = _parse_database(data.get("database"), password)
+        timezone_name = _required_text(data.get("timezone_name", "Asia/Shanghai"), "timezone_name")
         try:
             ZoneInfo(timezone_name)
         except (ZoneInfoNotFoundError, ValueError) as exc:
-            raise ValueError(f"timezone_name 不是有效时区：{timezone_name}") from exc
+            raise ValueError("timezone_name 不是有效时区") from exc
         log = _parse_log(data.get("log", {}), path)
     except ValueError as exc:
         raise InvalidInputError(str(exc)) from exc
-
     return AppSettings(database=database, timezone_name=timezone_name, log=log)
+
+
+def load_config(config_path: str | None = None) -> AppSettings:
+    """读取当前目录 config.json 或指定文件；DB_PASSWORD 存在即覆盖文件密码。
+
+    返回固定 AppSettings；缺项或非法配置抛 InvalidInputError。
+    相对日志目录以配置文件目录为基准。读取配置不会创建资源。
+    """
+    import os
+
+    path = Path(config_path).expanduser() if config_path is not None else Path("config.json")
+    return _parse_settings(_read_config(path), path, os.environ.get("DB_PASSWORD"))
