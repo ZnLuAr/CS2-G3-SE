@@ -61,7 +61,7 @@ class Actor:
 
 @dataclass(frozen=True, kw_only=True)
 class AccountInput:
-    username: str
+    username: str  # 去首尾空白并转小写后，只允许 3–50 位 ASCII 字母、数字和下划线
     password: str = field(repr=False)  # 避免普通对象打印带出密码
     role: Role
 

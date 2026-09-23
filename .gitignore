@@ -36,6 +36,7 @@ config.json
 
 # ----  Agent 工具 ----
 .claude/
+CLAUDE.md
 
 # ---- 内部文档 ----
 docs/archive/

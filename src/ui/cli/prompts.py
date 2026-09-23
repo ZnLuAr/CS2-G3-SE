@@ -6,6 +6,13 @@ from datetime import date, datetime
 from decimal import Decimal
 
 
+def prompt_password(label: str) -> str:
+    """从终端读取不回显的原始密码；中断和文件结束由调用方处理。"""
+    import getpass
+
+    return getpass.getpass(label)
+
+
 def prompt_text(label: str, *, allow_empty: bool = False) -> str:
     """读取文字；allow_empty 决定空文字是否合法。
 

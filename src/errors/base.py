@@ -25,5 +25,6 @@ class GymError(Exception):
     message: str
 
     def __init__(self, message: str) -> None:
-        """接收可展示的中文错误信息；当前构造方法也仅占位。"""
-        raise NotImplementedError("GymError.__init__ 尚未实现")
+        """保存可展示的中文错误信息，不携带数据库内部细节。"""
+        self.message = message
+        super().__init__(message)

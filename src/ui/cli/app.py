@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from src.errors.base import ErrorAction
+from src.errors.base import ErrorResult
 from src.models.contracts import Actor
 from src.ui.cli.menus import CliHandlers
 
@@ -15,10 +15,10 @@ def invoke_action(
     operation: str,
     actor_id: int | None = None,
     request_id: str | None = None,
-) -> ErrorAction:
+) -> ErrorResult:
     """执行一次交互并统一处理失败。
 
-    返回：continue、login、exit 或 verify；含义见设计第 7 节。
+    返回：ErrorResult；含义见设计第 7 节。
     后续调用统一错误处理入口，当前不会执行传入的 action。"""
     raise NotImplementedError("invoke_action 尚未实现")
 

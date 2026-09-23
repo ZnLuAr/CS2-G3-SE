@@ -35,7 +35,8 @@ class AuthService:
     def login(self, username: str, password: str) -> Actor:
         """校验凭据并取得当前操作者。
 
-        密码原样处理，允许 A–Z、a–z、0–9、短横线和下划线，共 1–32 位；不做强度检测。
+        用户名去首尾空白并转小写，只允许 3–50 位 ASCII 字母、数字和下划线。
+        密码原样处理，允许 A–Z、a–z、0–9、短横线和下划线，共 6–32 位；不做强度检测。
         返回：Actor。不修改业务数据。
         异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
         raise NotImplementedError("AuthService.login 尚未实现")
@@ -43,7 +44,7 @@ class AuthService:
     def create_account(self, actor: Actor, data: AccountInput) -> AccountView:
         """创建账号。
 
-        密码字符与长度规则见设计第 3.1 节，不要求字符组合；实现时仍须哈希保存。
+        用户名和密码格式见设计第 3.1 节；实现时密码须哈希保存。
         返回：AccountView。在同一服务事务中修改对应记录，失败清理后抛异常。
         异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
         raise NotImplementedError("AuthService.create_account 尚未实现")

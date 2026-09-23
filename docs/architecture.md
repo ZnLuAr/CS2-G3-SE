@@ -596,6 +596,7 @@ class StartupOptions:
 
 @dataclass(frozen=True, kw_only=True)
 class DatabaseConfig:
+    """数据库配置；密码不参与对象的普通打印，字符集固定使用 utf8mb4。"""
     host: str
     port: int
     database: str
@@ -627,7 +628,9 @@ def load_config(config_path: str | None = None) -> AppSettings:
 
     参数：
     - config_path: JSON 文件路径；None 使用当前目录的 config.json
-    - DB_PASSWORD 环境变量可覆盖数据库密码
+    - database.password 必须是字符串并保留原值，允许为空
+    - DB_PASSWORD 变量存在时覆盖数据库密码，包括空字符串
+    - log.directory 为相对路径时，以配置文件所在目录为基准并转为绝对路径
 
     返回：AppSettings
 
@@ -715,15 +718,15 @@ class DemoPasswordInput:
 **初始化数据库**：
 ```python
 # src/cmd/db.py
-def init_database(session: Session) -> InitResult:
+def init_database(connection: Connection) -> InitResult:
     """
     按依赖顺序建表并记录结构版本
 
-    参数：session 为命令提供的数据库会话
+    参数：connection 为命令持有的专用数据库连接；获取命名锁、建表和记录版本使用同一连接
     返回：InitResult
     异常：
     - InvalidState: 目标数据库非空
-    - InitializationError: 建表失败，携带已完成表名和失败步骤
+    - InitializationError: 建表失败，携带已完成表名、失败步骤和结果未知标记
     """
 ```
 
@@ -760,6 +763,19 @@ def main(argv: list[str] | None = None) -> int:
     参数：支持 --config；seed 另接受 --seed
     返回：成功为 0，失败为 1，参数错误为 2
     """
+```
+
+**数据库连接与事务接口**：
+```python
+# src/db/connection.py
+def check_connection(engine: Engine) -> None:
+    """执行只读连通性检查；失败抛 StorageError。"""
+
+def check_schema(engine: Engine, required_version: int) -> None:
+    """只读检查结构版本和 18 张必需表；不提交事务。"""
+
+def close_engine(engine: Engine) -> None:
+    """释放连接池；清理失败不覆盖原业务异常。"""
 ```
 
 
@@ -851,8 +867,8 @@ def create_account(self, actor: Actor, data: AccountInput) -> AccountView:
     参数：
     - actor: 当前操作人（必须是管理员）
     - data: AccountInput
-      - username: 用户名（3-50 位，字母数字下划线）
-      - password: 密码（1-32 位，字母数字下划线短横线）
+      - username: 用户名（3-50 位 ASCII 字母、数字或下划线）
+      - password: 密码（6-32 位 ASCII 字母、数字、下划线或短横线）
       - role: 角色（"member" | "coach" | "receptionist" | "admin"）
     
     返回：AccountView（新账号信息，不含密码）
@@ -860,7 +876,7 @@ def create_account(self, actor: Actor, data: AccountInput) -> AccountView:
     可能的错误：
     - 不是管理员 → PermissionDenied
     - 用户名重复 → ConflictError
-    - 密码不符合规则 → InvalidInputError
+    - 用户名或密码不符合格式 → InvalidInputError
     
     注意：
     - 密码要用哈希算法加密后存储
@@ -985,6 +1001,20 @@ def link_profile(self, actor: Actor, account_id: int, data: AccountLinkInput) ->
     """
 ```
 
+**账号仓储接口**：
+```python
+# src/db/account_repo.py
+class AccountRepository:
+    def __init__(self, session: Session) -> None: ...
+    def get(self, account_id: int) -> Account | None: ...
+    def lock(self, account_id: int) -> Account | None: ...
+    def find_by_username(self, username: str) -> Account | None: ...
+    def get_actor(self, account_id: int) -> Actor | None: ...
+    def create(self, *, username: str, password_hash: str, role: Role) -> Account: ...
+    def list(self, query: NamedQuery) -> Page[AccountView]: ...
+    def set_active(self, account_id: int, active: bool) -> AccountView: ...
+```
+
 **密码哈希与验证**：
 ```python
 # src/utils/passwords.py
@@ -992,7 +1022,7 @@ def hash_password(password: str) -> str:
     """
     校验密码并生成带随机盐的哈希
 
-    参数：password 为原始密码，允许字母、数字、短横线和下划线，共 1-32 位
+    参数：password 为原始密码，允许 ASCII 字母、数字、短横线和下划线，共 6-32 位
     返回：包含算法、参数和盐的哈希字符串
     异常：InvalidInputError（密码格式不合法）、ResourceError（哈希工具不可用）
     """
@@ -1076,15 +1106,20 @@ class OutcomeUnknownError(StorageError):
         """保存安全提示、原请求编号及原业务记录编号。"""
 
 class InitializationError(StorageError):
-    """初始化失败，携带已完成步骤。"""
+    """初始化失败，携带已完成步骤和结果是否未知。"""
 
     completed_tables: tuple[str, ...]
     failed_step: str
+    outcome_unknown: bool
 
     def __init__(
         self, message: str, *, completed_tables: tuple[str, ...], failed_step: str,
+        outcome_unknown: bool = False,
     ) -> None:
-        """保存安全提示、已完成表名及失败步骤。"""
+        """保存安全提示、已完成表名、失败步骤和结果状态。
+
+        completed_tables 只记录已经收到 CREATE TABLE 成功响应的表。
+        """
 
 # src/errors/business.py
 class ResourceError(GymError): pass  # 文件或工具不可用
@@ -4375,7 +4410,6 @@ class ProductService:
 **去首尾空白后校验**：
 - 姓名/名称/位置：1-100 字
 - 资产编号：1-50 字
-- 用户名：3-50 字（ASCII）
 - 电话：1-32 字（可空）
 - 专长：0-200 字（可空字符串）
 - 评价：0-1000 字（可空字符串）
@@ -4386,12 +4420,21 @@ class ProductService:
 - 电话可空用 None，不用空字符串
 - 资产编号保留大小写且区分大小写
 
+#### 用户名规则
+
+- 去首尾空白并转为小写后校验和保存
+- 只允许 ASCII 字母、数字和下划线 `_`
+- 长度为 3-50 位
+- 规范化后的正则为：`^[a-z0-9_]{3,50}$`
+- 创建、修改账号时格式不合法抛 `InvalidInputError`
+- 登录时使用相同方式规范化用户名，再按规范化结果查询账号
+
 #### 密码规则
 
 **字符限制**：
 - 只允许 ASCII 字母、数字、短横线 `-`、下划线 `_`
-- 长度：1-32 位
-- 正则：`^[A-Za-z0-9_-]{1,32}$`
+- 长度：6-32 位
+- 正则：`^[A-Za-z0-9_-]{6,32}$`
 
 **不允许**：
 - 空密码
@@ -4528,13 +4571,14 @@ CREATE TABLE accounts (
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    CHECK (username REGEXP '^[a-z0-9_]{3,50}$'),
     CHECK (role IN ('member', 'coach', 'receptionist', 'admin')),
     CHECK (is_active IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
 **说明**：
-- username 使用 utf8mb4_bin 排序规则（区分大小写）
+- username 使用 utf8mb4_bin 排序规则，并只保存规范化后的小写值
 - password_hash 存储哈希后的密码，不存储明文
 - role 限定为四个固定值
 - is_active 用 BOOLEAN（实际是 TINYINT(1)）
@@ -4577,6 +4621,10 @@ CREATE TABLE members (
 - bookings.(member_id, session_id)
 - operation_records.request_id
 
+`gym_entries` 使用 `(membership_id, member_id)` 复合外键引用
+`memberships.(id, member_id)`；会员卡记录再通过 `member_id` 引用 `members`，
+因此入场记录中的会员必须存在，且必须是该会员卡的持有人。
+
 **查询索引**：
 - payments.(paid_at, id) — 时间范围查询
 - course_sessions.(coach_id, starts_at, id) — 教练课表
@@ -4589,14 +4637,16 @@ CREATE TABLE members (
 **初始化流程**：
 1. 检查数据库连接
 2. 检查目标是否为空库（无业务表）
-3. 逐表执行 CREATE TABLE
+3. 逐表执行 `sql/001_initial_schema.sql` 中的 CREATE TABLE
 4. 记录版本号到 schema_versions
 5. 失败时报告已完成步骤，不删除已有数据
+6. 建表期间中断时标记结果未知；尚未执行建表前取消则正常退出
 
 **注意事项**：
 - MySQL 建表会隐式提交，不能回滚
 - 脚本检查空库，避免覆盖已有数据
 - 不使用 DROP TABLE IF EXISTS
+- `sql/001_initial_schema.sql` 是初始化 DDL 的唯一执行来源；本文件中的 SQL 仅作阅读说明
 
 ---
 
@@ -4690,7 +4740,7 @@ class Actor:
 ```python
 @dataclass(frozen=True, kw_only=True)
 class AccountInput:
-    username: str
+    username: str  # 去首尾空白并转小写后，只允许 3–50 位 ASCII 字母、数字和下划线
     password: str = field(repr=False)  # 避免普通对象打印带出密码
     role: Role
 
