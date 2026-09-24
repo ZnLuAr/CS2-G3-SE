@@ -26,7 +26,7 @@
 | 查看代码规范和质量要求 | [`docs/project-standards.md`](./docs/project-standards.md) |
 | **记录开发过程（给报告攒素材）** | [`docs/dev-materials-for-report/`](./docs/dev-materials-for-report/)，四选一：设计决策 / 开发日志 / 测试笔记 / 会议记录 |
 | 学习怎么用 Git / PR 协作 | 本 README 的[小组协作规范](#小组协作规范) |
-| 查看功能细项与暂定分工 | [`docs/功能列表.csv`](./docs/功能列表.csv) |
+| 查看功能细项与暂定分工 | [`docs/feature-list.csv`](./docs/feature-list.csv) |
 | 了解技术栈 | 本 README 后部的[技术栈](#技术栈)（Python、MySQL，默认 CLI、可选 TUI） |
 
 > ⚠️ **报告素材（决策记录、开发日志、测试笔记、会议记录）应该边开发边写**，不应拖到 ddl 才回忆。课程评分看的是**过程**——素材从哪积累、最终报告就有多少话可说。
@@ -67,8 +67,9 @@
 ├── src/                            # 应用代码包
 │   ├── app.py                      # 应用协调层：服务管理、登录状态
 │   ├── config.py                   # 配置读取：数据库连接、日志、时区
-│   ├── cmd/                        # 数据库维护命令（独立于主程序）
-│   │   ├── db.py                   # init：建表；seed：生成演示数据
+│   ├── cmd/                        # 数据库、测试和本机日志命令
+│   │   ├── db.py                   # init：建表；migrate：迁移；seed：演示数据
+│   │   ├── logs.py                 # 按本机配置浏览日志快照
 │   │   └── test.py                 # unit/mysql/all：统一测试入口
 │   ├── utils/                      # 工具模块（基础设施）
 │   │   └── logging_config.py       # 日志系统：配置、记录、脱敏、查询
@@ -94,16 +95,15 @@
 │       └── tui/                    # 终端界面（可选）
 │           └── app.py              # TUI 启动与关闭
 ├── tests/                          # pytest 测试与 MySQL fixture
-│   ├── conftest.py                 # 测试配置和数据库 fixture
-│   ├── test_contract_consistency.py # 文档、源码和 SQL 契约检查
-│   └── test_sys_base.py            # SYS 基础功能测试
+│
 ├── sql/                            # SQL 脚本（如果不用 ORM 迁移工具）
-│   └── 001_initial_schema.sql      # 版本 1 的 18 张表建表脚本
+│   ├── 001_initial_schema.sql      # 版本 1 的 18 张表建表脚本
+│   └── 002_query_indexes_and_equipment_location.sql # 版本 2 迁移脚本
 ├── docs/                           # 文档目录
 │   ├── README.md                   # 文档索引
 │   ├── architecture.md             # 系统设计与架构方案
 │   ├── project-standards.md        # 代码与文档规范
-│   ├── 功能列表.csv                # 功能清单与实现状态
+│   ├── feature-list.csv            # 功能清单与实现状态
 │   └── dev-materials-for-report/   # 报告素材（开发日志、决策记录等）
 ├── .gitignore
 ├── AGENTS.md                       # Agent 协作规范
@@ -119,6 +119,7 @@
 ```bash
 python main.py --help
 python -m src.cmd.db init --config config.json
+python -m src.cmd.db migrate --config config.json
 python -m src.cmd.db seed --config config.json
 python -m src.cmd.test
 python -m src.cmd.test mysql --config config.test.json
