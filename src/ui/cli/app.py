@@ -9,6 +9,7 @@ from src.errors.handler import handle_error
 from src.models.contracts import Actor
 from src.ui.cli import menus
 from src.ui.cli.menus import CliHandlers, MenuItem
+from src.utils.logging_config import Operation
 
 
 def invoke_action(
@@ -91,7 +92,10 @@ class GymCLI:
                 if choice == "0":
                     return 0
                 if choice == "1":
-                    action = self._execute(MenuItem(key="1", label="登录", operation="login", action=self._handlers.auth.login), None)
+                    action = self._execute(MenuItem(
+                        key="1", label="登录", operation=Operation.LOGIN.value,
+                        action=self._handlers.auth.login,
+                    ), None)
                     if action == "exit":
                         return 1
                 else:

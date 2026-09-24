@@ -16,7 +16,7 @@ class MemberService:
     """会员档案服务。
 
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
-    输入字段见 models/contracts.py；实现后的异常和事务约定见设计第 4 节。
+    输入字段见 models/contracts.py；实现后遵守 docs/architecture.md“开发前必读”的返回、异常、权限和事务约定。
     构造函数保存依赖；业务方法仍为占位。
     """
 
@@ -29,33 +29,35 @@ class MemberService:
         """创建会员档案。
 
         返回：MemberView。在同一服务事务中修改对应记录，失败清理后抛异常。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("MemberService.create_member 尚未实现")
 
     def get_member(self, actor: Actor, member_id: int) -> MemberView:
         """查询会员详情。
 
         返回：MemberView。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("MemberService.get_member 尚未实现")
 
     def list_members(self, actor: Actor, query: MemberQuery) -> Page[MemberView]:
         """分页查询会员。
 
         返回：Page[MemberView]。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("MemberService.list_members 尚未实现")
 
     def update_member(self, actor: Actor, member_id: int, data: MemberInput) -> MemberView:
         """修改会员资料。
 
         返回：MemberView。在同一服务事务中修改对应记录，失败清理后抛异常。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("MemberService.update_member 尚未实现")
 
     def set_member_active(self, actor: Actor, member_id: int, active: bool) -> MemberView:
         """停用或恢复会员。
 
+        停用时先锁会员，并在锁内拒绝仍有 reserved/checked_in 预约的会员。
+        办卡、预约、入场和体测录入使用同一会员锁复核启用状态。
         返回：MemberView。在同一服务事务中修改对应记录，失败清理后抛异常。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("MemberService.set_member_active 尚未实现")

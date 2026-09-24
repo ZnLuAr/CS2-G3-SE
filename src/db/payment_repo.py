@@ -50,7 +50,7 @@ class PaymentRepository:
         raise NotImplementedError("PaymentRepository.get_by_membership 尚未实现")
 
     def list(self, query: PaymentQuery) -> Page[PaymentView]:
-        """按时间、会员和方式分页查询流水。
+        """按时间、会员和方式筛选，再按 paid_at、id 降序稳定分页查询流水。
 
         返回：Page[PaymentView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("PaymentRepository.list 尚未实现")

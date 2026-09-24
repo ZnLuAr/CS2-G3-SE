@@ -5,9 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.models.contracts import AttendanceChange
+from src.models.contracts import (
+    AttendanceChange,
+    LogEntry,
+    LogQuery,
+    LogSnapshot,
+    Page,
+)
 
 if TYPE_CHECKING:
     from src.config import AppSettings
@@ -92,7 +99,7 @@ def configure_logging(settings: AppSettings) -> None:
     - 日志级别：settings.log.level（如 INFO）
     - 日志文件：logs/app.log
     - 日志格式：UTF-8 单行 JSON
-    - 轮转策略：5 MiB × 4 份（当前 + 3 份备份）
+    - 轮转策略：使用 settings.log.max_bytes 和 settings.log.backup_count
     - 跨进程锁：防止多进程写入冲突
 
     失败处理：
@@ -145,6 +152,7 @@ def log_event(
     - 体测：只记录操作，不记录具体数值
     - SQL：不记录完整 SQL 语句
     - 异常链：只记录文件名、行号、函数名
+    - 未知异常：error_message 为 None，不记录 str(error)
 
     单条日志限制：
     - 最大 16 KiB
@@ -170,3 +178,15 @@ def close_logging() -> None:
     在程序退出时调用。
     """
     raise NotImplementedError("close_logging 尚未实现")
+
+
+def read_log_snapshot(directory: Path, *, backup_count: int) -> LogSnapshot:
+    """复制并解析当前日志及配置数量的备份，返回固定快照。
+
+    无日志时 entries 为空；损坏行计入 skipped_lines。当前仅占位。"""
+    raise NotImplementedError("read_log_snapshot 尚未实现")
+
+
+def query_log_snapshot(snapshot: LogSnapshot, query: LogQuery) -> Page[LogEntry]:
+    """在固定快照中筛选、稳定排序并分页；当前仅占位。"""
+    raise NotImplementedError("query_log_snapshot 尚未实现")

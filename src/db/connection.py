@@ -13,8 +13,11 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+CURRENT_SCHEMA_VERSION = 2
+
+
 def create_engine(settings: AppSettings) -> Engine:
-    """按配置创建 MySQL 引擎，新连接使用 UTC 和严格 SQL 模式。"""
+    """按配置创建 MySQL 引擎，新连接使用 UTC、严格 SQL 模式和 REPEATABLE READ。"""
     from sqlalchemy import create_engine as sa_create_engine, event
     from sqlalchemy.engine import URL
     from src.errors.storage import StorageError
@@ -38,6 +41,7 @@ def create_engine(settings: AppSettings) -> Engine:
             max_overflow=0,
             pool_timeout=5,
             pool_pre_ping=True,  # 检查连接是否存活
+            isolation_level="REPEATABLE READ",
             connect_args={"connect_timeout": 5, "read_timeout": 30, "write_timeout": 30},
             echo=False,  # 不打印 SQL（避免泄露敏感数据）
         )
@@ -120,6 +124,11 @@ def check_schema(engine: Engine, required_version: int) -> None:
 
             current_version = row[0]
             if current_version != required_version:
+                if current_version < required_version:
+                    raise InvalidState(
+                        f"数据库版本过低：当前 {current_version}，需要 {required_version}；"
+                        "请先运行 python -m src.cmd.db migrate"
+                    )
                 raise InvalidState(
                     f"数据库版本不匹配：当前 {current_version}，需要 {required_version}"
                 )
@@ -130,14 +139,21 @@ def check_schema(engine: Engine, required_version: int) -> None:
         raise StorageError("版本检查失败") from exc
 
 
-def transaction(session: Session) -> AbstractContextManager[Session]:
-    """返回事务上下文；负责提交、失败回滚及提交结果未知的区分。"""
+def transaction(
+    session: Session,
+    *,
+    request_id: str | None = None,
+    record_id: int | None = None,
+) -> AbstractContextManager[Session]:
+    """返回事务上下文；提交未知时保留调用方提供的核实编号。"""
     from contextlib import contextmanager
 
     @contextmanager
     def _transaction():
         try:
             yield session
+            # flush 中的约束失败表示事务确定没有提交，应保留原异常供服务映射。
+            session.flush()
         except BaseException:
             try:
                 session.rollback()
@@ -153,7 +169,11 @@ def transaction(session: Session) -> AbstractContextManager[Session]:
                 session.rollback()
             except BaseException:
                 pass
-            raise OutcomeUnknownError("事务提交结果未知") from exc
+            raise OutcomeUnknownError(
+                "事务提交结果未知",
+                request_id=request_id,
+                record_id=record_id,
+            ) from exc
 
     return _transaction()
 

@@ -44,3 +44,24 @@ class InitializationError(StorageError):
         self.completed_tables = completed_tables
         self.failed_step = failed_step
         self.outcome_unknown = outcome_unknown
+
+
+class MigrationError(StorageError):
+    """数据库迁移失败，保存已经确认完成的步骤和结果状态。"""
+
+    completed_steps: tuple[str, ...]
+    failed_step: str
+    outcome_unknown: bool
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        completed_steps: tuple[str, ...],
+        failed_step: str,
+        outcome_unknown: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.completed_steps = completed_steps
+        self.failed_step = failed_step
+        self.outcome_unknown = outcome_unknown

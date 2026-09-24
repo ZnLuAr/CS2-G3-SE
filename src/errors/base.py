@@ -11,7 +11,7 @@ ErrorAction = Literal["continue", "login", "exit", "verify"]
 
 @dataclass(frozen=True, kw_only=True)
 class ErrorResult:
-    """中文提示及界面应执行的动作，格式见设计第 7 节。"""
+    """中文提示及界面应执行的动作，格式见架构“错误处理”。"""
 
     message: str
     action: ErrorAction

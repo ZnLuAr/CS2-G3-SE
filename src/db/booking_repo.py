@@ -44,26 +44,43 @@ class BookingRepository:
     ) -> Page[BookingView]:
         """按服务明确给出的会员或教练范围分页查询。
 
+        会员调用只传 scope_member_id，教练调用只传 scope_coach_id；
+        只有前台或管理员可以同时传 None，两个范围不能同时非空。
+        按关联课次 starts_at 降序、预约 id 降序稳定分页。
         返回：Page[BookingView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("BookingRepository.list 尚未实现")
 
     def find_for_member_session(self, member_id: int, session_id: int) -> Booking | None:
-        """读取同会员同课次的预约，包含已取消状态。
+        """锁定当前读同会员同课次的预约，包含已取消状态。
 
+        调用方须先锁定会员和课次；不得沿用等锁前的一致性读快照。
         返回：Booking | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("BookingRepository.find_for_member_session 尚未实现")
+
+    def has_open_for_member(self, member_id: int) -> bool:
+        """检查会员是否仍有 reserved 或 checked_in 预约。
+
+        调用方须先锁定会员，并使用锁定当前读，不能沿用事务先前的一致性读快照。
+        返回固定 bool，不提交事务。当前仅占位。"""
+        raise NotImplementedError("BookingRepository.has_open_for_member 尚未实现")
+
+    def list_open_for_session(self, session_id: int) -> tuple[Booking, ...]:
+        """读取课次的 reserved/checked_in 预约，供取消课次比较候选快照。
+
+        按 member_id、membership_id、id 升序返回，不加锁、不提交。当前仅占位。"""
+        raise NotImplementedError("BookingRepository.list_open_for_session 尚未实现")
+
+    def has_open_for_session(self, session_id: int) -> bool:
+        """课次已加锁后，以锁定当前读检查 reserved/checked_in 预约。
+
+        不得沿用等待课次锁前建立的一致性读快照；不提交事务。当前仅占位。"""
+        raise NotImplementedError("BookingRepository.has_open_for_session 尚未实现")
 
     def create(self, data: BookingInput, booked_at: datetime) -> BookingView:
         """保存预约，不在此处检查权益或提交事务。
 
         返回：BookingView；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("BookingRepository.create 尚未实现")
-
-    def restore(self, booking_id: int, *, membership_id: int, booked_at: datetime) -> BookingView:
-        """恢复已取消预约并清空旧签到和结束时间。
-
-        返回：BookingView；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.restore 尚未实现")
 
     def set_state(
         self,
@@ -79,14 +96,16 @@ class BookingRepository:
         raise NotImplementedError("BookingRepository.set_state 尚未实现")
 
     def count_occupied(self, session_id: int) -> int:
-        """统计该课次未取消预约数。
+        """锁定当前读取得该课次未取消预约记录并统计数量。
 
+        调用方须先锁定课次；不得沿用事务先前的一致性读快照。
         返回：int；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("BookingRepository.count_occupied 尚未实现")
 
     def has_member_conflict(self, member_id: int, window: DateWindow) -> bool:
-        """检查会员未取消预约是否与目标时间重叠。
+        """锁定当前读检查会员未取消预约是否与目标时间重叠。
 
+        调用方须先锁定会员；不得沿用事务先前的一致性读快照。
         返回：bool；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("BookingRepository.has_member_conflict 尚未实现")
 
@@ -95,8 +114,9 @@ class BookingRepository:
     ) -> bool:
         """检查体测录入所需的当前授课关系；at 由服务生成。
 
+        调用方已经持有会员行锁；实现须在该事务中锁定匹配预约并重读状态。
         要求预约 reserved/checked_in、课次 scheduled，且 booked_at <= at < ends_at。
-        返回固定 bool，不写数据；历史体测查看不用此条件，按设计第 3.6 节保留截止。
+        返回固定 bool，不写数据；历史体测查看不用此条件，按架构“体测权限规则”保留截止。
         当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("BookingRepository.has_current_coaching_booking 尚未实现")
 

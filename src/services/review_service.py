@@ -16,7 +16,7 @@ class ReviewService:
     """课程评价服务。
 
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
-    输入字段见 models/contracts.py；实现后的异常和事务约定见设计第 4 节。
+    输入字段见 models/contracts.py；实现后遵守 docs/architecture.md“开发前必读”的返回、异常、权限和事务约定。
     构造函数保存依赖；业务方法仍为占位。
     """
 
@@ -28,20 +28,21 @@ class ReviewService:
     def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView:
         """提交本人已完成课程的评价。
 
+        在事务中锁定预约后复核归属、完成状态和既有评价；重复或并发重复提交抛 ConflictError。
         返回：ReviewView。在同一服务事务中修改对应记录，失败清理后抛异常。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReviewService.create_review 尚未实现")
 
     def get_review(self, actor: Actor, review_id: int) -> ReviewView:
         """查看本人评价详情。
 
         返回：ReviewView。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReviewService.get_review 尚未实现")
 
     def list_reviews(self, actor: Actor, paging: PageRequest) -> Page[ReviewView]:
         """分页查询本人评价。
 
         返回：Page[ReviewView]。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReviewService.list_reviews 尚未实现")

@@ -1,4 +1,4 @@
-"""接口共用的数据格式，依据 docs/architecture.md 第 3 节定义。
+"""接口共用的数据格式，依据 docs/architecture.md“公共类型定义”。
 
 数据类只声明字段，不校验业务；计算属性尚未实现。
 服务只能返回约定的 View 或 Page，失败抛异常，不返回临时字典。
@@ -55,8 +55,8 @@ class NamedQuery:
 class Actor:
     account_id: int
     role: Role
-    member_id: int | None
-    coach_id: int | None
+    member_id: int | None  # member 角色必须有值，其他角色必须为 None
+    coach_id: int | None  # coach 角色必须有值，其他角色必须为 None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -132,7 +132,7 @@ class CardTerms:
     name: str
     kind: CardKind
     price: Decimal
-    private_lesson_credits: int  # 月/季/年固定赠送 20/64/256 节；次卡为 0
+    private_lesson_credits: int  # 月/季/年购买 20/64/256 节私教课；独立次卡为 0 节
     access_uses: int | None  # 次卡为总入场次数；期限卡为 None
     valid_days: int | None  # 月/季/年固定为 30/90/365；次卡无期限，为 None
 
@@ -284,7 +284,7 @@ class SessionView:
     ends_at: datetime
     capacity: int
     occupied_count: int
-    available_count: int
+    available_count: int  # scheduled 课次的未占用容量；已完成或已取消时为 0
     status: SessionStatus
 
 
@@ -511,7 +511,16 @@ class LogEntry:
     error_message: str | None  # 脱敏后的错误消息
     attendance_change: AttendanceChange | None = None  # 签到状态变更
     frames: tuple[LogFrame, ...] = ()  # 堆栈帧
-    truncated: bool = False  # 堆栈是否被截断
+    truncated: bool = False  # 整条日志是否因 16 KiB 上限被截断
+
+
+@dataclass(frozen=True, kw_only=True)
+class LogSnapshot:
+    """一次日志浏览使用的固定快照。"""
+
+    captured_at: datetime
+    entries: tuple[LogEntry, ...]
+    skipped_lines: int
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -47,7 +47,13 @@ class App:
 
     def start(self) -> None:
         """检查数据库结构并装配服务和 CLI。"""
-        from src.db.connection import create_engine, create_session_factory, check_connection, check_schema
+        from src.db.connection import (
+            CURRENT_SCHEMA_VERSION,
+            check_connection,
+            check_schema,
+            create_engine,
+            create_session_factory,
+        )
         from src.errors.business import InvalidState
         from src.ui.cli.app import GymCLI
         from src.ui.cli import menus
@@ -56,10 +62,10 @@ class App:
             raise InvalidState("应用已经启动，请先关闭")
         self._engine = create_engine(self.settings)
         check_connection(self._engine)
-        check_schema(self._engine, required_version=1)
+        check_schema(self._engine, required_version=CURRENT_SCHEMA_VERSION)
         factory = create_session_factory(self._engine)
         zone = self.settings.timezone_name
-        auth = AuthService(factory)
+        auth = AuthService(factory, log_config=self.settings.log)
         services = ServiceBundle(
             auth=auth, members=MemberService(factory, auth),
             products=ProductService(factory, auth, timezone_name=zone),

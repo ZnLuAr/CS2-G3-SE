@@ -38,7 +38,7 @@ class EquipmentRepository:
         raise NotImplementedError("EquipmentRepository.get 尚未实现")
 
     def list(self, query: EquipmentQuery) -> Page[EquipmentView]:
-        """按编号、名称、位置和状态分页。
+        """按编号、名称、位置和状态筛选，再按 id 升序稳定分页。
 
         返回：Page[EquipmentView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("EquipmentRepository.list 尚未实现")
@@ -84,8 +84,14 @@ class MaintenanceRepository:
         返回：MaintenanceView | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("MaintenanceRepository.get 尚未实现")
 
+    def lock(self, maintenance_id: int) -> MaintenanceView | None:
+        """在当前事务中锁定并读取维修记录，供完成维修时复核状态。
+
+        返回：MaintenanceView | None；当前仅占位，调用抛 NotImplementedError。"""
+        raise NotImplementedError("MaintenanceRepository.lock 尚未实现")
+
     def list(self, equipment_id: int, paging: PageRequest) -> Page[MaintenanceView]:
-        """按报修时间和编号降序分页查询。
+        """按 reported_at、id 降序稳定分页查询。
 
         返回：Page[MaintenanceView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("MaintenanceRepository.list 尚未实现")

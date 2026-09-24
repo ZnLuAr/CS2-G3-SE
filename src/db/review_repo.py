@@ -26,8 +26,14 @@ class ReviewRepository:
         返回：ReviewView | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("ReviewRepository.get 尚未实现")
 
+    def get_by_booking(self, booking_id: int) -> ReviewView | None:
+        """预约已加锁后，以锁定当前读读取已有评价，供并发防重检查。
+
+        返回：ReviewView | None；当前仅占位，调用抛 NotImplementedError。"""
+        raise NotImplementedError("ReviewRepository.get_by_booking 尚未实现")
+
     def list(self, member_id: int, paging: PageRequest) -> Page[ReviewView]:
-        """分页查询指定会员的评价。
+        """按 created_at、id 降序稳定分页查询指定会员的评价。
 
         返回：Page[ReviewView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("ReviewRepository.list 尚未实现")

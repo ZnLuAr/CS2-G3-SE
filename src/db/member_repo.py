@@ -28,7 +28,7 @@ class MemberRepository:
         raise NotImplementedError("MemberRepository.get 尚未实现")
 
     def list(self, query: MemberQuery, *, scope_member_id: int | None) -> Page[MemberView]:
-        """按服务提供的权限范围分页；None 仅用于获准查看全体的员工。
+        """按服务提供的权限范围及 id 升序稳定分页；None 仅用于获准查看全体的员工。
 
         返回：Page[MemberView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("MemberRepository.list 尚未实现")

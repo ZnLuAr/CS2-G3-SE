@@ -91,7 +91,7 @@ CREATE TABLE card_products (
 
 ALTER TABLE card_products COMMENT='产品表：私教课产品（月/季/年）和入场次卡，固定配置';
 ALTER TABLE card_products MODIFY COLUMN kind VARCHAR(16) NOT NULL COMMENT '产品类型：monthly=月卡(30天20节课), quarterly=季卡(90天64节课), yearly=年卡(365天256节课), count=次卡(10次入场0节课)';
-ALTER TABLE card_products MODIFY COLUMN private_lesson_credits INT NOT NULL COMMENT '私教课节数：办卡时赠送的课节数，次卡为0';
+ALTER TABLE card_products MODIFY COLUMN private_lesson_credits INT NOT NULL COMMENT '私教课节数：购买私教课产品的课节数，单独购买的次卡为0';
 ALTER TABLE card_products MODIFY COLUMN access_uses INT NULL COMMENT '入场次数：次卡专用，私教课产品为NULL（附赠无限次门禁）';
 ALTER TABLE card_products MODIFY COLUMN valid_days INT NULL COMMENT '有效天数：私教课产品的门禁天数，次卡为NULL';
 
@@ -142,7 +142,7 @@ ALTER TABLE memberships COMMENT='会员卡表：会员购买的产品实例，�
 ALTER TABLE memberships MODIFY COLUMN valid_from DATE NOT NULL COMMENT '生效日期：门禁权限起始日（含当日）';
 ALTER TABLE memberships MODIFY COLUMN valid_until DATE NULL COMMENT '失效日期：门禁权限截止日（不含当日），次卡为NULL';
 ALTER TABLE memberships MODIFY COLUMN remaining_accesses INT NULL COMMENT '剩余入场次数：次卡专用，私教课产品为NULL';
-ALTER TABLE memberships MODIFY COLUMN remaining_private_lessons INT NOT NULL COMMENT '账面剩余课节：未预约也未消课的课节数';
+ALTER TABLE memberships MODIFY COLUMN remaining_private_lessons INT NOT NULL COMMENT '账面剩余课节：尚未消课的课节数，包含已被预约占用的课节';
 ALTER TABLE memberships MODIFY COLUMN reserved_private_lessons INT NOT NULL COMMENT '预约占用课节：已预约但未消课的课节数';
 ALTER TABLE memberships MODIFY COLUMN status VARCHAR(16) NOT NULL DEFAULT 'active' COMMENT '状态：active=可用, void=已作废（退卡或管理员作废）';
 
@@ -361,7 +361,7 @@ CREATE TABLE maintenance_records (
 ALTER TABLE maintenance_records COMMENT='维护记录表：器械维修保养记录，记录报告和解决时间';
 ALTER TABLE maintenance_records MODIFY COLUMN reported_at DATETIME(6) NOT NULL COMMENT '报告时刻：发现问题的时间';
 ALTER TABLE maintenance_records MODIFY COLUMN resolved_at DATETIME(6) NULL COMMENT '解决时刻：问题解决的时间，未解决为NULL';
-ALTER TABLE maintenance_records MODIFY COLUMN operator_id BIGINT NOT NULL COMMENT '报告人ID：发现问题的员工';
+ALTER TABLE maintenance_records MODIFY COLUMN operator_id BIGINT NOT NULL COMMENT '报告人ID：提交报修的账号';
 ALTER TABLE maintenance_records MODIFY COLUMN resolved_by BIGINT NULL COMMENT '解决人ID：解决问题的员工，未解决为NULL';
 
 
@@ -404,6 +404,6 @@ CREATE TABLE operation_records (
 ALTER TABLE operation_records COMMENT='操作记录表：幂等性检查和审计日志，记录关键业务操作';
 ALTER TABLE operation_records MODIFY COLUMN request_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE COMMENT '请求ID：UUID，用于幂等性检查，防止重复提交';
 ALTER TABLE operation_records MODIFY COLUMN actor_id BIGINT NOT NULL COMMENT '操作者ID：执行操作的账号';
-ALTER TABLE operation_records MODIFY COLUMN operation VARCHAR(50) NOT NULL COMMENT '操作类型：sell_product=办卡, create_session=排课, cancel_session=取消课节, book=预约, cancel_booking=取消预约, register_entry=门禁登记';
+ALTER TABLE operation_records MODIFY COLUMN operation VARCHAR(50) NOT NULL COMMENT '操作类型：sell_product=销售产品, create_session=排课, cancel_session=取消课次, book=预约, cancel_booking=取消预约, register_entry=门禁登记';
 ALTER TABLE operation_records MODIFY COLUMN payload_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '请求哈希：SHA-256，用于检测相同请求ID的内容是否一致';
 ALTER TABLE operation_records MODIFY COLUMN result_id BIGINT NOT NULL COMMENT '结果ID：关联的业务记录ID（如会员卡ID、课节ID等）';

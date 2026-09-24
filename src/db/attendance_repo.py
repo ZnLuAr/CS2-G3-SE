@@ -22,7 +22,7 @@ class ConsumptionRepository:
         raise NotImplementedError("ConsumptionRepository.__init__ 尚未实现")
 
     def get_by_booking(self, booking_id: int) -> ConsumptionView | None:
-        """按预约读取已有消课结果，供重复请求复用。
+        """预约已加锁后，以锁定当前读读取已有消课结果，供重复请求复用。
 
         返回：ConsumptionView | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("ConsumptionRepository.get_by_booking 尚未实现")

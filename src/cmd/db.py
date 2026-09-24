@@ -2,6 +2,7 @@
 
 用法：
     python -m src.cmd.db init   # 初始化数据库（建表）
+    python -m src.cmd.db migrate  # 将已有数据库迁移到当前版本
     python -m src.cmd.db seed   # 生成演示数据
 """
 
@@ -21,6 +22,15 @@ class InitResult:
 
     tables_created: int  # 创建的表数量
     schema_version: int  # 记录的版本号
+
+
+@dataclass(frozen=True, kw_only=True)
+class MigrationResult:
+    """数据库迁移结果。"""
+
+    previous_version: int
+    schema_version: int
+    steps_applied: int
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -51,7 +61,7 @@ def init_database(connection: Connection) -> InitResult:
 
     执行：
     - 逐表创建（按依赖顺序）
-    - 记录版本号到 schema_versions
+    - 记录版本 1 后应用后续迁移，最终达到当前版本
 
     失败处理：
     - MySQL 建表会隐式提交，不能回滚
@@ -70,13 +80,13 @@ def init_database(connection: Connection) -> InitResult:
     from pathlib import Path
     from sqlalchemy import text
     from src.errors.business import InvalidState
-    from src.errors.storage import InitializationError, StorageError
+    from src.errors.storage import InitializationError, MigrationError, StorageError
 
     schema_path = Path(__file__).resolve().parents[2] / "sql" / "001_initial_schema.sql"
     try:
         schema_text = schema_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise StorageError("找不到数据库初始化脚本") from exc
+    except (OSError, UnicodeError) as exc:
+        raise StorageError("无法读取数据库初始化脚本") from exc
     schema_text = "\n".join(
         line for line in schema_text.splitlines()
         if not line.lstrip().startswith("--")
@@ -94,15 +104,37 @@ def init_database(connection: Connection) -> InitResult:
         "consumptions", "reviews", "equipment", "maintenance_records", "body_measurements",
         "operation_records",
     )
-    table_steps: list[tuple[str, str]] = []
+    schema_steps: list[tuple[str, str, str]] = []
+    created_tables: list[str] = []
+    current_table: str | None = None
+    alter_counts: dict[str, int] = {}
     for statement in schema_statements:
-        match = re.match(r"CREATE TABLE\s+(\w+)", statement, re.IGNORECASE)
-        if match is None:
+        create_match = re.match(r"CREATE\s+TABLE\s+(\w+)\b", statement, re.IGNORECASE)
+        if create_match is not None:
+            table_name = create_match.group(1)
+            created_tables.append(table_name)
+            current_table = table_name
+            alter_counts[table_name] = 0
+            schema_steps.append((table_name, table_name, statement))
+            continue
+
+        alter_match = re.match(
+            r"ALTER\s+TABLE\s+(\w+)\s+(.+)", statement, re.IGNORECASE | re.DOTALL,
+        )
+        if alter_match is None:
             raise StorageError("数据库初始化脚本包含不支持的语句")
-        table_steps.append((match.group(1), statement))
-    if tuple(name for name, _ in table_steps) != expected_tables:
+        table_name, action = alter_match.groups()
+        if table_name != current_table:
+            raise StorageError("ALTER TABLE 必须紧跟对应表的 CREATE TABLE")
+        if re.match(r"(?:COMMENT\s*=|MODIFY\s+COLUMN\b)", action, re.IGNORECASE) is None:
+            raise StorageError("数据库初始化脚本包含不支持的 ALTER TABLE 操作")
+        alter_counts[table_name] += 1
+        step_name = f"{table_name}.alter[{alter_counts[table_name]}]"
+        schema_steps.append((table_name, step_name, statement))
+
+    if tuple(created_tables) != expected_tables:
         raise StorageError("数据库初始化脚本的表名、顺序或数量不符合版本 1 设计")
-    lock_name = "cs2g3:init:" + hashlib.sha256(
+    lock_name = "cs2g3:schema:" + hashlib.sha256(
         str(connection.engine.url.database).encode("utf-8")
     ).hexdigest()[:40]
     tables_created = 0
@@ -134,11 +166,12 @@ def init_database(connection: Connection) -> InitResult:
             raise InvalidState("数据库不为空，请使用全新数据库")
 
         # 逐表创建
-        for table_name, sql in table_steps:
-            current_step = table_name
+        for table_name, step_name, sql in schema_steps:
+            current_step = step_name
             connection.execute(text(sql))
-            tables_created += 1
-            completed_tables.append(table_name)
+            if step_name == table_name:
+                tables_created += 1
+                completed_tables.append(table_name)
             current_step = None
 
         # 记录版本号
@@ -155,7 +188,19 @@ def init_database(connection: Connection) -> InitResult:
             ) from exc
         current_step = None
 
-        return InitResult(tables_created=tables_created, schema_version=1)
+        try:
+            migration = _migrate_database(connection, lock_already_held=True)
+        except MigrationError as exc:
+            raise InitializationError(
+                "建表完成，但迁移到版本 2 失败",
+                completed_tables=tuple(completed_tables),
+                failed_step=exc.failed_step,
+                outcome_unknown=exc.outcome_unknown,
+            ) from exc
+        return InitResult(
+            tables_created=tables_created,
+            schema_version=migration.schema_version,
+        )
 
     except InvalidState:
         raise
@@ -174,11 +219,7 @@ def init_database(connection: Connection) -> InitResult:
         raise InitializationError(
             f"建表失败（已确认完成 {len(completed_tables)} 张表）",
             completed_tables=tuple(completed_tables),
-            failed_step=current_step or (
-                table_steps[len(completed_tables)][0]
-                if len(completed_tables) < len(table_steps)
-                else "schema_versions.version"
-            ),
+            failed_step=current_step or "schema_versions.version",
             outcome_unknown=bool(getattr(e, "connection_invalidated", False)),
         ) from e
     finally:
@@ -187,6 +228,211 @@ def init_database(connection: Connection) -> InitResult:
                 connection.execute(text("SELECT RELEASE_LOCK(:lock_name)"), {"lock_name": lock_name})
             except BaseException:
                 # 专用连接即将关闭；使连接失效，避免物理连接回池后继续持有命名锁。
+                try:
+                    connection.invalidate()
+                except BaseException:
+                    pass
+
+
+def migrate_database(connection: Connection) -> MigrationResult:
+    """把版本 1 数据库迁移到当前版本 2。
+
+    输入：命令持有的专用数据库连接。
+    返回：迁移前后版本和本次实际执行的 DDL 步骤数。
+    数据变更：补充 7 个索引和器械位置非空白 CHECK，并写入版本 2。
+
+    每条 MySQL DDL 都会隐式提交。函数在同一连接上持有数据库级命名锁，
+    每一步执行前查询 information_schema；部分成功后可重新运行并跳过已有结构。
+    失败抛 MigrationError，包含已确认步骤、失败步骤及结果未知标记。
+    """
+    return _migrate_database(connection, lock_already_held=False)
+
+
+def _migrate_database(
+    connection: Connection,
+    *,
+    lock_already_held: bool,
+) -> MigrationResult:
+    """在调用方指定的结构锁状态下执行版本 2 迁移。"""
+    import hashlib
+    import re
+    from pathlib import Path
+    from sqlalchemy import text
+    from src.errors.business import InvalidState
+    from src.errors.storage import MigrationError
+
+    from src.db.connection import CURRENT_SCHEMA_VERSION
+
+    target_version = 2
+    if target_version != CURRENT_SCHEMA_VERSION:
+        raise MigrationError(
+            "数据库迁移链未覆盖当前结构版本",
+            completed_steps=(),
+            failed_step="migration.chain",
+        )
+    migration_path = (
+        Path(__file__).resolve().parents[2]
+        / "sql"
+        / "002_query_indexes_and_equipment_location.sql"
+    )
+    try:
+        source = migration_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise MigrationError(
+            "无法读取版本 2 数据库迁移脚本",
+            completed_steps=(),
+            failed_step="migration[2].script",
+        ) from exc
+    source = "\n".join(
+        line for line in source.splitlines()
+        if not line.lstrip().startswith("--")
+    )
+    statements = [
+        statement.strip()
+        for statement in re.split(r";\s*(?:\r?\n|$)", source)
+        if statement.strip()
+    ]
+    steps: list[tuple[str, str, str, str]] = []
+    for statement in statements:
+        index_match = re.fullmatch(
+            r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+(?:KEY|INDEX)\s+(\w+)\s*\(.+\)",
+            statement,
+            re.IGNORECASE | re.DOTALL,
+        )
+        constraint_match = re.fullmatch(
+            r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+CONSTRAINT\s+(\w+)\s+CHECK\s*\(.+\)",
+            statement,
+            re.IGNORECASE | re.DOTALL,
+        )
+        match = index_match or constraint_match
+        if match is None:
+            raise MigrationError(
+                "版本 2 数据库迁移脚本包含不支持的语句",
+                completed_steps=(),
+                failed_step="migration[2].script",
+            )
+        table_name, object_name = match.groups()
+        kind = "index" if index_match is not None else "constraint"
+        steps.append((kind, table_name, object_name, statement))
+    if len(steps) != 8:
+        raise MigrationError(
+            "版本 2 数据库迁移脚本步骤数量不符合设计",
+            completed_steps=(),
+            failed_step="migration[2].script",
+        )
+
+    lock_name = "cs2g3:schema:" + hashlib.sha256(
+        str(connection.engine.url.database).encode("utf-8")
+    ).hexdigest()[:40]
+    lock_acquired = False
+    completed_steps: list[str] = []
+    applied_steps = 0
+    current_step = "schema_versions.version[2]"
+    previous_version = 0
+
+    def object_exists(kind: str, table_name: str, object_name: str) -> bool:
+        if kind == "index":
+            query = text(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.statistics
+                WHERE table_schema = DATABASE()
+                  AND table_name = :table_name
+                  AND index_name = :object_name
+                """
+            )
+        else:
+            query = text(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.table_constraints
+                WHERE table_schema = DATABASE()
+                  AND table_name = :table_name
+                  AND constraint_name = :object_name
+                  AND constraint_type = 'CHECK'
+                """
+            )
+        result = connection.execute(
+            query, {"table_name": table_name, "object_name": object_name}
+        )
+        row = result.fetchone()
+        return bool(row and row[0])
+
+    try:
+        if not lock_already_held:
+            lock_row = connection.execute(
+                text("SELECT GET_LOCK(:lock_name, 0)"), {"lock_name": lock_name}
+            ).scalar_one()
+            if lock_row != 1:
+                raise InvalidState("已有另一个数据库结构维护操作正在进行，请稍后重试")
+            lock_acquired = True
+
+        current = connection.execute(
+            text("SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1")
+        ).fetchone()
+        if current is None:
+            raise InvalidState("数据库版本记录缺失")
+        previous_version = int(current[0])
+        if previous_version == target_version:
+            return MigrationResult(
+                previous_version=previous_version,
+                schema_version=target_version,
+                steps_applied=0,
+            )
+        if previous_version != 1:
+            raise InvalidState(
+                f"数据库版本不支持迁移：当前 {previous_version}，只能从版本 1 迁移"
+            )
+
+        for kind, table_name, object_name, sql in steps:
+            current_step = f"{table_name}.{object_name}"
+            if object_exists(kind, table_name, object_name):
+                completed_steps.append(current_step)
+                continue
+            connection.execute(text(sql))
+            completed_steps.append(current_step)
+            applied_steps += 1
+
+        current_step = "schema_versions.version[2]"
+        connection.execute(text("INSERT INTO schema_versions (version) VALUES (2)"))
+        try:
+            connection.commit()
+        except BaseException as exc:
+            raise MigrationError(
+                "版本 2 记录提交结果未知，请核实 schema_versions",
+                completed_steps=tuple(completed_steps),
+                failed_step=current_step,
+                outcome_unknown=True,
+            ) from exc
+        completed_steps.append(current_step)
+        return MigrationResult(
+            previous_version=previous_version,
+            schema_version=target_version,
+            steps_applied=applied_steps,
+        )
+    except (InvalidState, MigrationError):
+        raise
+    except KeyboardInterrupt as exc:
+        raise MigrationError(
+            "迁移被中断，部分结构可能已经生效",
+            completed_steps=tuple(completed_steps),
+            failed_step=current_step,
+            outcome_unknown=True,
+        ) from exc
+    except Exception as exc:
+        raise MigrationError(
+            "数据库迁移失败",
+            completed_steps=tuple(completed_steps),
+            failed_step=current_step,
+            outcome_unknown=bool(getattr(exc, "connection_invalidated", False)),
+        ) from exc
+    finally:
+        if lock_acquired:
+            try:
+                connection.execute(
+                    text("SELECT RELEASE_LOCK(:lock_name)"), {"lock_name": lock_name}
+                )
+            except BaseException:
                 try:
                     connection.invalidate()
                 except BaseException:
@@ -347,6 +593,7 @@ def main(argv: list[str] | None = None) -> int:
 
     解析命令：
     - init：初始化数据库
+    - migrate：迁移已有数据库
     - seed：生成演示数据
 
     失败处理：
@@ -361,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
     import sys
     from src.config import load_config
     from src.db.connection import (
+        CURRENT_SCHEMA_VERSION,
         close_engine,
         check_connection,
         check_schema,
@@ -369,13 +617,15 @@ def main(argv: list[str] | None = None) -> int:
         transaction,
     )
     from src.errors.base import GymError
-    from src.errors.storage import InitializationError, StorageError
+    from src.errors.storage import InitializationError, MigrationError, StorageError
     from src.ui.cli.prompts import prompt_password
 
     parser = argparse.ArgumentParser(description="数据库初始化和演示数据命令")
     subparsers = parser.add_subparsers(dest="command", required=True)
     init_parser = subparsers.add_parser("init", help="初始化空数据库")
     init_parser.add_argument("--config", dest="config_path", help="配置文件路径")
+    migrate_parser = subparsers.add_parser("migrate", help="迁移已有数据库")
+    migrate_parser.add_argument("--config", dest="config_path", help="配置文件路径")
     seed_parser = subparsers.add_parser("seed", help="生成演示数据")
     seed_parser.add_argument("--config", dest="config_path", help="配置文件路径")
     seed_parser.add_argument("--seed", type=int, help="电话随机种子")
@@ -395,13 +645,22 @@ def main(argv: list[str] | None = None) -> int:
             check_connection(engine)
             print("正在初始化数据库...")
             with engine.connect() as conn:
-                result = init_database(conn)
-            print(f"✓ 成功创建 {result.tables_created} 张表")
-            print(f"✓ 数据库版本：{result.schema_version}")
+                init_result = init_database(conn)
+            print(f"✓ 成功创建 {init_result.tables_created} 张表")
+            print(f"✓ 数据库版本：{init_result.schema_version}")
+            exit_code = 0
+
+        elif options.command == "migrate":
+            check_connection(engine)
+            print("正在迁移数据库...")
+            with engine.connect() as conn:
+                migration_result = migrate_database(conn)
+            print(f"✓ 数据库版本：{migration_result.schema_version}")
+            print(f"✓ 本次执行 {migration_result.steps_applied} 个迁移步骤")
             exit_code = 0
 
         elif options.command == "seed":
-            check_schema(engine, required_version=1)
+            check_schema(engine, required_version=CURRENT_SCHEMA_VERSION)
             print("正在生成演示数据...")
             passwords: dict[str, str] = {}
             for role, label in [
@@ -422,13 +681,13 @@ def main(argv: list[str] | None = None) -> int:
             session_factory = create_session_factory(engine)
             with session_factory() as session:
                 with transaction(session):
-                    result = seed_demo_data(
+                    seed_result = seed_demo_data(
                         session, demo_passwords, seed=options.seed
                     )
 
-            print(f"✓ 成功创建 {result.accounts_created} 个账号")
-            print(f"✓ 成功创建 {result.members_created} 个会员档案")
-            print(f"✓ 成功创建 {result.coaches_created} 个教练档案")
+            print(f"✓ 成功创建 {seed_result.accounts_created} 个账号")
+            print(f"✓ 成功创建 {seed_result.members_created} 个会员档案")
+            print(f"✓ 成功创建 {seed_result.coaches_created} 个教练档案")
             print("演示账号：")
             print("  - demo_member       (会员)")
             print("  - demo_coach        (教练)")
@@ -443,6 +702,13 @@ def main(argv: list[str] | None = None) -> int:
             completed = "、".join(exc.completed_tables) or "无"
             print(
                 f"初始化失败：{exc.message}；已确认完成：{completed}；"
+                f"失败步骤：{exc.failed_step}；结果未知：{'是' if exc.outcome_unknown else '否'}",
+                file=sys.stderr,
+            )
+        elif isinstance(exc, MigrationError):
+            completed = "、".join(exc.completed_steps) or "无"
+            print(
+                f"迁移失败：{exc.message}；已确认完成：{completed}；"
                 f"失败步骤：{exc.failed_step}；结果未知：{'是' if exc.outcome_unknown else '否'}",
                 file=sys.stderr,
             )

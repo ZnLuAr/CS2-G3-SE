@@ -31,7 +31,7 @@ class CardProductRepository:
         raise NotImplementedError("CardProductRepository.get 尚未实现")
 
     def list(self, query: NamedQuery) -> Page[CardProductView]:
-        """按名称和启用状态分页查询卡产品。
+        """按名称和启用状态筛选，再按 id 升序稳定分页查询卡产品。
 
         返回：Page[CardProductView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CardProductRepository.list 尚未实现")
@@ -55,7 +55,7 @@ class CardProductRepository:
         raise NotImplementedError("CardProductRepository.set_active 尚未实现")
 
     def lock(self, product_id: int) -> CardProduct | None:
-        """锁定产品并读取当前规则，供办卡与调价协调。
+        """锁定卡产品并读取当前规则，供办卡与调价协调。
 
         返回：CardProduct | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CardProductRepository.lock 尚未实现")
@@ -78,7 +78,7 @@ class MembershipRepository:
         raise NotImplementedError("MembershipRepository.get 尚未实现")
 
     def list(self, query: CardQuery, *, scope_member_id: int | None) -> Page[CardView]:
-        """在服务给定的会员权限范围内分页查询。
+        """在服务给定的会员权限范围内按 id 升序稳定分页查询。
 
         返回：Page[CardView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("MembershipRepository.list 尚未实现")
@@ -86,7 +86,7 @@ class MembershipRepository:
     def latest_term_end(self, member_id: int) -> date | None:
         """读取该会员未作废期限卡中最晚的 valid_until，包括未来生效的卡。
 
-        次卡不参与；没有期限卡返回 None。调用方须先锁会员，此查询使用加锁的最新读取。
+        次卡不参与；没有期限卡返回 None。调用方须先锁会员，此查询使用锁定当前读。
         返回 date | None，不修改数据；当前调用抛 NotImplementedError。"""
         raise NotImplementedError("MembershipRepository.latest_term_end 尚未实现")
 

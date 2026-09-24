@@ -78,3 +78,9 @@ class AuthHandler:
         输入由 prompts 采集；成功结果交给 formatters 展示。
         异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
         raise NotImplementedError("AuthHandler.link_profile 尚未实现")
+
+    def query_logs(self) -> None:
+        """组织管理员日志筛选、翻页、详情和刷新。
+
+        同一次浏览沿用固定快照；刷新时重新取得快照并回到第一页。"""
+        raise NotImplementedError("AuthHandler.query_logs 尚未实现")

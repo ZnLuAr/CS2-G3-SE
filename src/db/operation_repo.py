@@ -27,6 +27,12 @@ class OperationRepository:
         返回：OperationRecord | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("OperationRepository.get_by_request 尚未实现")
 
+    def lock_by_request(self, request_id: str) -> OperationRecord | None:
+        """当前读并锁定已存在的请求记录，供取得业务锁后再次核对。
+
+        记录不存在时返回 None；不预占请求编号、不提交事务。当前仅占位。"""
+        raise NotImplementedError("OperationRepository.lock_by_request 尚未实现")
+
     def create(
         self,
         *,

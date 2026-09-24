@@ -107,7 +107,7 @@ def format_card(view: CardView, *, timezone_name: str) -> str:
     details = _lines([
         ("编号", view.id),
         ("会员编号", view.member_id),
-        ("产品编号", view.product_id),
+        ("卡产品编号", view.product_id),
         ("名称", view.terms.name),
         ("类型", _WORDS[view.terms.kind]),
         ("价格", view.terms.price),

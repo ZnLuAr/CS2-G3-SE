@@ -12,7 +12,7 @@ from src.cmd import test as test_command
 from src.config import AppSettings, DatabaseConfig
 from src.db import connection
 from src.errors.business import AuthenticationError, InvalidState
-from src.errors.storage import StorageError
+from src.errors.storage import OutcomeUnknownError, StorageError
 from src.models.contracts import Actor
 
 
@@ -42,6 +42,37 @@ def test_dispose_failure_is_safe_and_keeps_cause():
         connection.close_engine(engine)
     assert str(caught.value) == "关闭数据库资源失败"
     assert caught.value.__cause__ is cause
+
+
+def test_commit_failure_preserves_verification_ids():
+    """提交确认丢失时，界面核实所需的编号不能被事务包装器丢掉。"""
+    session = Mock()
+    cause = RuntimeError("connection lost during commit")
+    session.commit.side_effect = cause
+
+    with pytest.raises(OutcomeUnknownError) as caught:
+        with connection.transaction(session, request_id="request-123", record_id=42):
+            pass
+
+    assert caught.value.request_id == "request-123"
+    assert caught.value.record_id == 42
+    assert caught.value.__cause__ is cause
+    session.rollback.assert_called_once()
+
+
+def test_flush_constraint_failure_is_not_reported_as_unknown_commit():
+    """flush 已知失败表示没有提交，服务仍需看见原约束异常。"""
+    session = Mock()
+    cause = RuntimeError("known constraint failure")
+    session.flush.side_effect = cause
+
+    with pytest.raises(RuntimeError) as caught:
+        with connection.transaction(session, request_id="request-123"):
+            pass
+
+    assert caught.value is cause
+    session.commit.assert_not_called()
+    session.rollback.assert_called_once()
 
 
 @pytest.mark.parametrize("input_result", ["0", EOFError(), KeyboardInterrupt()])
@@ -95,7 +126,7 @@ def test_main_reports_real_dispose_failure(monkeypatch, engine, capsys, startup_
 def test_db_command_preserves_result_and_reports_close_failure(monkeypatch, engine, capsys, success):
     engine.dispose.side_effect = RuntimeError("secret-password")
     if success:
-        monkeypatch.setattr(db_command, "init_database", lambda _: db_command.InitResult(tables_created=18, schema_version=1))
+        monkeypatch.setattr(db_command, "init_database", lambda _: db_command.InitResult(tables_created=18, schema_version=2))
     else:
         monkeypatch.setattr(connection, "check_connection", Mock(side_effect=StorageError("原始连接故障")))
     assert db_command.main(["init"]) == 1

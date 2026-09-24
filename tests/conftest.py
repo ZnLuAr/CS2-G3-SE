@@ -203,8 +203,8 @@ def empty_mysql_database(mysql_engine, cli_processes):
 
 @pytest.fixture
 def initialized_mysql_database(mysql_engine, cli_processes):
-    """提供版本 1 结构，测试结束清除业务数据并保留版本行。"""
-    from src.db.connection import check_schema
+    """提供当前版本结构，测试结束清除业务数据并保留版本行。"""
+    from src.db.connection import CURRENT_SCHEMA_VERSION, check_schema
     from src.cmd.db import init_database
     with mysql_engine.connect() as connection:
         _assert_lock_owner(connection, mysql_engine.url.database)
@@ -213,7 +213,7 @@ def initialized_mysql_database(mysql_engine, cli_processes):
         _drop_tables(mysql_engine, keep_schema=False)
     with mysql_engine.connect() as connection:
         init_database(connection)
-    check_schema(mysql_engine, required_version=1)
+    check_schema(mysql_engine, required_version=CURRENT_SCHEMA_VERSION)
     try:
         yield mysql_engine
     finally:
