@@ -1,9 +1,13 @@
-"""菜单项与分模块导航接口。当前仅声明字段与签名，方法尚未实现。"""
+"""菜单项与分模块导航接口。各模块在对应菜单函数中登记已交付操作。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TypeVar
+
+from src.models.contracts import Page, PageRequest
+from src.errors.business import InputCancelled, InvalidInputError
 
 from src.ui.cli.handlers.attendance import AttendanceHandler
 from src.ui.cli.handlers.auth import AuthHandler
@@ -23,6 +27,7 @@ class MenuItem:
 
     key: str
     label: str
+    operation: str
     action: Callable[[], None]
 
 
@@ -46,67 +51,97 @@ def auth_menu(handler: AuthHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("auth_menu 尚未实现")
+    return []
 
 
 def member_menu(handler: MemberHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("member_menu 尚未实现")
+    return []
 
 
 def product_menu(handler: ProductHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("product_menu 尚未实现")
+    return []
 
 
 def course_menu(handler: CourseHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("course_menu 尚未实现")
+    return []
 
 
 def booking_menu(handler: BookingHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("booking_menu 尚未实现")
+    return []
 
 
 def attendance_menu(handler: AttendanceHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("attendance_menu 尚未实现")
+    return []
 
 
 def review_menu(handler: ReviewHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("review_menu 尚未实现")
+    return []
 
 
 def equipment_menu(handler: EquipmentHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("equipment_menu 尚未实现")
+    return []
 
 
 def measurement_menu(handler: MeasurementHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("measurement_menu 尚未实现")
+    return []
 
 
 def report_menu(handler: ReportHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    raise NotImplementedError("report_menu 尚未实现")
+    return []
+
+
+T = TypeVar("T")
+
+
+def browse_pages(fetch_page: Callable[[PageRequest], Page[T]], format_page: Callable[[Page[T]], str], *, page_size: int = 20) -> None:
+    """按稳定排序查询分页；改变筛选条件后重新调用，从第一页开始。"""
+    if type(page_size) is not int or not 1 <= page_size <= 100:
+        raise InvalidInputError("每页条数必须是 1～100 的整数")
+    page_number = 1
+    while True:
+        page = fetch_page(PageRequest(page=page_number, page_size=page_size))
+        last_page = max(1, (page.total + page_size - 1) // page_size)
+        if page_number > last_page:
+            page_number = last_page
+            continue
+        print(format_page(page))
+        while True:
+            choice = input("n 下一页 / p 上一页 / 0 返回：").strip().lower()
+            if choice == "0":
+                return
+            if choice == "q":
+                raise InputCancelled()
+            if choice == "n" and page_number < last_page:
+                page_number += 1
+                break
+            if choice == "p" and page_number > 1:
+                page_number -= 1
+                break
+            print("当前选择不可用，请重试。")

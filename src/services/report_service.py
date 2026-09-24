@@ -1,4 +1,4 @@
-"""收款查询与报表服务接口。当前仅声明字段与签名，方法尚未实现。"""
+"""收款查询与报表服务接口。构造函数已实现，业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ class ReportService:
     """收款查询与报表服务。
 
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
-    输入字段见 models/contracts.py；实现后的异常和事务约定见设计第 4 节。
-    当前所有方法仅占位，调用会抛 NotImplementedError。
+    输入字段见 models/contracts.py；实现后遵守 docs/architecture.md“开发前必读”的返回、异常、权限和事务约定。
+    构造函数保存依赖；业务方法仍为占位。
     """
 
     def __init__(
@@ -38,41 +38,45 @@ class ReportService:
         *, timezone_name: str,
     ) -> None:
         """接收会话工厂、共用身份校验服务和门店时区；时区由 App 配置传入。"""
-        raise NotImplementedError("ReportService.__init__ 尚未实现")
+        self._session_factory = session_factory
+        self._auth = auth
+        self._timezone_name = timezone_name
 
     def get_payment(self, actor: Actor, payment_id: int) -> PaymentView:
         """查询收款详情。
 
         返回：PaymentView。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.get_payment 尚未实现")
 
     def list_payments(self, actor: Actor, query: PaymentQuery) -> Page[PaymentView]:
         """分页查询收款流水。
 
         返回：Page[PaymentView]。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.list_payments 尚未实现")
 
     def revenue(self, actor: Actor, window: DateWindow) -> RevenueView:
         """按时间汇总实收。
 
         返回：RevenueView。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.revenue 尚未实现")
 
     def membership_stats(self, actor: Actor) -> MembershipStats:
         """统计当前快照的会员与持卡，服务生成 as_of；不接受历史查询时间。
 
         返回：MembershipStats。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.membership_stats 尚未实现")
 
     def session_stats(self, actor: Actor, query: SessionQuery) -> Page[SessionStatsView]:
         """分页汇总课次预约及到课。
 
+        query 的 window、kind、coach_id、room_id、status 全部参与筛选。
+        只在课次已结束且无 reserved/checked_in 预约时，按 completed/(completed+no_show) 计算到课率。
         返回：Page[SessionStatsView]。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.session_stats 尚未实现")
 
     def coach_stats(
@@ -84,40 +88,43 @@ class ReportService:
         """分页汇总教练授课。
 
         返回：Page[CoachStatsView]。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.coach_stats 尚未实现")
 
     def export_payments(self, actor: Actor, query: PaymentQuery) -> CsvExport:
         """导出授权范围内的收款流水。
 
+        忽略分页并使用同一读取快照分批读取，最多 10,000 行。
         返回：CsvExport。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.export_payments 尚未实现")
 
     def export_revenue(self, actor: Actor, window: DateWindow) -> CsvExport:
         """导出实收汇总。
 
         返回：CsvExport。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.export_revenue 尚未实现")
 
     def export_memberships(self, actor: Actor) -> CsvExport:
         """导出会员与持卡统计。
 
         返回：CsvExport。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.export_memberships 尚未实现")
 
     def export_sessions(self, actor: Actor, query: SessionQuery) -> CsvExport:
         """导出课程预约与到课统计。
 
+        忽略分页并使用同一读取快照分批读取，最多 10,000 行。
         返回：CsvExport。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.export_sessions 尚未实现")
 
     def export_coaches(self, actor: Actor, window: DateWindow) -> CsvExport:
         """导出教练授课统计。
 
+        使用同一读取快照分批读取，最多 10,000 行；教练姓名按 CSV 注入规则转义。
         返回：CsvExport。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守设计第 4.1 节的输入、权限和数据库异常约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.export_coaches 尚未实现")

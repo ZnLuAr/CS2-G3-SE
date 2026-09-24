@@ -15,7 +15,7 @@ from .business import (
     ScheduleConflict,
 )
 from .handler import handle_error
-from .storage import OutcomeUnknownError, StorageError
+from .storage import MigrationError, OutcomeUnknownError, StorageError
 
 __all__ = [
     "ErrorAction",
@@ -34,5 +34,6 @@ __all__ = [
     "InputCancelled",
     "OutcomeUnknownError",
     "StorageError",
+    "MigrationError",
     "handle_error",
 ]

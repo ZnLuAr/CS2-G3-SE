@@ -1,0 +1,15 @@
+{
+  "test_database": true,
+  "app": {
+    "database": {
+      "host": "localhost",
+      "port": 3306,
+      "database": "gym_system_test",
+      "username": "gym_test",
+      "password": "",
+      "charset": "utf8mb4",
+      "pool_size": 5
+    },
+    "timezone_name": "Asia/Shanghai"
+  }
+}

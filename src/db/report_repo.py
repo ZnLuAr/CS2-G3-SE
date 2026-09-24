@@ -45,13 +45,13 @@ class ReportRepository:
         raise NotImplementedError("ReportRepository.membership_stats 尚未实现")
 
     def session_stats(self, query: SessionQuery) -> Page[SessionStatsView]:
-        """按课次开始时间分页统计预约与到课。
+        """应用 SessionQuery 的全部筛选字段，再按 starts_at、session_id 降序稳定分页。
 
         返回：Page[SessionStatsView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("ReportRepository.session_stats 尚未实现")
 
     def coach_stats(self, window: DateWindow, paging: PageRequest) -> Page[CoachStatsView]:
-        """分页汇总各教练已完成课次与到课人次。
+        """按 coach_id 升序稳定分页汇总各教练已完成课次与到课人次。
 
         返回：Page[CoachStatsView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("ReportRepository.coach_stats 尚未实现")

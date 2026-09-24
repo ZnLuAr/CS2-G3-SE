@@ -1,8 +1,8 @@
 # 系统设计与架构方案
 
-> 更新：2026-09-20
+> 更新：2026-09-24
 > 
-> **阅读建议**：这份文档按"你要做什么 → 怎么做 → 具体规则"组织。如果你是第一次阅读，先看[你的模块](#你要实现哪个模块)，了解自己的任务；需要对接其他模块时，查看[模块接口](#模块接口详解)；遇到具体问题时，查阅[业务规则](#业务规则详解)。
+> **阅读建议**：这份文档按"你要做什么 → 怎么做 → 具体规则"组织。先看[你的模块](#你要实现哪个模块)了解任务；需要对接时查看对应的[模块详细说明](#基础框架与公共-cli)；遇到具体问题时查阅[业务规则](#业务规则详解)。
 
 ---
 
@@ -71,7 +71,8 @@ MySQL 数据库
 **技术选型**：
 - Python 3.10+
 - MySQL 8.4
-- SQLAlchemy（候选，待验证）
+- SQLAlchemy 2、PyMySQL
+- argon2-cffi（Argon2id 密码哈希）
 - 标准库 logging
 
 **交互方式**：
@@ -139,9 +140,11 @@ cs2-group3-se/
 │   ├── app.py                      # 应用协调层：管理服务实例、登录状态
 │   ├── config.py                   # 配置读取：数据库连接、日志、时区
 │   │
-│   ├── cmd/                        # 数据库维护命令（独立于主程序）
+│   ├── cmd/                        # 独立命令入口
 │   │   ├── __init__.py
-│   │   └── db.py                   # init：建表；seed：生成演示数据
+│   │   ├── db.py                   # init：建表；seed：生成演示数据
+│   │   ├── test.py                 # unit/mysql/all：统一测试入口
+│   │   └── logs.py                 # 本机日志查询入口
 │   │
 │   ├── utils/                      # 工具模块（基础设施）
 │   │   ├── __init__.py
@@ -207,14 +210,10 @@ cs2-group3-se/
 │           └── app.py              # TUI 启动与关闭
 │
 ├── tests/                          # 测试代码
-│   ├── models/                     # 数据模型测试
-│   ├── services/                   # 业务服务测试
-│   ├── db/                         # 数据访问层测试
-│   ├── errors/                     # 异常处理测试
-│   └── ui/                         # 界面层测试
 │
 ├── sql/                            # SQL 脚本（如果不用 ORM 迁移工具）
-│   └── 001_initial_schema.sql      # 初始建表脚本（占位）
+│   ├── 001_initial_schema.sql      # 版本 1 的 18 张表建表脚本
+│   └── 002_query_indexes_and_equipment_location.sql # 版本 2 迁移脚本
 │
 ├── logs/                           # 日志文件目录（运行时生成）
 │   ├── app.log                     # 当前日志文件
@@ -224,13 +223,14 @@ cs2-group3-se/
 │
 ├── docs/                           # 文档目录
 │   ├── architecture.md             # 本文件：系统设计与架构方案
-│   ├── collaboration.md            # 小组协作规范（Git 工作流、PR 流程）
-│   ├── conventions.md              # 代码与文档规范
-│   ├── features.md                 # 功能清单与实现状态
+│   ├── README.md                   # 阅读入口、操作步骤与文档索引
+│   ├── project-standards.md        # 代码与文档规范
+│   ├── feature-list.csv            # 功能清单与实现状态
 │   └── dev-materials-for-report/   # 报告素材（开发日志、决策记录等）
 │
 ├── README.md                       # 项目概述与快速入口
-├── requirements.txt                # Python 依赖（待完善）
+├── requirements.txt                # 核心运行依赖
+├── requirements-dev.txt            # 测试与开发依赖
 └── .gitignore                      # Git 忽略规则
 ```
 
@@ -240,7 +240,7 @@ cs2-group3-se/
 
 #### 启动与配置
 - **`main.py`**：程序入口，解析 `--tui` 和 `--config` 参数，启动界面
-- **`src/config.py`**：从环境变量读取数据库连接、日志级别、时区配置
+- **`src/config.py`**：从 JSON 配置文件读取数据库连接、日志目录和时区；`DB_PASSWORD` 可覆盖数据库密码
 - **`src/app.py`**：创建所有服务实例，管理登录状态，协调应用生命周期
 
 #### 业务核心
@@ -270,13 +270,15 @@ cs2-group3-se/
 
 #### 日志系统
 - **`src/utils/logging_config.py`**：配置日志、记录操作、查询日志
-  - 日志文件：`logs/app.log`（5 MiB 轮转，保留 3 份备份）
+  - 日志文件：`settings.log.directory / "app.log"`，按 `settings.log.max_bytes` 和
+    `settings.log.backup_count` 轮转
   - 格式：UTF-8 单行 JSON
   - 脱敏：不记录密码、脱敏电话号码
 
 #### 数据库维护
 - **`src/cmd/db.py`**：独立于主程序的数据库命令
-  - `python -m src.cmd.db init`：建表
+  - `python -m src.cmd.db init`：初始化空数据库并升级到当前版本
+  - `python -m src.cmd.db migrate`：将已有版本 1 数据库升级到版本 2
   - `python -m src.cmd.db seed`：生成演示数据（4 个账号 + 2 个档案）
 
 ---
@@ -485,7 +487,7 @@ def get_member(self, actor, member_id):
 | 情况 | 抛出的异常 | 例子 |
 |------|----------|------|
 | 输入不合法 | `InvalidInputError` | 姓名为空、金额为负数 |
-| 没有权限 | `PermissionDenied` | 会员查询别人的档案 |
+| 没有权限 | `PermissionDenied` | 教练更正其他教练课次的签到 |
 | 账号失效 | `AuthenticationError` | 账号被停用 |
 | 记录不存在 | `NotFoundError` | 查询不存在的会员编号 |
 | 业务冲突 | `ConflictError` | 重复预约同一课次 |
@@ -502,7 +504,7 @@ def get_member(self, actor, member_id):
 ```python
 # member_repo.py
 class MemberRepository:
-    def save(self, data):
+    def create(self, data):
         member = Member(**data)
         self.session.add(member)
         self.session.commit()  # ❌ 不要在这里提交
@@ -512,13 +514,19 @@ class MemberRepository:
 **正确示例**：
 ```python
 # member_service.py
+from src.db.connection import transaction
+
 class MemberService:
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
+
     def create_member(self, actor, data):
-        with self.session_factory() as session:
-            with session.begin():  # ✅ 在服务层管理事务
-                self.auth.verify_actor(session, actor)
+        with self._session_factory() as session:
+            with transaction(session):  # ✅ 在服务层管理提交、回滚和提交未知
+                self._auth.verify_actor(session, actor)
                 repo = MemberRepository(session)
-                member = repo.save(data)
+                member = repo.create(data)
                 return member  # 退出 with 时自动提交
 ```
 
@@ -596,6 +604,7 @@ class StartupOptions:
 
 @dataclass(frozen=True, kw_only=True)
 class DatabaseConfig:
+    """数据库配置；密码不参与对象的普通打印，字符集固定使用 utf8mb4。"""
     host: str
     port: int
     database: str
@@ -627,7 +636,9 @@ def load_config(config_path: str | None = None) -> AppSettings:
 
     参数：
     - config_path: JSON 文件路径；None 使用当前目录的 config.json
-    - DB_PASSWORD 环境变量可覆盖数据库密码
+    - database.password 必须是字符串并保留原值，允许为空
+    - DB_PASSWORD 变量存在时覆盖数据库密码，包括空字符串
+    - log.directory 为相对路径时，以配置文件所在目录为基准并转为绝对路径
 
     返回：AppSettings
 
@@ -657,7 +668,8 @@ def main(argv: list[str] | None = None) -> int:
     加载配置、启动应用并在退出时关闭资源
 
     参数：argv 为参数列表；None 使用进程参数
-    返回：正常退出为 0，启动失败为 1，参数错误为 2
+    返回：正常退出为 0，启动、运行或资源关闭失败为 1，参数错误为 2
+    清理：先保留主流程结果和安全提示，再关闭资源；关闭失败追加安全提示。
     """
 ```
 
@@ -675,7 +687,11 @@ class App:
         """运行 CLI 或可选 TUI，返回退出码。"""
 
     def close(self) -> None:
-        """关闭已创建的数据库和日志资源；允许重复调用。"""
+        """清除身份与界面引用并关闭资源；成功后清空引擎，允许重复调用。
+
+        异常：StorageError（数据库资源关闭失败）；保留引擎供再次 close。
+        关闭中断向调用方传播，资源归属同样保留。
+        """
 
     def get_actor(self) -> Actor:
         """取得当前身份；未登录抛 AuthenticationError。"""
@@ -699,6 +715,12 @@ class InitResult:
     schema_version: int
 
 @dataclass(frozen=True, kw_only=True)
+class MigrationResult:
+    previous_version: int
+    schema_version: int
+    steps_applied: int
+
+@dataclass(frozen=True, kw_only=True)
 class SeedResult:
     accounts_created: int
     members_created: int
@@ -715,17 +737,43 @@ class DemoPasswordInput:
 **初始化数据库**：
 ```python
 # src/cmd/db.py
-def init_database(session: Session) -> InitResult:
+def init_database(connection: Connection) -> InitResult:
     """
-    按依赖顺序建表并记录结构版本
+    按依赖顺序建立版本 1 结构，再应用迁移达到当前版本 2
 
-    参数：session 为命令提供的数据库会话
+    参数：connection 为命令持有的专用数据库连接；结构命名锁、建表、迁移和版本记录使用同一连接
     返回：InitResult
     异常：
     - InvalidState: 目标数据库非空
-    - InitializationError: 建表失败，携带已完成表名和失败步骤
+    - InitializationError: 建表或后续迁移失败，携带已完成表名、失败步骤和结果未知标记
     """
 ```
+
+初始化脚本只接受按表分组排列的 `CREATE TABLE` 和紧随其后的同表 `ALTER TABLE`；
+`CREATE TABLE` 的出现顺序必须与版本 1 的 18 张表一致，`ALTER TABLE` 只能补充已经创建表的
+注释和列定义。执行每条 DDL 后再进入下一步，`tables_created` 和 `completed_tables` 只按已收到
+成功响应的 `CREATE TABLE` 计算；后续 `ALTER TABLE` 失败时，`failed_step` 指向具体表及语句序号。
+版本 1 DDL 完成后记录版本 1，再继续应用版本 2 迁移；成功返回 `schema_version=2`。
+
+**迁移已有数据库**：
+```python
+# src/cmd/db.py
+def migrate_database(connection: Connection) -> MigrationResult:
+    """
+    将版本 1 数据库升级到当前版本 2
+
+    参数：connection 为命令持有的专用数据库连接
+    返回：MigrationResult（迁移前版本、当前版本、本次实际执行的 DDL 步骤数）
+    数据变更：增加 7 个查询索引、器械位置非空白 CHECK，并记录版本 2
+    异常：
+    - InvalidState: 版本记录缺失、版本不受支持或结构维护锁被占用
+    - MigrationError: 迁移失败，携带已确认步骤、失败步骤和结果未知标记
+    """
+```
+
+初始化与迁移共用 `cs2g3:schema:` 命名锁。版本 2 的每个步骤执行前通过
+`information_schema` 检查同名索引或 CHECK；MySQL DDL 部分生效后再次执行命令时，
+已有步骤计入已确认步骤，命令只应用剩余结构。全部八个结构步骤完成后才写入版本 2。
 
 **生成演示数据**：
 ```python
@@ -750,17 +798,72 @@ def seed_demo_data(
     """
 ```
 
+演示电话只写入会员档案；教练表没有电话字段，因此不生成或写入教练电话。
+
 **数据库命令入口**：
 ```python
 # src/cmd/db.py
 def main(argv: list[str] | None = None) -> int:
     """
-    执行 init 或 seed 命令
+    执行 init、migrate 或 seed 命令
 
-    参数：支持 --config；seed 另接受 --seed
+    参数：三个命令均支持 --config；seed 另接受 --seed
     返回：成功为 0，失败为 1，参数错误为 2
     """
 ```
+
+`seed` 在写入演示数据前要求结构版本 2；版本 1 数据库先执行
+`python -m src.cmd.db migrate --config CONFIG_PATH`。
+
+**数据库连接与事务接口**：
+```python
+# src/db/connection.py
+CURRENT_SCHEMA_VERSION = 2
+
+def check_connection(engine: Engine) -> None:
+    """执行只读连通性检查；失败抛 StorageError。"""
+
+def check_schema(engine: Engine, required_version: int) -> None:
+    """只读检查结构版本和 18 张必需表；版本过低时提示执行 migrate，不提交事务。"""
+
+def close_engine(engine: Engine) -> None:
+    """调用 dispose 释放连接池，成功返回 None。
+
+    异常：StorageError（关闭失败，固定安全提示，原异常作为 cause）；
+          EOFError、KeyboardInterrupt 向调用方传播。
+    调用方负责保留主流程错误，并单独报告关闭失败。
+    """
+
+def create_engine(settings: AppSettings) -> Engine:
+    """创建 MySQL 连接池；固定 REPEATABLE READ 隔离级别，连接超时 5 秒、
+    读写超时 30 秒、池等待 5 秒，溢出连接数为 0。"""
+
+def create_session_factory(engine: Engine) -> Callable[[], Session]:
+    """每次调用返回独立会话，由调用方关闭。"""
+
+def transaction(
+    session: Session,
+    *,
+    request_id: str | None = None,
+    record_id: int | None = None,
+) -> AbstractContextManager[Session]:
+    """先 flush 再提交；事务体或 flush 确定失败时回滚并保留原异常。
+
+    只有 commit 阶段失败才按结果未知抛 OutcomeUnknownError，并原样携带调用方提供的核实编号。
+    """
+```
+
+应用启动、`seed` 和 MySQL fixture 使用 `CURRENT_SCHEMA_VERSION` 检查同一当前版本；
+版本 2 迁移在执行前同时确认迁移链目标与该常量一致。
+
+带 `request_id` 的写操作必须把原请求编号传给 `transaction`；按既有记录修改的操作可以传
+`record_id`。事务体内的业务拒绝以及 `flush()` 发现的唯一约束、外键或 CHECK 约束失败
+原样抛出；只有 flush 成功后的 `commit()` 失败才转换为 `OutcomeUnknownError`，提交结果未知时
+不得自动重试。
+
+应用、数据库维护和测试命令在关闭前保存主流程结果；关闭失败或关闭中断时返回 1，
+保留已有安全提示并追加资源关闭提示。数据库写入的已提交结果保持原义。
+App 关闭失败后保留引擎，成功重试关闭后才允许重新启动；pytest 将 fixture 关闭失败记为清理错误。
 
 
 #### 3. 公共交互
@@ -793,7 +896,8 @@ def invoke_action(
 
     参数：action 为交互函数，其余参数为操作名称、操作人和请求编号
     返回：ErrorResult，保留错误处理返回的 request_id 和 record_id
-          成功时 message=""、action="continue"；结束输入时 action="exit"
+          成功或取消时 message=""、action="continue"
+    异常：EOFError、KeyboardInterrupt 传播到程序入口，清理后正常退出
     """
 ```
 
@@ -804,6 +908,7 @@ def invoke_action(
 class MenuItem:
     key: str
     label: str
+    operation: str
     action: Callable[[], None]
 
 @dataclass(frozen=True, kw_only=True)
@@ -832,6 +937,333 @@ def product_menu(handler: ProductHandler) -> list[MenuItem]:
     """
 ```
 
+**统一测试命令**：
+```python
+# src/cmd/test.py
+@dataclass(frozen=True, kw_only=True)
+class TestSettings:
+    test_database: bool
+    app: AppSettings
+
+def load_test_config(config_path: str) -> TestSettings:
+    """读取测试配置；根对象必须包含 test_database=true 和 app 配置。"""
+
+def main(argv: list[str] | None = None) -> int:
+    """运行 pytest；默认排除 mysql 标记，mysql/all 模式需显式测试配置。"""
+```
+
+`python -m src.cmd.test` 运行不依赖 MySQL 的测试；`mysql --config PATH` 运行 MySQL
+测试；`all --config PATH` 运行全部测试。测试命令自身的参数错误返回 2，测试或环境失败返回 1。
+
+测试库名以 `_test` 结尾，只使用 `TEST_DB_PASSWORD` 覆盖密码（包含空字符串）。
+控制连接持有 `cs2g3:test:` 加库名 SHA-256 摘要前 40 位的命名锁，等待时间为 0，
+保持到 pytest 子进程结束。子进程通过 `GYM_TEST_CONFIG`、`GYM_TEST_MODE` 和
+`GYM_TEST_LOCK_OWNER` 接收绝对配置路径、模式和持锁连接编号；fixture 核验持锁者。
+默认模式清除上述变量及两个数据库密码变量。MySQL 模式也清除 `DB_PASSWORD`。
+清理前核验测试标记、当前数据库名和对象集合；按固定逆外键顺序清理设计中的表。
+未知表或视图使测试失败。`empty_mysql_database` 提供空库；
+`initialized_mysql_database` 初始化并提供版本 2 结构，清除业务记录并保留版本行。
+
+**CLI 测试进程**：
+```python
+# tests/conftest.py：run_cli fixture 提供的调用接口
+def run_cli_process(
+    argv: list[str], *, env: dict[str, str] | None = None,
+    timeout: float = 120.0,
+) -> subprocess.CompletedProcess[str]:
+    """从仓库根目录使用当前解释器运行 main.py，发送 0\\n 并关闭标准输入。
+
+    返回：退出码、UTF-8 stdout 和 stderr；超时必须为有限正数。
+    异常：TimeoutExpired、KeyboardInterrupt 等在子进程回收后传播。
+    失败清理：terminate 后等待 5 秒；仍未结束则 kill，再 wait 确认退出。
+    所有退出路径关闭管道；测试在返回后检查登录菜单文字和退出码。
+    """
+```
+
+run_cli fixture 在自身结束时回收尚存进程；数据库测试同时依赖 run_cli 和数据库 fixture，
+数据库清理前再次回收本用例进程。pytest 运行在独立进程组；Windows 的 Ctrl+Break
+由测试钩子转换为 KeyboardInterrupt，POSIX 使用 SIGINT。测试父进程中断时，统一测试命令给 pytest 10 秒完成
+进程回收和 fixture 清理，超时后终止 pytest 进程树并确认结束，再释放测试库命名锁。
+主入口集成测试从测试配置解析 AppSettings，以临时普通应用 JSON 和子进程独立环境启动；
+密码经子进程 DB_PASSWORD 提供。只有登录菜单输出及退出码均正确，才算启动验收通过。
+
+**普通输入与分页**：
+```python
+# src/ui/cli/prompts.py
+def prompt_text(label: str, *, allow_empty: bool = False) -> str:
+    """去首尾空白；q/Q 抛 InputCancelled；非法空值提示重输。"""
+
+def prompt_optional_text(label: str) -> str | None:
+    """空输入返回 None；q/Q 取消。"""
+
+def prompt_int(label: str, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    """读取十进制整数，检查包含边界，非法时重输。"""
+
+def prompt_decimal(label: str, *, minimum: Decimal | None = None) -> Decimal:
+    """读取有限十进制数，最多两位小数，检查包含下界，非法时重输。"""
+
+def prompt_date(label: str) -> date:
+    """按 YYYY-MM-DD 读取有效日期。"""
+
+def prompt_datetime(label: str, *, timezone_name: str) -> datetime:
+    """按 YYYY-MM-DD HH:MM 读取门店时刻，返回 UTC；夏令时重复或不存在的时刻重输。"""
+
+def prompt_confirm(label: str) -> bool:
+    """y 返回 True，n 返回 False，q/Q 取消；其余重输。"""
+
+def prompt_member_id() -> int:
+    """读取正整数会员编号。"""
+
+# src/ui/cli/menus.py
+def browse_pages(fetch_page: Callable[[PageRequest], Page[T]], format_page: Callable[[Page[T]], str], *, page_size: int = 20) -> None:
+    """从第一页查询并展示；n/p 翻页、0 返回；每页 1～100 条，非法大小抛 InvalidInputError。"""
+
+# src/ui/cli/app.py
+class GymCLI:
+    def __init__(self, handlers: CliHandlers, get_actor: Callable[[], Actor], logout: Callable[[], None]) -> None:
+        """保存交互处理器及身份回调。"""
+
+    def run(self) -> int:
+        """运行登录、主菜单及子菜单；顶层 0 退出，子菜单 0 返回，退出登录清除身份。"""
+```
+
+**构造接口**：
+```python
+# src/services/attendance_service.py
+class AttendanceService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/auth_service.py
+class AuthService:
+    def __init__(
+        self, session_factory: Callable[[], Session], *, log_config: LogConfig,
+    ) -> None:
+        """保存数据库会话依赖和配置解析后的日志配置，由 App 统一装配。"""
+
+# src/services/booking_service.py
+class BookingService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/course_service.py
+class CourseService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/equipment_service.py
+class EquipmentService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/measurement_service.py
+class MeasurementService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/member_service.py
+class MemberService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/product_service.py
+class ProductService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/report_service.py
+class ReportService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/review_service.py
+class ReviewService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/attendance.py
+class AttendanceHandler:
+    def __init__(self, service: AttendanceService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/auth.py
+class AuthHandler:
+    def __init__(self, service: AuthService, get_actor: Callable[[], Actor], set_actor: Callable[[Actor], None], logout: Callable[[], None], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/booking.py
+class BookingHandler:
+    def __init__(self, service: BookingService, get_actor: Callable[[], Actor], course_service: CourseService, product_service: ProductService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/course.py
+class CourseHandler:
+    def __init__(self, service: CourseService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/equipment.py
+class EquipmentHandler:
+    def __init__(self, service: EquipmentService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/measurement.py
+class MeasurementHandler:
+    def __init__(self, service: MeasurementService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/member.py
+class MemberHandler:
+    def __init__(self, service: MemberService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/product.py
+class ProductHandler:
+    def __init__(self, service: ProductService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/report.py
+class ReportHandler:
+    def __init__(self, service: ReportService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/review.py
+class ReviewHandler:
+    def __init__(self, service: ReviewService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+```
+
+**服务和处理器装配**：各构造函数保存现有参数，分别使用 `_session_factory`、`_auth`、
+`_service`、`_get_actor`、`_set_actor`、`_logout`、`_timezone_name` 等同名私有属性。
+`App.start` 检查版本 2，再创建固定的 `ServiceBundle` 和 `CliHandlers`。
+`App.close` 清除身份和界面引用、释放引擎；成功后清空引擎，失败时保留以便重试。
+部分启动和重复清理均可调用；主流程错误与关闭错误分别保留安全提示。
+菜单函数返回已交付操作的 `list[MenuItem]`，空列表显示待接入提示。
+账号管理面向管理员，报表面向管理员和前台，体测面向会员和教练；各服务继续验证实际权限。
+
+**格式化接口**：
+```python
+# src/ui/cli/formatters.py
+def format_account(view: AccountView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_member(member: MemberView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_card_product(view: CardProductView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_card(view: CardView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_sale(view: SaleView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_entry(view: EntryView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach(view: CoachView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_course(view: CourseView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_room(view: RoomView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session(view: SessionView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_booking(view: BookingView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_consumption(view: ConsumptionView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_review(view: ReviewView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_equipment(view: EquipmentView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_maintenance(view: MaintenanceView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurement(view: MeasurementView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurement_comparison(view: MeasurementComparison, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_payment(view: PaymentView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_revenue(view: RevenueView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_membership_stats(view: MembershipStats, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session_stats(view: SessionStatsView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach_stats(view: CoachStatsView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_accounts(page: Page[AccountView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_members(page: Page[MemberView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_products(page: Page[CardProductView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_cards(page: Page[CardView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coaches(page: Page[CoachView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_courses(page: Page[CourseView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_rooms(page: Page[RoomView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_sessions(page: Page[SessionView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_bookings(page: Page[BookingView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_reviews(page: Page[ReviewView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_equipment_list(page: Page[EquipmentView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_maintenance_records(page: Page[MaintenanceView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurements(page: Page[MeasurementView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_payments(page: Page[PaymentView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session_stats_page(page: Page[SessionStatsView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach_stats_page(page: Page[CoachStatsView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+```
+
+**格式化规则**：`src/ui/cli/formatters.py` 的详情函数显式读取对应 View 字段，
+分页函数接收 `Page[View]`，返回中文文本。金额两位小数，状态译成中文，空值显示“—”，
+时刻按 `timezone_name` 转换并显示时区偏移，日期原样显示。会员联系方式遮住中间四位；
+卡的 `valid_until` 标为“不含当日”，剩余和占用分别显示。分页显示页码、总数及空页提示。
+业务说明和备注中的控制字符转为可见转义文本。
+
 ---
 
 ## 账号与日志模块
@@ -851,8 +1283,8 @@ def create_account(self, actor: Actor, data: AccountInput) -> AccountView:
     参数：
     - actor: 当前操作人（必须是管理员）
     - data: AccountInput
-      - username: 用户名（3-50 位，字母数字下划线）
-      - password: 密码（1-32 位，字母数字下划线短横线）
+      - username: 用户名（3-50 位 ASCII 字母、数字或下划线）
+      - password: 密码（6-32 位 ASCII 字母、数字、下划线或短横线）
       - role: 角色（"member" | "coach" | "receptionist" | "admin"）
     
     返回：AccountView（新账号信息，不含密码）
@@ -860,12 +1292,12 @@ def create_account(self, actor: Actor, data: AccountInput) -> AccountView:
     可能的错误：
     - 不是管理员 → PermissionDenied
     - 用户名重复 → ConflictError
-    - 密码不符合规则 → InvalidInputError
+    - 用户名或密码不符合格式 → InvalidInputError
     
     注意：
     - 密码要用哈希算法加密后存储
     - 用户名转小写并去首尾空白
-    - 密码原样存储（不转小写、不去空白）
+    - 密码按原值校验并哈希（不转小写、不去空白）
     """
 ```
 
@@ -888,10 +1320,13 @@ def login(self, username: str, password: str) -> Actor:
     可能的错误：
     - 用户名或密码错误 → AuthenticationError
     - 账号已停用 → AuthenticationError
+    - 会员或教练账号尚未关联对应档案，或关联档案已停用 → AuthenticationError
     
     注意：
     - 登录成功后，App 会保存 Actor
     - 后续每次操作都会传入这个 Actor
+    - member 角色必须只有 member_id，coach 角色必须只有 coach_id；receptionist/admin
+      的两个档案编号都必须为 None，不满足时拒绝登录
     """
 ```
 
@@ -904,7 +1339,8 @@ def verify_actor(self, session: Session, actor: Actor) -> Actor:
     用途：
     - 每个业务操作开始时调用
     - 检查账号是否被停用
-    - 检查档案关联是否变化
+    - 检查档案关联是否变化、角色与档案是否匹配，以及档案是否被停用
+    - 在调用方事务内先锁定当前账号，再锁定其关联的会员或教练档案
     
     参数：
     - session: 数据库会话（调用方提供）
@@ -914,10 +1350,14 @@ def verify_actor(self, session: Session, actor: Actor) -> Actor:
     
     可能的错误：
     - 账号已停用 → AuthenticationError
-    - 权限变化 → AuthenticationError
+    - 权限变化、角色缺少对应档案或出现不应有的档案关联 → AuthenticationError
     
     注意：
     - 这个方法会被其他所有服务调用
+    - 使用 AccountRepository.lock_many((actor.account_id,)) 锁定当前账号，
+      再以锁定当前读取得关联档案及最新 is_active；锁持有到调用方事务结束
+    - 账号停用或档案移交提交后，旧 Actor 的下一次复核必须失败，不能继续完成业务
+    - 涉及其他账号的 AuthService 操作先统一锁定全部账号，再执行同样的身份复核
     - 不要在这里提交事务
     """
 ```
@@ -925,15 +1365,12 @@ def verify_actor(self, session: Session, actor: Actor) -> Actor:
 **创建账号服务**：
 ```python
 def __init__(
-    self,
-    session_factory: Callable[[], Session],
-    *,
-    log_directory: Path,
+    self, session_factory: Callable[[], Session], *, log_config: LogConfig,
 ) -> None:
     """
     创建账号服务
 
-    参数：session_factory 为数据库会话工厂，log_directory 为 App 传入的日志目录
+    参数：session_factory 为数据库会话工厂，log_config 为配置解析后的日志配置
     返回：None
     """
 ```
@@ -955,6 +1392,7 @@ def list_accounts(self, actor: Actor, query: NamedQuery) -> Page[AccountView]:
 
     参数：actor 为管理员身份，query 为用户名、启用状态和分页条件
     返回：Page[AccountView]
+    排序：按 id 升序稳定分页
     异常：PermissionDenied（非管理员）、InvalidInputError（查询条件不合法）
     """
 ```
@@ -967,6 +1405,9 @@ def set_account_active(self, actor: Actor, account_id: int, active: bool) -> Acc
 
     参数：actor 为管理员身份，active 为目标状态
     返回：AccountView
+    业务规则：操作者与目标账号必须在同一次锁定当前读中按账号编号升序锁定；
+              停用管理员时，该锁定集合还包含全部启用管理员。取得全部账号锁后
+              再复核操作者、目标状态和启用管理员数量；只剩一人时拒绝停用。
     异常：PermissionDenied（非管理员）、NotFoundError（账号不存在）、
           InvalidState（停用最后一名启用管理员）
     """
@@ -980,10 +1421,48 @@ def link_profile(self, actor: Actor, account_id: int, data: AccountLinkInput) ->
 
     参数：actor 为管理员身份；data 中 member_id 和 coach_id 恰有一项非空
     返回：目标账号的 AccountView
+    业务规则：
+    - 目标账号必须空闲且角色与档案类型匹配；同一关联重复提交时直接返回当前结果
+    - 先只读取得档案当前关联的旧账号，再把操作者、旧账号和目标账号去重，
+      通过一次锁定当前读按账号编号升序统一锁定，最后锁定档案
+    - 锁后发现档案关联已变化时回滚并重开事务，连续 3 次变化则抛 ConflictError
+    - 锁内把档案的 account_id 直接改为目标账号；旧账号随即解除关联，教练档案不能暂时写成 NULL
     异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）、
-          InvalidState（角色不匹配）、ConflictError（目标账号已关联其他档案）
+          InvalidState（角色不匹配）、ConflictError（目标账号已关联其他档案或关联持续变化）
     """
 ```
+
+**账号仓储接口**：
+```python
+# src/db/account_repo.py
+class AccountRepository:
+    def __init__(self, session: Session) -> None: ...
+    def get(self, account_id: int) -> Account | None: ...
+    def lock(self, account_id: int) -> Account | None: ...
+    def lock_many(self, account_ids: tuple[int, ...]) -> tuple[Account, ...]: ...
+    def lock_active_admins(
+        self, account_ids: tuple[int, ...],
+    ) -> tuple[Account, ...]: ...
+    def find_by_username(self, username: str) -> Account | None: ...
+    def get_actor(self, account_id: int) -> Actor | None: ...
+    def lock_profile_links(
+        self, account_id: int,
+    ) -> tuple[Member | None, Coach | None]: ...
+    def create(self, *, username: str, password_hash: str, role: Role) -> Account: ...
+    def list(self, query: NamedQuery) -> Page[AccountView]: ...
+    def set_active(self, account_id: int, active: bool) -> AccountView: ...
+```
+
+`get_actor` 只负责读取当前关联；`login` 和 `verify_actor` 必须按角色检查 Actor 不变量。
+`lock_many` 对传入编号去重，并在取得任何账号锁之前，用一条 `ORDER BY id FOR UPDATE`
+查询取得完整账号集合。`lock_active_admins` 在同一条锁定当前读中取得
+传入账号与全部启用管理员的并集。建立教练档案和移交档案时，服务先锁定账号，再调用 `lock_profile_links`
+分别以锁定当前读检查 `members.account_id` 和 `coaches.account_id`。返回值为完整的
+`(member, coach)` 锁定行，未关联项为 `None`；服务据此在锁内复核关联编号和 `is_active`。
+所有写入这两类关联的流程都先锁定同一账号行。`verify_actor` 按账号、会员、教练的固定顺序取得锁，
+并由调用方事务统一释放。
+未关联档案的 member/coach 账号可以由管理员继续配置，但不能登录或调用业务服务。服务层按
+`role` 明确传入会员或教练范围，不能把缺失的 `member_id`/`coach_id` 当成“查看全部”。
 
 **密码哈希与验证**：
 ```python
@@ -992,7 +1471,7 @@ def hash_password(password: str) -> str:
     """
     校验密码并生成带随机盐的哈希
 
-    参数：password 为原始密码，允许字母、数字、短横线和下划线，共 1-32 位
+    参数：password 为原始密码，允许 ASCII 字母、数字、短横线和下划线，共 6-32 位
     返回：包含算法、参数和盐的哈希字符串
     异常：InvalidInputError（密码格式不合法）、ResourceError（哈希工具不可用）
     """
@@ -1076,15 +1555,33 @@ class OutcomeUnknownError(StorageError):
         """保存安全提示、原请求编号及原业务记录编号。"""
 
 class InitializationError(StorageError):
-    """初始化失败，携带已完成步骤。"""
+    """初始化失败，携带已完成步骤和结果是否未知。"""
 
     completed_tables: tuple[str, ...]
     failed_step: str
+    outcome_unknown: bool
 
     def __init__(
         self, message: str, *, completed_tables: tuple[str, ...], failed_step: str,
+        outcome_unknown: bool = False,
     ) -> None:
-        """保存安全提示、已完成表名及失败步骤。"""
+        """保存安全提示、已完成表名、失败步骤和结果状态。
+
+        completed_tables 只记录已经收到 CREATE TABLE 成功响应的表。
+        """
+
+class MigrationError(StorageError):
+    """数据库迁移失败，携带已确认步骤和结果是否未知。"""
+
+    completed_steps: tuple[str, ...]
+    failed_step: str
+    outcome_unknown: bool
+
+    def __init__(
+        self, message: str, *, completed_steps: tuple[str, ...], failed_step: str,
+        outcome_unknown: bool = False,
+    ) -> None:
+        """保存安全提示、已确认迁移步骤、失败步骤和结果状态。"""
 
 # src/errors/business.py
 class ResourceError(GymError): pass  # 文件或工具不可用
@@ -1152,7 +1649,8 @@ def log_event(
     注意：
     - 单条日志最大 16 KiB，超长截断并标记
     - 不记录敏感信息（密码、体测、联系方式）
-    - 不记录完整的异常消息（可能含 SQL）
+    - GymError 只记录经统一错误处理确认可展示的安全信息
+    - 其他异常的 error_message 固定为 None，不写入 str(error)
     - 只记录堆栈的文件名、行号、函数名
     """
 ```
@@ -1164,7 +1662,7 @@ def configure_logging(settings: AppSettings) -> None:
     """
     按应用配置建立日志处理器
 
-    参数：settings.log 提供目录、级别和轮转容量
+    参数：settings.log 提供目录、级别、单文件字节上限和备份数
     返回：None
     异常：ResourceError（日志资源无法初始化）
     """
@@ -1178,10 +1676,10 @@ def close_logging() -> None:
 ```
 
 **日志轮转**：
-- 日志文件：`logs/app.log`
-- 单文件大小：5 MiB
-- 保留份数：4 份（当前 + 3 份备份）
-- 总大小：约 20 MiB
+- 日志文件：`settings.log.directory / "app.log"`
+- 单文件大小：`settings.log.max_bytes`，默认 5 MiB
+- 备份数：`settings.log.backup_count`，默认 3 份，加当前文件共 4 份
+- 重新配置时按新的备份数参与查询，超出当前保留范围的旧备份不进入快照
 
 **日志查询**：
 ```python
@@ -1219,7 +1717,7 @@ def open_log_snapshot(self, actor: Actor) -> LogSnapshot:
     """
     取得一次日志浏览的快照
 
-    参数：actor 为管理员身份，目录使用构造时传入的 log_directory
+    参数：actor 为管理员身份；日志目录和备份数取自构造时传入的 LogConfig
     返回：LogSnapshot
     异常：PermissionDenied（非管理员）、ResourceError（读取失败）
     """
@@ -1228,14 +1726,15 @@ def open_log_snapshot(self, actor: Actor) -> LogSnapshot:
 **读取与筛选日志文件**：
 ```python
 # src/utils/logging_config.py
-def read_log_snapshot(directory: Path) -> LogSnapshot:
+def read_log_snapshot(directory: Path, *, backup_count: int) -> LogSnapshot:
     """
-    读取当前日志和三份备份
+    读取当前日志和配置数量的备份
 
-    参数：directory 为日志目录
+    参数：directory 为日志目录，backup_count 为本次配置允许读取的备份数
     返回：LogSnapshot；无日志时 entries 为空，损坏行计入 skipped_lines
     异常：ResourceError（文件或文件锁不可用）
-    注意：文件锁内复制内容，释放锁后解析
+    注意：读取当前文件和 `app.log.1` 至 `app.log.<backup_count>`；
+          文件锁内复制内容，释放锁后解析
     """
 
 def query_log_snapshot(snapshot: LogSnapshot, query: LogQuery) -> Page[LogEntry]:
@@ -1277,15 +1776,18 @@ def main(argv: list[str] | None = None) -> int:
 **其他服务调用你的方法**：
 ```python
 # 在 MemberService 中
+from src.db.connection import transaction
+
 class MemberService:
     def __init__(self, session_factory, auth: AuthService):
-        self.auth = auth  # 注入 AuthService
+        self._session_factory = session_factory
+        self._auth = auth  # 注入 AuthService
     
     def create_member(self, actor, data):
-        with self.session_factory() as session:
-            with session.begin():
+        with self._session_factory() as session:
+            with transaction(session):
                 # 1. 调用你的身份校验
-                current = self.auth.verify_actor(session, actor)
+                current = self._auth.verify_actor(session, actor)
                 
                 # 2. 检查权限
                 if current.role not in ("admin", "receptionist"):
@@ -1326,6 +1828,9 @@ except Exception as error:
 2. **身份校验**：
    - 账号停用后，verify_actor 抛出 AuthenticationError
    - 档案解绑后，verify_actor 抛出 AuthenticationError
+   - verify_actor 持有账号与关联档案锁时，并发停用或移交必须等待
+   - 停用或移交先提交时，旧 Actor 等待后复核失败，不能执行后续业务写入
+   - 账号停用和档案移交按 account_id 升序统一锁定操作者、旧账号和目标账号
 
 3. **错误处理**：
    - InvalidInputError → action="continue", 警告级别
@@ -1334,7 +1839,8 @@ except Exception as error:
    - OutcomeUnknownError → action="verify", 错误级别
 
 4. **日志系统**：
-   - 轮转：文件超过 5 MiB 后自动切换
+   - 轮转：文件超过 `settings.log.max_bytes` 后自动切换，并保留
+     `settings.log.backup_count` 份备份
    - 脱敏：日志中不含密码、SQL、完整电话
    - 并发：多进程同时写入不会互相覆盖
    - 查询：按时间、级别、操作筛选正确
@@ -1427,6 +1933,7 @@ def list_members(self, actor: Actor, query: MemberQuery) -> Page[MemberView]:
     注意：
     - 空结果返回 Page(items=[], total=0)
     - 不要返回 None 或裸列表
+    - 按 id 升序稳定排序后再分页
     """
 ```
 
@@ -1478,13 +1985,24 @@ def set_member_active(
     返回：MemberView（修改后的会员信息）
     
     业务规则：
-    - 停用前检查：
-      - 是否有未结束的预约？
-      - 是否有未完成的签到？
+    - 停用事务先锁定会员，并在锁内重新检查会员状态
+    - 停用前检查是否存在 reserved 或 checked_in 的预约
     - 如果有，先处理完再停用
+    - 办卡、预约、入场和体测录入也先锁定同一会员并复核启用状态
     - 停用后不能登录、不能预约、不能入场
     """
 ```
+
+**会员停用所需的预约查询接口**：
+```python
+# src/db/booking_repo.py
+class BookingRepository:
+    def has_open_for_member(self, member_id: int) -> bool:
+        """在会员已加锁的事务中，以锁定当前读检查 reserved/checked_in 预约；不提交事务。"""
+```
+
+该查询必须使用 `SELECT ... FOR UPDATE` 或等价锁定当前读，不能沿用事务先前普通查询建立的
+REPEATABLE READ 快照。这样，停用操作等待会员锁后能看到等待期间刚提交的预约。
 
 #### 2. 产品销售
 
@@ -1505,6 +2023,7 @@ def create_product(self, actor: Actor, terms: CardTerms) -> CardProductView:
 
     参数：actor 为管理员身份，terms 为完整产品规则
     返回：CardProductView
+    业务规则：新产品的 is_active=True
     异常：PermissionDenied（非管理员）、InvalidInputError（产品规则不合法）
     """
 ```
@@ -1515,8 +2034,9 @@ def update_product(self, actor: Actor, product_id: int, terms: CardTerms) -> Car
     """
     修改产品的后续销售规则
 
-    参数：actor 为管理员身份，product_id 为产品编号，terms 为完整新规则
+    参数：actor 为管理员身份，product_id 为卡产品编号（card_products.id），terms 为完整新规则
     返回：CardProductView；已售产品继续使用购买时的快照
+    业务规则：更新 terms 不改变当前 is_active
     异常：PermissionDenied（非管理员）、NotFoundError（产品不存在）、
           InvalidInputError（产品规则不合法）
     """
@@ -1528,7 +2048,8 @@ def get_product(self, actor: Actor, product_id: int) -> CardProductView:
     """
     查询产品规则
 
-    参数：actor 为当前身份，product_id 为产品编号
+    参数：actor 为当前身份，product_id 为卡产品编号（card_products.id）
+    权限：管理员可查看启用和停用产品；其他角色只能查看启用产品
     返回：CardProductView
     异常：NotFoundError（产品不存在或不可见）
     """
@@ -1552,9 +2073,10 @@ def get_card(self, actor: Actor, membership_id: int) -> CardView:
     """
     查询会员购买后的权益
 
-    参数：actor 为当前身份，membership_id 为已售产品编号
+    参数：actor 为当前身份，membership_id 为已售会员卡编号（memberships.id）
+    权限：会员只能查本人；前台、管理员可查全部；教练无权调用
     返回：CardView
-    异常：PermissionDenied（角色无权限）、NotFoundError（记录不存在或不可见）
+    异常：PermissionDenied（教练角色）、NotFoundError（记录不存在或会员越权）
     """
 ```
 
@@ -1575,32 +2097,32 @@ def sell_product(
     - actor: 当前操作人
     - data: SaleInput
       - member_id: 会员编号
-      - product_id: 产品编号
+      - product_id: 卡产品编号（card_products.id）
       - method: 收款方式（"cash" | "card" | "transfer"）
     - request_id: 请求编号（UUID，防重复提交）
     
     返回：SaleView
-      - card: CardView（产品记录）
+      - card: CardView（已售会员卡记录）
       - payment: PaymentView（收款记录）
     
     业务规则（重要）：
-    1. 检查会员存在且启用
-    2. 检查产品存在且启用
-    3. 锁定会员（防并发）
-    4. 如果是私教课产品，计算生效日期：
-       - 查询会员所有未作废私教课产品的最晚到期日
-       - 新产品从最晚到期日的次日开始
-       - 如果没有未到期产品，从今天开始
-    5. 如果是次卡，从今天开始
-    6. 创建产品快照（memberships 表）
+    1. 锁定会员，再锁定卡产品
+    2. 在锁内重新检查会员存在且启用、卡产品存在且启用
+    3. 私教课产品使用锁定当前读取得该会员未作废期限卡的最大 valid_until
+    4. 上述读取完成后生成一次当前时刻及对应门店日期；以锁内读取的价格和权益生成快照，
+       收款 paid_at 使用同一当前时刻；停售与销售并发时，锁内复核结果决定本次是否允许销售
+    5. 计算生效日期：
+       - 私教课产品：valid_from = max(门店今天, 最大 valid_until)；无记录时取门店今天
+       - 次卡：valid_from = 门店今天
+    6. 创建已售会员卡快照（memberships 表）
+       - 新售权益的 status="active"
     7. 记录收款（payments 表）
     8. 记录操作（operation_records 表）
     9. 一起提交
     
     并发控制：
-    - 锁定会员（FOR UPDATE）
-    - 锁定产品（FOR UPDATE）
-    - 在锁内读取最新到期日
+    - 锁定顺序为会员 → 卡产品 → 既有已售会员卡（FOR UPDATE）
+    - 在锁内读取最新到期日、卡产品启用状态、售价和权益快照
     
     防重复：
     - 相同 request_id + actor_id + 相同输入 → 返回原结果
@@ -1639,6 +2161,7 @@ def get_sale_by_request(self, actor: Actor, request_id: str) -> SaleView:
     可能的错误：
     - 操作记录不存在 → NotFoundError（可能确实失败了）
     - 操作记录属于别人 → NotFoundError（不暴露）
+    - operation 不是 "sell_product" → ConflictError
     """
 ```
 
@@ -1648,7 +2171,7 @@ def list_products(self, actor: Actor, query: NamedQuery) -> Page[CardProductView
     """
     查询产品列表
     
-    权限：所有角色都可以查询
+    权限：所有角色都可以查询启用产品；管理员可以查询全部产品
     
     参数：
     - actor: 当前操作人
@@ -1660,8 +2183,9 @@ def list_products(self, actor: Actor, query: NamedQuery) -> Page[CardProductView
     返回：Page[CardProductView]
     
     注意：
-    - 普通会员只能看启用的产品
-    - 管理员可以看所有产品（包括停用的）
+    - 会员、教练、前台的查询条件不能放宽到停用产品
+    - `get_product` 使用相同的可见范围，不能通过编号直接查看停用产品
+    - 按 id 升序稳定排序后再分页
     """
 ```
 
@@ -1695,14 +2219,26 @@ def list_cards(self, actor: Actor, query: CardQuery) -> Page[CardView]:
       - 只筛选有到期日的产品（排除次卡）
       - valid_until < 指定日期
     - private_lessons_at_most:
-      - 只筛选赠课的产品（排除次卡）
+      - 只筛选私教课产品（排除次卡）
       - remaining_private_lessons - reserved_private_lessons <= 阈值
     
     用途示例：
     - 查询快到期的产品：valid_on=今天, expires_before=7天后
     - 查询课节不足的产品：valid_on=今天, private_lessons_at_most=3
+    - 结果按 id 升序稳定排序后再分页
     """
 ```
+
+**续购日期查询接口**：
+```python
+# src/db/membership_repo.py
+class MembershipRepository:
+    def latest_term_end(self, member_id: int) -> date | None:
+        """在会员已加锁的事务中锁定当前期限卡并读取最大 valid_until；无记录返回 None。"""
+```
+
+`latest_term_end` 使用锁定当前读，排除 `status="void"` 的记录。销售服务先完成该读取，
+再生成唯一的锁后当前时刻，并按 `max(门店今天, latest_term_end 或 门店今天)` 计算生效日。
 
 #### 3. 门禁入场
 
@@ -1723,7 +2259,7 @@ def get_today_entry(self, actor: Actor, member_id: int) -> EntryView:
     返回：EntryView
       - id: 入场记录编号
       - member_id: 会员编号
-      - membership_id: 使用的产品编号
+      - membership_id: 使用的已售会员卡编号（memberships.id）
       - business_date: 门店日期
       - entered_at: 登记时刻
       - accesses_used: 扣除次数（0 或 1）
@@ -1731,6 +2267,7 @@ def get_today_entry(self, actor: Actor, member_id: int) -> EntryView:
     
     可能的错误：
     - 今天没有入场记录 → NotFoundError
+    - 会员已停用 → InvalidState
     """
 ```
 
@@ -1753,20 +2290,20 @@ def register_entry(
     - actor: 当前操作人
     - data: EntryInput
       - member_id: 会员编号
-      - membership_id: 使用的产品编号
+      - membership_id: 使用的已售会员卡编号（memberships.id）
     - request_id: 请求编号（防重复）
     
     返回：EntryView
     
     业务规则：
-    1. 检查会员存在且启用
-    2. 检查产品属于该会员
-    3. 锁定会员
-    4. 生成门店日期（按门店时区的今天）
+    1. 按请求编号查询幂等记录；同一编号先按全局防重复规则核对操作者和输入
+    2. 检查会员存在且启用，并确认操作者有权为该会员办理入场
+    3. 锁定会员，再锁定所选已售会员卡，并在锁内重新确认会员状态及卡属于该会员
+    4. 全部锁取得后生成一次当前时刻，并由它转换门店日期；entered_at 使用同一时刻
     5. 查询当日入场记录：
-       - 如果已有记录 → 返回原记录（不再扣次）
+       - 如果已有记录 → 在同一事务登记本次新的 request_id 到原 EntryView.id，再返回原记录；不检查本次卡的有效期或余额，也不再扣次
        - 如果没有记录 → 继续
-    6. 检查产品有效性：
+    6. 首次入场检查产品有效性：
        - 私教课产品：检查日期在有效期内
        - 次卡：检查剩余次数 > 0
     7. 扣除次数：
@@ -1778,13 +2315,13 @@ def register_entry(
     
     防重复：
     - 同一天同一会员只能有一条入场记录
-    - 重复提交返回原记录
+    - 原请求编号和新的请求编号都必须映射到同一结果；跨午夜使用已登记的请求编号不得再次扣次
     
     可能的错误：
-    - 产品不属于该会员 → PermissionDenied
-    - 产品已作废 → InvalidState
-    - 私教课产品日期不在有效期内 → CardNotEligible
-    - 次卡余额不足 → InsufficientCredits
+    - 产品不属于该会员 → PermissionDenied（即使当天已有入场记录也要检查归属）
+    - 当天尚无入场记录且产品已作废 → InvalidState
+    - 当天尚无入场记录且私教课产品日期不在有效期内 → CardNotEligible
+    - 当天尚无入场记录且次卡余额不足 → InsufficientCredits
     """
 ```
 
@@ -1805,17 +2342,19 @@ def get_entry_by_request(self, actor: Actor, request_id: str) -> EntryView:
 **你需要调用的方法**：
 ```python
 # 调用账号模块
+from src.db.connection import transaction
 from src.services.auth_service import AuthService
 
 class MemberService:
     def __init__(self, session_factory, auth: AuthService):
-        self.auth = auth
+        self._session_factory = session_factory
+        self._auth = auth
     
     def create_member(self, actor, data):
-        with self.session_factory() as session:
-            with session.begin():
+        with self._session_factory() as session:
+            with transaction(session):
                 # 1. 校验身份
-                self.auth.verify_actor(session, actor)
+                self._auth.verify_actor(session, actor)
                 
                 # 2. 检查权限
                 if actor.role not in ("admin", "receptionist"):
@@ -1825,13 +2364,16 @@ class MemberService:
                 ...
 
 # 调用报表模块（收款）
+from src.db.connection import transaction
 from src.db.payment_repo import PaymentRepository
 
 class ProductService:
     def sell_product(self, actor, data, request_id):
-        with self.session_factory() as session:
-            with session.begin():
-                # ... 创建产品快照 ...
+        with self._session_factory() as session:
+            with transaction(session, request_id=request_id):
+                # ... 锁定会员、卡产品，并锁定当前读既有已售会员卡 ...
+                now_utc = datetime.now(UTC)
+                # 由 now_utc 转换门店日期并创建已售会员卡快照
                 
                 # 记录收款
                 payment_repo = PaymentRepository(session)
@@ -1840,7 +2382,7 @@ class ProductService:
                     member_id=data.member_id,
                     amount=card.terms.price,
                     method=data.method,
-                    paid_at=datetime.now(UTC),
+                    paid_at=now_utc,
                     operator_id=actor.account_id
                 )
                 
@@ -1849,20 +2391,23 @@ class ProductService:
 
 **其他模块调用你的方法**：
 ```python
-# 预约模块需要检查会员的产品
-from src.services.product_service import ProductService
+# 预约模块在自己的事务中读取会员卡
+from src.db.connection import transaction
+from src.db.membership_repo import MembershipRepository
 
 class BookingService:
-    def __init__(self, ..., product: ProductService):
-        self.product = product
+    def __init__(self, session_factory, auth: AuthService, *, timezone_name: str):
+        self._session_factory = session_factory
+        self._auth = auth
     
     def book(self, actor, data, request_id):
-        # 检查会员持有的产品
-        card = self.product.get_card(actor, data.membership_id)
-        
-        # 检查课节余额
-        if card.available_private_lessons <= 0:
-            raise InsufficientCredits("课节余额不足")
+        with self._session_factory() as session:
+            with transaction(session, request_id=request_id):
+                # 卡、预约及课次均在此事务中通过对应 Repository 检查和锁定
+                card_repo = MembershipRepository(session)
+                card = card_repo.lock(data.membership_id)
+                if card is None or card.remaining_private_lessons <= card.reserved_private_lessons:
+                    raise InsufficientCredits("课节余额不足")
         
         # 继续预约流程...
 ```
@@ -1933,6 +2478,8 @@ def create_coach(self, actor: Actor, data: CoachInput) -> CoachView:
     - 必须先有教练账号（role="coach"）
     - 一个账号只能绑定一个教练档案
     - 账号已绑定其他档案 → ConflictError
+    - 先锁定目标账号，再调用 `AccountRepository.lock_profile_links`
+      以锁定当前读复核会员/教练档案关联；与档案移交共用同一账号锁
     """
 ```
 
@@ -1954,6 +2501,7 @@ def list_coaches(self, actor: Actor, query: NamedQuery) -> Page[CoachView]:
       - paging: 分页参数
     
     返回：Page[CoachView]
+    排序：按 id 升序稳定分页
     """
 ```
 
@@ -1987,7 +2535,9 @@ def set_coach_active(self, actor: Actor, coach_id: int, active: bool) -> CoachVi
 
     参数：actor 为管理员身份，coach_id 为目标编号，active 为目标状态
     返回：CoachView
-    异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）
+    业务规则：停用前锁定教练并检查是否存在 status="scheduled" 的课次；存在时抛 InvalidState。
+    排课同样先锁教练，因此停用检查与新排课串行。
+    异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）、InvalidState（仍有未结束课次）
     """
 ```
 
@@ -2041,6 +2591,7 @@ def list_courses(self, actor: Actor, query: CourseQuery) -> Page[CourseView]:
       - kind: 课程类型（固定为 "private"）
       - is_active: 是否启用
       - paging: 分页参数
+    排序：按 id 升序稳定分页
     """
     
 def update_course(
@@ -2054,7 +2605,8 @@ def update_course(
     
     权限：管理员
     
-    注意：只影响新排的课次，已排的课次保留原来的名称和时长
+    注意：课程类型固定传入 `"private"`。名称和时长只影响新排的课次，
+          已排课次保留排课时的名称、类型和起止时刻。
     """
 ```
 
@@ -2100,14 +2652,23 @@ def create_room(self, actor: Actor, data: RoomInput) -> RoomView:
 **查询和修改场地**：
 ```python
 def get_room(self, actor: Actor, room_id: int) -> RoomView:
-    """查询场地详情"""
+    """查询场地基础详情；已排课时段由 list_sessions 按 room_id 和日期窗口分页查询。"""
     
 def list_rooms(self, actor: Actor, query: NamedQuery) -> Page[RoomView]:
-    """查询场地列表"""
+    """查询场地列表，按 id 升序稳定分页。"""
     
 def update_room(self, actor: Actor, room_id: int, data: RoomInput) -> RoomView:
-    """修改场地"""
+    """修改场地名称和容量。
+
+    锁定场地后更新；容量至少为 1，能够容纳当前固定容量为 1 的私教课。
+    返回：RoomView；参数或容量不合法抛 InvalidInputError。
+    """
 ```
+
+CLI 的场地详情流程先调用 `get_room` 显示容量和状态，再把用户输入的门店日期转换为该日
+`[00:00, 次日 00:00)` 的 UTC `DateWindow`，调用 `list_sessions` 并固定
+`room_id=该场地编号`。排课时段沿用 `Page[SessionView]`，不在 `RoomView` 中嵌入长度不定的列表。
+日期为空时只显示基础详情；日期非法时不调用服务。
 
 **启用/停用场地**：
 ```python
@@ -2117,9 +2678,26 @@ def set_room_active(self, actor: Actor, room_id: int, active: bool) -> RoomView:
 
     参数：actor 为管理员身份，room_id 为目标编号，active 为目标状态
     返回：RoomView
-    异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）
+    业务规则：停用前锁定场地并检查是否存在 status="scheduled" 的课次；存在时抛 InvalidState。
+    排课也会锁定同一场地，因此停用检查与新排课串行。
+    异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）、InvalidState（仍有未结束课次）
     """
 ```
+
+**停用教练和场地所需的课次查询接口**：
+```python
+# src/db/course_repo.py
+class SessionRepository:
+    def has_scheduled_for_coach(self, coach_id: int) -> bool:
+        """锁定当前读检查教练是否仍有 scheduled 课次；调用方已锁定教练，不提交事务。"""
+
+    def has_scheduled_for_room(self, room_id: int) -> bool:
+        """锁定当前读检查场地是否仍有 scheduled 课次；调用方已锁定场地，不提交事务。"""
+```
+
+这两个查询必须使用 `SELECT ... FOR UPDATE` 或等价锁定当前读。`set_coach_active` 和
+`set_room_active` 在等待父资源行锁前可能已经执行过普通查询；锁定当前读才能看到等待期间
+刚提交的排课，避免停用仍有课次的教练或场地。
 
 #### 4. 排课（Weijie ZHOU）
 
@@ -2164,25 +2742,21 @@ def create_session(
       - ends_at: 结束时间
       - capacity: 容量
       - occupied_count: 已预约人数
-      - available_count: 可预约人数
+      - available_count: 当前未被非取消预约占用的名额；非 scheduled 课次固定为 0
       - status: 状态（"scheduled" | "completed" | "cancelled"）
     
     业务规则：
-    1. 检查课程、教练、场地都存在且启用
-    2. 检查时长：ends_at - starts_at <= 150 分钟
-    3. 检查教练时间冲突：
-       - 锁定教练
-       - 查询教练在 [starts_at, ends_at) 是否有其他课次
-       - 有冲突 → ScheduleConflict
-    4. 检查场地时间冲突：
-       - 锁定场地
-       - 查询场地在 [starts_at, ends_at) 是否有其他课次
-       - 有冲突 → ScheduleConflict
-    5. 私教课容量必须为 1
-    6. 保存课程名称快照（course_name）
-    7. 初始状态为 "scheduled"
-    8. 记录操作
-    9. 提交
+    1. 校验开始、结束时刻均带时区且 starts_at < ends_at
+    2. 锁定教练 → 课程模板 → 场地，并在锁内重新读取三者
+    3. 检查教练、课程模板、场地均存在且启用；全部锁取得后生成当前时刻，
+       首次排课必须 starts_at > 当前时刻，不接受历史课次
+    4. 检查时长：ends_at - starts_at 必须等于锁内课程模板时长，且不超过 150 分钟
+    5. 检查教练在 [starts_at, ends_at) 是否有其他课次；有冲突 → ScheduleConflict
+    6. 检查场地在 [starts_at, ends_at) 是否有其他课次；有冲突 → ScheduleConflict
+    7. 私教课容量必须为 1
+    8. 使用锁内课程模板名称和类型保存课次快照
+    9. 初始状态为 "scheduled"
+    10. 记录操作并提交
     
     时间区间规则：
     - [starts_at, ends_at) 前含后不含
@@ -2190,8 +2764,8 @@ def create_session(
     - 14:00-15:00 和 14:30-15:30 冲突
     
     并发控制：
-    - 锁顺序：教练 → 场地（按 ID 排序）
-    - 在锁内读取最新课次列表
+    - 锁顺序：教练 → 课程模板 → 场地（同类资源按 ID 排序）
+    - 在锁内重查启用状态、模板时长和模板快照，并以锁定当前读读取最新冲突课次
     
     可能的错误：
     - 教练或场地时间冲突 → ScheduleConflict
@@ -2207,11 +2781,13 @@ def get_session(self, actor: Actor, session_id: int) -> SessionView:
     查询课次详情
     
     权限：
-    - 会员：只能看到自己预约的课次
+    - 会员：只能查看 status="scheduled" 且 starts_at 晚于本次查询时刻的公开详情；
+      已预约课次的后续状态通过 BookingService.get_booking/list_bookings 查询
     - 教练：可以看自己的课次
     - 管理员、前台：可以看所有课次
     
-    注意：会员查询时不显示其他会员的预约信息
+    异常：记录不存在或不在当前角色可见范围时均抛 NotFoundError。
+    注意：会员查询时不显示其他会员的预约信息。
     """
     
 def list_sessions(self, actor: Actor, query: SessionQuery) -> Page[SessionView]:
@@ -2226,12 +2802,43 @@ def list_sessions(self, actor: Actor, query: SessionQuery) -> Page[SessionView]:
       - room_id: 场地编号
       - status: 状态
       - paging: 分页参数
+
+    权限与强制范围：
+    - 会员：服务固定 status="scheduled"，并只返回 starts_at 晚于服务生成的同一查询时刻的课次
+    - 教练：服务强制 scope_coach_id=当前教练编号，query.coach_id 不能扩大范围
+    - 前台、管理员：可按 query 查询全部课次
     
     用途示例：
     - 教练查看自己的课表：coach_id=自己的编号
     - 查看场地安排：room_id=场地编号
-    - 会员查看可预约课程：status="scheduled", available_count > 0
+    - 会员查看可预约课程：返回范围已限定为未开课的 scheduled 课次，
+      页面展示 available_count；预约时由 BookingService 在锁内再次检查余位
+    排序：按 starts_at 升序、id 升序稳定分页
     """
+```
+
+`SessionView.available_count` 是查询时的容量投影，不代替预约资格判断。对于
+`completed` 或 `cancelled` 课次它固定为 0；`scheduled` 课次按
+`max(capacity - occupied_count, 0)` 计算。会员查询范围另外排除已开课课次。
+
+**课次列表的数据范围接口**：
+```python
+# src/db/course_repo.py
+class SessionRepository:
+    def list(
+        self,
+        query: SessionQuery,
+        *,
+        scope_coach_id: int | None,
+        bookable_after: datetime | None,
+    ) -> Page[SessionView]:
+        """
+        在 SQL 计数和分页前应用服务给定的权限范围。
+
+        教练查询传 scope_coach_id；会员查询传 bookable_after，并强制
+        status="scheduled" 且 starts_at > bookable_after；前台和管理员两项都传 None。
+        两个范围参数不能同时非空。
+        """
 ```
 
 **核实课次操作结果**：
@@ -2266,27 +2873,46 @@ def cancel_session(
     返回：SessionView（status 变为 "cancelled"）
     
     业务规则：
-    1. 检查课次存在且为 "scheduled"
-    2. 收集所有预约：
-       - 查询该课次的所有 reserved/checked_in 预约
-       - 按会员 ID 排序
-    3. 逐个取消预约：
-       - 锁定会员和产品
-       - 释放课节占用
-       - 更新预约状态为 "cancelled"
-    4. 更新课次状态为 "cancelled"
-    5. 记录操作
-    6. 提交
+    1. 先重新校验账号和管理员权限，再按 request_id 核对 actor_id、operation 和 payload_hash；
+       全部相同则返回原结果，任一不同则抛 ConflictError
+    2. 步骤 1 在独立短只读事务中完成；未命中旧请求时，同一只读事务取得该课次
+       reserved/checked_in 预约的候选快照，固定保存
+       (booking_id, member_id, membership_id, status)，然后关闭会话
+    3. 使用新的写事务，按 member_id 升序锁定候选会员，再锁定课次
+    4. 写事务取得课次锁后，第一次普通一致性读重新取得同一候选快照：
+       - 快照变化 → 回滚整个写事务，从步骤 2 重新开始
+       - 快照不变 → 继续；写事务在本次重读前不得执行普通一致性读
+    5. 按 membership_id 升序锁定已售会员卡，再按 booking_id 升序锁定预约
+    6. 全部写锁取得后重新生成当前时刻，最终确认课次仍为 "scheduled"、
+       当前时刻仍早于 starts_at，并复核预约关联、状态和占用量
+    7. 释放课节占用，把预约和课次改为 "cancelled"，记录操作并提交
     
     并发控制：
-    - 锁顺序：会员 → 产品（按 ID 排序）
-    - 先收集预约列表，再逐个处理
-    - 如果处理期间预约列表变化，回滚重试
+    - 锁顺序：会员 → 课次 → 已售会员卡 → 预约；同类资源按 ID 升序
+    - 取得课次锁后，新预约会等待并在锁后看到 cancelled；已经先提交的新预约会使快照变化
+    - 快照变化只允许在提交前有界重开事务；连续 3 次变化 → ConflictError，提示稍后重试
+    - 发生提交结果未知时不得自动重试，必须按原 request_id 核实
+    - 每次因候选变化重开写事务时都重新取得锁内当前时刻；若等待期间到达 starts_at，
+      本次取消返回 InvalidState，不写 operation_records，原 request_id 和 payload_hash 保持不变
     
     可能的错误：
-    - 课次已完成/已取消 → InvalidState
+    - 已完成，或不同请求再次取消已取消课次 → InvalidState
+    - 预约列表持续变化 → ConflictError
     """
 ```
+
+**取消课次所需的预约查询接口**：
+```python
+# src/db/booking_repo.py
+class BookingRepository:
+    def list_open_for_session(self, session_id: int) -> tuple[Booking, ...]:
+        """按 member_id、membership_id、id 升序读取 reserved/checked_in 预约；不加锁、不提交。"""
+```
+
+排课、停用教练和停用场地时，分别调用 `SessionRepository.has_conflict`、
+`has_scheduled_for_coach` 和 `has_scheduled_for_room`。这些方法都在相应父资源已加锁后
+执行锁定当前读，不能使用事务先前普通
+查询建立的 REPEATABLE READ 快照。
 
 **完成课次**：
 ```python
@@ -2301,10 +2927,22 @@ def complete_session(self, actor: Actor, session_id: int) -> SessionView:
     - 调用此方法将课次状态改为 "completed"
     
     业务规则：
-    - 只有 "scheduled" 课次可以完成
+    - 已为 "completed" 时返回当前 SessionView
+    - 首次完成先锁定课次，在锁内确认必须是 "scheduled"；已取消 → InvalidState
+    - 取得课次锁后生成当前时刻，必须满足 now >= ends_at；未到结束时间 → InvalidState
     - 必须没有 reserved/checked_in 预约
     - 有未处理预约 → InvalidState
     """
+```
+
+完成课次在取得课次锁后调用 `BookingRepository.has_open_for_session(session_id)`；该方法使用
+锁定当前读检查 reserved/checked_in 预约，不能使用事务在等待课次锁前建立的一致性读快照。
+
+```python
+# src/db/booking_repo.py
+class BookingRepository:
+    def has_open_for_session(self, session_id: int) -> bool:
+        """课次已加锁后，以锁定当前读检查 reserved/checked_in 预约；不提交事务。"""
 ```
 
 #### 5. 预约（Weijie ZHOU & Yuxi ZHU 共同负责）
@@ -2328,14 +2966,14 @@ def book(
     - data: BookingInput
       - member_id: 会员编号
       - session_id: 课次编号
-      - membership_id: 使用的产品编号（提供课节和日期资格）
+      - membership_id: 已售会员卡编号（memberships.id，提供课节和日期资格）
     - request_id: 请求编号（防重复）
     
     返回：BookingView
       - id: 预约编号
       - member_id: 会员编号
       - member_name: 会员姓名
-      - membership_id: 产品编号
+      - membership_id: 已售会员卡编号
       - session: SessionView（课次详情）
       - status: 状态（"reserved"）
       - booked_at: 预约时间
@@ -2343,40 +2981,43 @@ def book(
       - closed_at: 关闭时间（null）
     
     业务规则：
-    1. 检查会员、课次、产品都存在且启用
-    2. 检查产品属于该会员
-    3. 锁定：会员 → 课次 → 产品（按 ID 排序）
-    4. 检查课次状态：
+    1. 锁定：会员 → 课次 → 已售会员卡（同类资源按 ID 排序）
+    2. 在锁内重新检查会员启用状态、课次和已售会员卡是否存在且可用，并确认卡属于该会员
+    3. 检查课次状态和预约时机：
        - 必须是 "scheduled"
+       - 全部锁取得后生成同一个当前时刻，必须早于 starts_at；历史课次或已经开课 → InvalidState
        - 已完成/已取消 → InvalidState
-    5. 检查容量：
-       - 查询该课次的非取消预约数
-       - 已满员 → CapacityExceeded
-    6. 检查会员是否已预约此课次：
+    4. 检查会员是否已预约此课次：
+       - 以锁定当前读查询同会员、同课次的预约
        - 已有预约（任何状态） → ConflictError
-    7. 检查会员时间冲突：
-       - 查询会员在 [starts_at, ends_at) 是否有其他非取消预约
+       - 已取消预约也保留历史，不能恢复或重新占用；如需再次上课必须选择其他课次
+    5. 检查容量：
+       - 以锁定当前读查询该课次的非取消预约记录并计数
+       - 已满员 → CapacityExceeded
+    6. 检查会员时间冲突：
+       - 以锁定当前读查询会员在 [starts_at, ends_at) 是否有其他非取消预约
        - 有冲突 → ScheduleConflict
-    8. 检查产品类型：
+    7. 检查产品类型：
        - 次卡不能预约私教课 → CardNotEligible
-    9. 检查产品日期资格：
+    8. 检查产品日期资格：
        - 课次开始时间转为门店日期
        - 检查 valid_from <= 上课日期 < valid_until
        - 未来生效的产品可以提前预约其有效期内的课
        - 不符合 → CardNotEligible
-    10. 检查课节余额：
+    9. 检查课节余额：
         - available_private_lessons = remaining - reserved
         - 余额 <= 0 → InsufficientCredits
-    11. 占用课节：
+    10. 占用课节：
         - reserved_private_lessons += 1
-    12. 创建预约：
+    11. 创建预约：
         - status = "reserved"
         - booked_at = 当前时刻
-    13. 记录操作
-    14. 提交
+    12. 记录操作
+    13. 提交
     
     并发控制：
-    - 必须在锁内重新读取容量、余额
+    - 必须在锁内以当前读重新读取重复预约、容量、时间冲突和余额；
+      不能使用等待课次或会员锁前建立的快照
     - 两人同时预约最后一个名额 → 一个成功，一个等待
     
     防重复：
@@ -2429,12 +3070,12 @@ def cancel(
     业务规则：
     1. 检查预约存在
     2. 检查权限（会员只能取消自己的）
-    3. 锁定：会员 → 产品 → 预约
+    3. 锁定：会员 → 已售会员卡 → 预约
     4. 检查预约状态：
-       - 必须是 "reserved"
        - 已签到/已完成/已取消 → InvalidState
+       - 首次取消必须是 "reserved"
     5. 检查时间：
-       - 只能在课次开始前取消
+       - 全部锁取得后生成当前时刻，只能在课次开始前取消
        - 已到开课时间 → InvalidState
     6. 释放课节占用：
        - reserved_private_lessons -= 1
@@ -2486,6 +3127,7 @@ def list_bookings(self, actor: Actor, query: BookingQuery) -> Page[BookingView]:
     - 会员查看我的预约：member_id=自己的编号
     - 教练查看学员名单：session_id=课次编号
     - 前台查询某会员的预约记录：member_id=会员编号
+    排序：按关联课次 starts_at 降序、预约 id 降序稳定分页
     """
 ```
 
@@ -2494,17 +3136,19 @@ def list_bookings(self, actor: Actor, query: BookingQuery) -> Page[BookingView]:
 **你们需要调用的方法**：
 ```python
 # 调用账号模块
+from src.db.connection import transaction
 from src.services.auth_service import AuthService
 
 class CourseService:
     def __init__(self, session_factory, auth: AuthService):
-        self.auth = auth
+        self._session_factory = session_factory
+        self._auth = auth
     
     def create_coach(self, actor, data):
-        with self.session_factory() as session:
-            with session.begin():
+        with self._session_factory() as session:
+            with transaction(session):
                 # 1. 校验身份
-                self.auth.verify_actor(session, actor)
+                self._auth.verify_actor(session, actor)
                 
                 # 2. 检查权限
                 if actor.role != "admin":
@@ -2513,21 +3157,24 @@ class CourseService:
                 # 3. 执行业务
                 ...
 
-# 调用产品模块
-from src.services.product_service import ProductService
+# 在预约事务中通过数据访问层锁定会员卡
+from src.db.connection import transaction
+from src.db.membership_repo import MembershipRepository
 
 class BookingService:
-    def __init__(self, session_factory, auth: AuthService, product: ProductService, ...):
-        self.product = product
+    def __init__(self, session_factory, auth: AuthService, *, timezone_name: str):
+        self._session_factory = session_factory
+        self._auth = auth
     
     def book(self, actor, data, request_id):
-        with self.session_factory() as session:
-            with session.begin():
-                # 检查产品
-                card = self.product.get_card(actor, data.membership_id)
+        with self._session_factory() as session:
+            with transaction(session, request_id=request_id):
+                # 在当前事务中锁定预约使用的会员卡
+                card_repo = MembershipRepository(session)
+                card = card_repo.lock(data.membership_id)
                 
                 # 检查课节余额
-                if card.available_private_lessons <= 0:
+                if card is None or card.remaining_private_lessons <= card.reserved_private_lessons:
                     raise InsufficientCredits("...")
                 
                 # 继续预约...
@@ -2535,22 +3182,20 @@ class BookingService:
 
 **其他模块调用你们的方法**：
 ```python
-# 签到模块需要查询预约
-from src.services.booking_service import BookingService
+# 签到模块在自己的事务中读取预约
+from src.db.connection import transaction
+from src.db.booking_repo import BookingRepository
 
 class AttendanceService:
-    def __init__(self, ..., booking: BookingService):
-        self.booking = booking
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
     
     def check_in(self, actor, booking_id):
-        # 查询预约
-        booking = self.booking.get_booking(actor, booking_id)
-        
-        # 检查状态
-        if booking.status != "reserved":
-            raise InvalidState("...")
-        
-        # 继续签到...
+        with self._session_factory() as session:
+            with transaction(session, record_id=booking_id):
+                booking = BookingRepository(session).lock(booking_id)
+                # 先处理已签到重试，再校验首次签到状态和课次开始时间
 ```
 
 ### 测试要点
@@ -2589,7 +3234,7 @@ class AttendanceService:
 
 ## 签到与评价模块
 
-**负责人**：Yihao QIAN
+**负责人**：Yihao QIAN（签到、评价）；Lvzhen ZHOU（消课、缺席处理）
 
 ### 你要实现的功能
 
@@ -2603,7 +3248,7 @@ def check_in(self, actor: Actor, booking_id: int) -> BookingView:
     
     权限：
     - 会员：只能给自己签到
-    - 前台、管理员：可以代签到
+    - 本课教练、前台、管理员：可以代签到
     
     参数：
     - booking_id: 预约编号
@@ -2612,11 +3257,12 @@ def check_in(self, actor: Actor, booking_id: int) -> BookingView:
     
     业务规则：
     1. 检查预约存在
-    2. 检查权限（会员只能签到自己的）
-    3. 锁定预约
+    2. 检查权限（会员只能签到自己的；本课教练、前台和管理员可代签到）
+    3. 锁定预约，并在取得锁后生成当前时刻
     4. 检查预约状态：
-       - 必须是 "reserved"
-       - 已签到/已完成/已取消 → InvalidState
+       - 已签到 → 返回当前 BookingView
+       - 已完成/已取消/已缺席 → InvalidState
+       - 首次签到必须是 "reserved"
     5. 检查时间：
        - 必须从课次开始时间起才能签到
        - 早于开课时间 → InvalidState
@@ -2661,7 +3307,7 @@ def correct_attendance(
     2. 检查权限：
        - 教练只能更正自己课次的预约
        - 管理员可以更正所有预约
-    3. 锁定预约
+    3. 锁定预约，并在取得锁后生成当前时刻
     4. 检查预约状态：
        - 只能更正 reserved 或 checked_in
        - 已完成/已取消/缺席 → InvalidState
@@ -2716,7 +3362,7 @@ def complete(self, actor: Actor, booking_id: int) -> ConsumptionView:
     返回：ConsumptionView（消课记录）
       - id: 消课记录编号
       - booking_id: 预约编号
-      - membership_id: 产品编号
+      - membership_id: 已售会员卡编号
       - lessons_used: 扣除课节数（固定为 1）
       - completed_at: 消课时间
       - operator_id: 操作人编号
@@ -2724,15 +3370,14 @@ def complete(self, actor: Actor, booking_id: int) -> ConsumptionView:
     业务规则：
     1. 检查预约存在
     2. 检查权限（教练只能消自己课次的）
-    3. 锁定：预约 → 产品
+    3. 锁定：已售会员卡 → 预约
     4. 检查预约状态：
-       - 必须是 "checked_in"（已签到）
+       - 已完成时以锁定当前读查询消课记录；存在则返回原 ConsumptionView
+       - 首次消课必须是 "checked_in"（已签到）
        - 未签到/已取消 → InvalidState
     5. 检查时间：
-       - 当前时刻必须大于或等于课次 ends_at；否则抛 InvalidState
-    6. 检查消课记录：
-       - 查询是否已有消课记录
-       - 已消课 → 返回原 ConsumptionView（不重复扣课节）
+       - 全部锁取得后生成当前时刻，必须大于或等于课次 ends_at；否则抛 InvalidState
+    6. 完成首次消课并写入消课记录
     7. 扣除课节：
        - remaining_private_lessons -= 1
        - reserved_private_lessons -= 1
@@ -2749,7 +3394,8 @@ def complete(self, actor: Actor, booking_id: int) -> ConsumptionView:
     - 不重复扣课节
     
     并发控制：
-    - 锁定产品，防止同时消多个预约导致余额错误
+    - 锁定已售会员卡，防止同时消多个预约导致余额错误
+    - 取得已售会员卡和预约锁后，消课记录查询必须使用锁定当前读，避免并发重复扣课
     
     可能的错误：
     - 未签到 → InvalidState
@@ -2778,12 +3424,13 @@ def mark_no_show(self, actor: Actor, booking_id: int) -> BookingView:
     业务规则：
     1. 检查预约存在
     2. 检查权限（教练只能标记自己课次的）
-    3. 锁定：预约 → 产品
+    3. 锁定：已售会员卡 → 预约
     4. 检查预约状态：
-       - 必须是 "reserved"（未签到）
+       - 已缺席 → 返回当前 BookingView
+       - 首次标记必须是 "reserved"（未签到）
        - 已签到/已完成/已取消 → InvalidState
     5. 检查时间：
-       - 当前时刻必须大于或等于课次 ends_at；否则抛 InvalidState
+       - 全部锁取得后生成当前时刻，必须大于或等于课次 ends_at；否则抛 InvalidState
     6. 释放课节占用（不扣除课节）：
        - reserved_private_lessons -= 1
        - remaining_private_lessons 不变
@@ -2830,9 +3477,9 @@ def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView:
       - created_at: 评价时间
     
     业务规则：
-    1. 检查预约存在
-    2. 检查预约属于当前会员
-    3. 检查预约状态：
+    1. 锁定预约；不存在 → NotFoundError
+    2. 在锁内检查预约属于当前会员
+    3. 在锁内检查预约状态：
        - 必须是 "completed"（已完成）
        - 未完成 → InvalidState
     4. 检查是否已评价：
@@ -2844,7 +3491,7 @@ def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView:
     6. 校验评价内容：
        - 0-1000 字
        - 可以为空字符串
-    7. 创建评价记录
+    7. 创建评价记录；数据库唯一约束的并发冲突统一转换为 ConflictError
     8. 提交
     
     可能的错误：
@@ -2855,6 +3502,14 @@ def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView:
     """
 ```
 
+**评价防重查询接口**：
+```python
+# src/db/review_repo.py
+class ReviewRepository:
+    def get_by_booking(self, booking_id: int) -> ReviewView | None:
+        """预约已加锁后以锁定当前读读取已有评价；未找到返回 None，不提交事务。"""
+```
+
 **查询评价**：
 ```python
 def get_review(self, actor: Actor, review_id: int) -> ReviewView:
@@ -2863,7 +3518,7 @@ def get_review(self, actor: Actor, review_id: int) -> ReviewView:
     
     权限：
     - 会员：只能查自己的评价
-    - 管理员：可以查所有评价
+    - 管理员：首版不提供评价查询入口
     """
     
 def list_reviews(self, actor: Actor, paging: PageRequest) -> Page[ReviewView]:
@@ -2872,14 +3527,15 @@ def list_reviews(self, actor: Actor, paging: PageRequest) -> Page[ReviewView]:
     
     权限：
     - 会员：只能查自己的评价
-    - 管理员：可以查所有评价
+    - 管理员：首版不提供评价查询入口
     
     参数：
     - paging: 分页参数
     
     返回：Page[ReviewView]
+    排序：按 created_at 降序、id 降序稳定分页
     
-    注意：按评价时间降序排列
+    注意：按评价时间降序、id 降序稳定分页
     """
 ```
 
@@ -2906,39 +3562,21 @@ reserved → no_show（缺席）
 
 **你需要调用的方法**：
 ```python
-# 调用预约模块
-from src.services.booking_service import BookingService
+# 预约状态通过同一事务中的 Repository 读取和更新
+from src.db.connection import transaction
+from src.db.booking_repo import BookingRepository
 
 class AttendanceService:
-    def __init__(self, ..., booking: BookingService):
-        self.booking = booking
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
     
     def check_in(self, actor, booking_id):
-        # 查询预约
-        booking = self.booking.get_booking(actor, booking_id)
-        
-        # 检查状态
-        if booking.status != "reserved":
-            raise InvalidState("...")
-        
-        # 继续签到...
-
-# 调用课程模块
-from src.services.course_service import CourseService
-
-class AttendanceService:
-    def __init__(self, ..., course: CourseService):
-        self.course = course
-    
-    def check_in(self, actor, booking_id):
-        # 查询预约（包含课次信息）
-        booking = self.booking.get_booking(actor, booking_id)
-        
-        # 检查开课时间
-        if datetime.now(UTC) < booking.session.starts_at:
-            raise InvalidState("课次尚未开始")
-        
-        # 继续签到...
+        with self._session_factory() as session:
+            with transaction(session, record_id=booking_id):
+                booking_repo = BookingRepository(session)
+                booking = booking_repo.lock(booking_id)
+                # 先检查已签到重试，再校验首次签到状态和开课时间
 ```
 
 ### 测试要点
@@ -2946,7 +3584,7 @@ class AttendanceService:
 1. **签到**：
    - 早于开课时间 → InvalidState
    - 已签到 → 返回当前状态（不报错）
-   - 已取消的预约 → InvalidState
+   - 已完成、已取消或已缺席的预约 → InvalidState
 
 2. **教练更正**：
    - 补签：reserved → checked_in
@@ -2996,7 +3634,7 @@ def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView:
     参数：
     - data: MeasurementInput
       - member_id: 会员编号
-      - measured_at: 测量时刻（可以补录历史数据）
+      - measured_at: 测量时刻（可以补录不晚于录入时刻的历史数据）
       - height_cm: 身高（100.00-250.00 厘米）
       - weight_kg: 体重（30.00-150.00 千克）
       - body_fat_pct: 体脂率（0.00-100.00，可选）
@@ -3011,8 +3649,9 @@ def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView:
       - body_fat_pct: 体脂率
     
     业务规则：
-    1. 检查会员存在且启用
-    2. 检查权限：
+    1. 锁定会员，并在锁内重新检查会员存在且启用
+    2. 取得会员锁后生成一次可信 created_at；从操作人获取 coach_id，
+       并用同一个 created_at 作为 at 检查当前授课预约
        - 教练必须有权限录入该会员的体测
        - 权限规则见下方"体测权限规则"
     3. 校验数值范围：
@@ -3020,18 +3659,15 @@ def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView:
        - 体重：30.00-150.00 kg
        - 体脂：0.00-100.00%（可选）
        - 超出范围 → InvalidInputError
-    4. 锁定会员
-    5. 从操作人获取 coach_id：
-       - actor.role 必须是 "coach"
-       - actor.coach_id 不能为空
-    6. 创建体测记录：
-       - created_at = 当前时刻（实际录入时间）
+    4. 校验 measured_at：必须带时区且 measured_at <= 同一个 created_at；未来测量时刻 → InvalidInputError
+    5. 创建体测记录：
+       - created_at = 步骤 2 生成的实际录入时刻
        - measured_at = 输入的测量时刻（可以补录）
-    7. 提交
+    6. 提交
     
     注意：
     - coach_id 从操作人获取，不由表单指定
-    - measured_at 可以补录历史时间
+    - measured_at 可以补录不晚于录入时刻的历史时间
     - created_at 是实际录入时间，用于权限判断
     
     可能的错误：
@@ -3117,8 +3753,9 @@ def compare(
        - before.member_id == after.member_id
        - 不同会员 → InvalidInputError
     4. 检查时间顺序：
-       - before.measured_at <= after.measured_at
-       - 顺序错误 → InvalidInputError
+       - before_id 必须不同于 after_id
+       - 必须满足 (before.measured_at, before.id) < (after.measured_at, after.id)
+       - 顺序错误或两条记录相同 → InvalidInputError
     5. 计算差值：
        - 后 - 前
        - 体脂率任一为空时，体脂差值为 None
@@ -3201,7 +3838,11 @@ def create_equipment(self, actor: Actor, data: EquipmentInput) -> EquipmentView:
 **查询器械**：
 ```python
 def get_equipment(self, actor: Actor, equipment_id: int) -> EquipmentView:
-    """查询器械详情"""
+    """查询器械详情。
+
+    权限：所有已登录角色可查看器械基础资料，以便提交报修。
+    返回：EquipmentView；记录不存在抛 NotFoundError。
+    """
     
 def list_equipment(
     self, 
@@ -3218,6 +3859,9 @@ def list_equipment(
       - paging: 分页参数
     
     返回：Page[EquipmentView]
+
+    权限：所有已登录角色可查询器械基础资料；空结果返回空 Page。
+    排序：按 id 升序稳定分页。
     """
 ```
 
@@ -3273,7 +3917,7 @@ def report_fault(
     1. 检查器械存在
     2. 锁定器械
     3. 检查当前状态：
-       - 如果已在维修中，先完成旧维修再报新故障
+       - 如果已有未完成维修 → ConflictError
        - 已报废的器械不能报修 → InvalidState
     4. 更新器械状态 → "maintenance"
     5. 创建维修记录：
@@ -3309,11 +3953,12 @@ def finish_maintenance(
     返回：MaintenanceView（resolved_at 和 resolved_by 被填充）
     
     业务规则：
-    1. 检查维修记录存在
-    2. 检查维修记录未完成：
+    1. 读取维修记录以取得 equipment_id；不存在 → NotFoundError
+    2. 锁定器械，并在锁内重新读取并锁定该维修记录
+    3. 检查维修记录仍属于该器械且未完成：
        - resolved_at 为空
        - 已完成 → InvalidState
-    3. 锁定器械
+       - 器械状态必须仍为 "maintenance"，否则 → InvalidState
     4. 更新维修记录：
        - resolved_at = 当前时刻
        - resolved_by = 操作人编号
@@ -3342,8 +3987,7 @@ def retire_equipment(self, actor: Actor, equipment_id: int) -> EquipmentView:
     1. 检查器械存在
     2. 锁定器械
     3. 检查维修状态：
-       - 如果有未完成的维修，先完成维修再报废
-       - 或者标记维修为"因报废不再处理"
+       - 如果有未完成的维修 → InvalidState
     4. 更新器械状态 → "retired"
     5. 提交
     
@@ -3373,39 +4017,26 @@ def list_maintenance(
     - paging: 分页参数
     
     返回：Page[MaintenanceView]
+
+    权限：管理员可查看全部维修历史；其他角色只能查看不含操作人字段的器械基础资料，不能调用此明细接口。
     
     排序：按 reported_at 降序、id 降序
     """
 ```
 
+**维修仓储的并发接口**：
+```python
+# src/db/equipment_repo.py
+class MaintenanceRepository:
+    def lock(self, maintenance_id: int) -> MaintenanceView | None:
+        """在当前事务中锁定并读取维修记录；未找到返回 None，不提交事务。"""
+```
+
+完成维修先取得维修记录对应的器械编号，再锁定器械和维修记录；锁内重新确认维修未完成且器械仍为 `maintenance`，然后在同一事务更新两条记录。
+
 ### 与其他模块的对接
 
-**你们需要调用的方法**：
-```python
-# 调用预约模块（体测权限判断）
-from src.services.booking_service import BookingService
-
-class MeasurementService:
-    def __init__(self, ..., booking: BookingService):
-        self.booking = booking
-    
-    def record(self, actor, data):
-        # 检查教练是否有权限录入该会员的体测
-        # 查询会员对该教练的预约
-        bookings = self.booking.list_bookings(
-            actor,
-            BookingQuery(
-                member_id=data.member_id,
-                # 查询该教练的所有课次的预约
-            )
-        )
-        
-        # 计算授权截止时刻
-        if not bookings.items:
-            raise PermissionDenied("没有权限录入该会员的体测")
-        
-        # 继续录入...
-```
+**体测录入授权**：体测服务先取得会员行锁，再在同一事务内重新检查会员状态和身份范围，并使用 `BookingRepository.has_current_coaching_booking(member_id, coach_id, at)` 检查当前有效授课关系。该查询在已持有会员锁后锁定匹配预约并重读课次状态，避免取消预约或停用会员与录入并发穿透；历史查看权不授予新增权。
 
 ### 测试要点
 
@@ -3453,7 +4084,7 @@ def get_payment(self, actor: Actor, payment_id: int) -> PaymentView:
     
     返回：PaymentView
       - id: 收款记录编号
-      - membership_id: 产品编号
+      - membership_id: 已售会员卡编号
       - member_id: 会员编号
       - amount: 金额
       - method: 收款方式
@@ -3560,6 +4191,7 @@ def membership_stats(self, actor: Actor) -> MembershipStats:
     注意：
     - 只反映当前状态，不支持历史回放
     - as_of 由服务生成，不接受用户输入
+    - 门店今天必须由同一个 as_of 按配置时区转换，不能分别读取当前时刻和日期
     - 在一个读取事务中完成所有统计
     """
 ```
@@ -3581,8 +4213,10 @@ def session_stats(
     参数：
     - query: SessionQuery（复用课次查询条件）
       - window: 时间范围（按 starts_at 筛选）
+      - kind: 课程类型（当前只有 "private"）
       - coach_id: 教练编号
       - room_id: 场地编号
+      - status: 课次状态
       - paging: 分页参数
     
     返回：Page[SessionStatsView]
@@ -3604,10 +4238,11 @@ def session_stats(
        - cancelled_count: status="cancelled"
     
     2. 到课率计算：
-       - 分子 = checked_in_count + completed_count
-       - 分母 = 非取消预约数 = reserved + checked_in + completed + no_show
-       - 到课率 = 分子 / 分母，ROUND_HALF_UP，保留 4 位小数
-       - 分母为 0 时（全部取消或无预约），到课率为 None
+       - 只有课次已到 ends_at 且没有 reserved/checked_in 预约时计算
+       - 已结束并处理完成的课次，分子 = completed，分母 = completed + no_show
+       - 到课率 = completed / (completed + no_show)，ROUND_HALF_UP，保留 4 位小数
+       - 课次未结束、仍有未处理预约或分母为 0 时，到课率为 None
+       - 五项预约状态人数仍按当前状态返回，未来或未结算预约不计作缺席
        - 显示为"暂无数据"
     
     排序：按 starts_at 降序、session_id 降序
@@ -3650,6 +4285,32 @@ def coach_stats(
     """
 ```
 
+**报表数据访问接口**：
+```python
+# src/db/report_repo.py
+class ReportRepository:
+    def __init__(self, session: Session) -> None: ...
+
+    def revenue(self, window: DateWindow) -> RevenueView:
+        """在当前读取事务内按 paid_at 汇总实收，空数据返回零值。"""
+
+    def membership_stats(
+        self, as_of: datetime, *, business_date: date,
+    ) -> MembershipStats:
+        """as_of 和门店日期由服务从同一时刻生成，在同一读取快照内分类计数。"""
+
+    def session_stats(self, query: SessionQuery) -> Page[SessionStatsView]:
+        """SessionQuery 的 window、kind、coach_id、room_id、status 都参与筛选，再稳定分页。"""
+
+    def coach_stats(
+        self, window: DateWindow, paging: PageRequest,
+    ) -> Page[CoachStatsView]:
+        """按 coach_id 升序稳定分页，包含范围内零已完成课次的教练。"""
+```
+
+服务层在单个 MySQL REPEATABLE READ 读取事务内调用上述方法。仓储只构造查询和返回
+View/Page，不提交事务。导出分批读取时复用同一事务快照和相同筛选口径。
+
 #### 5. CSV 导出
 
 **导出收款记录**：
@@ -3665,7 +4326,7 @@ def export_payments(
     权限：管理员
     
     参数：
-    - query: PaymentQuery（同 list_payments，但不分页）
+    - query: PaymentQuery（筛选字段与 list_payments 相同，paging 被忽略）
     
     返回：CsvExport
       - filename: 建议文件名（如 "payments_20260920.csv"）
@@ -3676,15 +4337,17 @@ def export_payments(
     表头：id,membership_id,member_id,amount,method,paid_at,operator_id
     
     业务规则：
-    1. 导出全部符合条件的记录（不分页）
-    2. 内部可以分批读取，使用同一读取事务的快照
-    3. 金额保留两位小数
-    4. 时间使用 ISO 格式（带时区）
-    5. 缺值为空字段
-    6. 处理 CSV 注入：
+    1. 导出全部符合条件的记录，忽略 query.paging
+    2. 单次导出最多 10,000 行；超过上限抛 InvalidInputError，要求缩小筛选范围
+    3. 按 paid_at 降序、id 降序稳定排序
+    4. 内部可以分批读取，所有批次复用同一读取事务和 MySQL REPEATABLE READ 一致性快照
+    5. 金额保留两位小数
+    6. 时间使用 ISO 格式（带时区）
+    7. 缺值为空字段
+    8. 处理 CSV 注入：
        - 用户文本开头的 =、+、-、@ 转义为 ' 开头
        - 防止表格软件执行公式
-    7. UTF-8 BOM（兼容 Excel）
+    9. UTF-8 BOM（兼容 Excel）
     
     注意：
     - 服务返回 CsvExport，界面选择保存路径
@@ -3701,6 +4364,8 @@ def export_revenue(
 ) -> CsvExport:
     """
     导出营收报表
+
+    权限：管理员
     
     CSV 格式：
     表头：start,end,payment_count,total_amount
@@ -3710,6 +4375,8 @@ def export_revenue(
 def export_memberships(self, actor: Actor) -> CsvExport:
     """
     导出会员卡统计
+
+    权限：管理员
     
     CSV 格式：
     表头：as_of,active_members,inactive_members,valid_cards,expired_cards,future_cards,void_cards,exhausted_cards
@@ -3723,6 +4390,9 @@ def export_sessions(
 ) -> CsvExport:
     """
     导出课次统计
+
+    权限：管理员；query 使用 window、kind、coach_id、room_id、status，
+          忽略 paging，导出全部符合条件的课次。
     
     CSV 格式：
     表头：session_id,starts_at,reserved_count,checked_in_count,completed_count,no_show_count,cancelled_count,attendance_rate
@@ -3736,12 +4406,18 @@ def export_coaches(
 ) -> CsvExport:
     """
     导出教练统计
+
+    权限：管理员
     
     CSV 格式：
     表头：coach_id,coach_name,completed_sessions,attended_members
     数据：多行教练统计
     """
 ```
+
+`export_payments`、`export_sessions` 和 `export_coaches` 的共同规则：忽略分页参数并按各自稳定排序导出，
+最多 10,000 行；超过上限抛 `InvalidInputError`。分批读取时复用同一个 MySQL REPEATABLE READ
+读取事务，避免不同批次来自不同数据快照；所有用户文本都按 CSV 注入规则转义。
 
 #### 6. 收款数据访问（供产品销售调用）
 
@@ -3769,7 +4445,7 @@ class PaymentRepository:
         用途：被产品销售模块调用，记录收款
         
         参数：
-        - membership_id: 产品编号
+        - membership_id: 已售会员卡编号
         - member_id: 会员编号
         - amount: 金额
         - method: 收款方式
@@ -3783,6 +4459,15 @@ class PaymentRepository:
         - 使用调用方传入的 session
         - 一个产品只能有一笔收款（唯一约束）
         """
+
+    def get(self, payment_id: int) -> PaymentView | None:
+        """按编号读取收款；不存在返回 None。"""
+
+    def get_by_membership(self, membership_id: int) -> PaymentView | None:
+        """按已售会员卡编号读取唯一收款；不存在返回 None。"""
+
+    def list(self, query: PaymentQuery) -> Page[PaymentView]:
+        """按 paid_at 降序、id 降序稳定分页查询。"""
 ```
 
 ### 与其他模块的对接
@@ -3790,30 +4475,33 @@ class PaymentRepository:
 **产品销售模块调用你的方法**：
 ```python
 # 在 ProductService 中
+from src.db.connection import transaction
 from src.db.payment_repo import PaymentRepository
 
 class ProductService:
     def sell_product(self, actor, data, request_id):
-        with self.session_factory() as session:
-            with session.begin():
-                # 1. 创建产品快照
+        with self._session_factory() as session:
+            with transaction(session, request_id=request_id):
+                # 1. 锁定会员、卡产品，并锁定当前读既有已售会员卡
+                now_utc = datetime.now(UTC)
+                # 2. 由 now_utc 转换门店日期并创建已售会员卡快照
                 card = membership_repo.create(...)
                 
-                # 2. 记录收款（调用你的方法）
+                # 3. 记录收款（调用你的方法）
                 payment_repo = PaymentRepository(session)
                 payment = payment_repo.create(
                     membership_id=card.id,
                     member_id=data.member_id,
                     amount=card.terms.price,
                     method=data.method,
-                    paid_at=datetime.now(UTC),
+                    paid_at=now_utc,
                     operator_id=actor.account_id
                 )
                 
-                # 3. 记录操作
+                # 4. 记录操作
                 ...
                 
-                # 4. 一起提交
+                # 5. 一起提交
                 return SaleView(card=card, payment=payment)
 ```
 
@@ -3849,7 +4537,7 @@ class ProductService:
    - CSV 注入防护（=、+、-、@ 转义）
    - 金额两位小数
    - 时间 ISO 格式
-   - 空数据导出只有表头
+    - 空明细导出只有表头；汇总报表在无业务记录时输出一行零值快照
 
 ---
 
@@ -3866,10 +4554,9 @@ class ProductService:
 - 64 节课 + 90 天门禁  
 - 256 节课 + 365 天门禁
 
-**固定赠课数**：
-- 创建或编辑产品时，不能随意修改赠课数
-- 20/64/256 是固定的，数据库有约束检查
-- 如果需要其他赠课数，需要修改设计和约束
+**随私教课购买的权益**：
+- 购买 20/64/256 节私教课时，分别获得 30/90/365 天门禁
+- 节数和门禁天数固定，数据库有约束检查
 
 **有效期计算**：
 - valid_from 是生效日（包含）
@@ -3886,16 +4573,16 @@ class ProductService:
 **续购接续规则**：
 - 查询会员所有未作废私教课产品的最晚 valid_until
 - 包括尚未生效的产品
-- 新产品从最晚 valid_until 开始（不加一天）
+- `valid_from = max(门店今天, 最晚 valid_until)`；没有未作废期限卡时取门店今天
 - 例子：
   - 旧产品：9/20 生效，valid_until = 10/20
   - 9/25 购买新产品
   - 新产品：valid_from = 10/20，valid_until = 11/19
-- 没有未到期产品时，今天生效
+- 只有过期卡时不会从过去日期接续
 
 **课节初始化**：
 - 购买时：
-  - remaining_private_lessons = 赠课数（20/64/256）
+  - remaining_private_lessons = 购买的私教课节数（20/64/256）
   - reserved_private_lessons = 0
 - 旧产品余额不转入新产品
 - 每个产品的课节独立计算
@@ -3932,7 +4619,7 @@ class ProductService:
 **使用规则**：
 - 只能用于门禁入场
 - 不能预约私教课
-- 用尽后不能再入场
+- 用尽后不能在新的门店日期首次入场；同日已有入场记录时沿用原记录，不再扣次
 
 ### 门禁规则
 
@@ -3949,17 +4636,14 @@ class ProductService:
 - 同一天后续入场：沿用同一条记录，不再扣次
 
 **例子**：
-- 9 月 20 日上午 10:00：会员用次卡入场
+- 9 月 20 日上午 10:00：会员用剩余 1 次的次卡入场
   - 创建入场记录，accesses_used = 1
-  - 次卡 remaining_accesses 从 10 变为 9
+  - 次卡 remaining_accesses 从 1 变为 0
 - 9 月 20 日下午 15:00：会员再次入场（选任意卡）
   - 返回上午的入场记录
   - 不再扣次
-- 9 月 20 日晚上 18:00：会员用掉次卡最后 1 次（remaining_accesses 变为 0）
-- 9 月 20 日晚上 20:00：会员再次入场
-  - 仍返回当天的入场记录（允许）
 - 9 月 21 日：会员入场
-  - 次卡已用尽 → InsufficientCredits
+  - 这是新的门店日期首次入场，次卡已用尽 → InsufficientCredits
 
 **提前预约不提前入场**：
 - 会员 9 月 20 日购买了 10 月 1 日生效的产品
@@ -4003,15 +4687,16 @@ class ProductService:
   - [14:00, 15:00) 和 [15:00, 16:00) 不冲突
   - [14:00, 15:00) 和 [14:30, 15:30) 冲突
 
-**容量检查**：
-- 私教课容量固定为 1
-- 查询该课次的非取消预约数
-- 已满员 → CapacityExceeded
-
 **重复预约**：
 - 同一会员已预约同一课次（任何状态）→ ConflictError
 - 包括已取消的预约也不能重新预约同一课次
 - 要重新预约，必须是新的课次
+
+**容量检查**：
+- 完成重复预约检查后再检查容量，保证已有历史预约固定返回 ConflictError
+- 私教课容量固定为 1
+- 查询该课次的非取消预约数
+- 已满员 → CapacityExceeded
 
 #### 预约占用课节
 
@@ -4035,18 +4720,20 @@ class ProductService:
 #### 取消课次的处理
 
 **业务规则**：
-1. 收集该课次的所有 reserved/checked_in 预约
-2. 按会员 ID 排序（固定锁顺序）
-3. 逐个锁定会员和产品
-4. 释放课节占用
-5. 更新预约状态为 cancelled
-6. 更新课次状态为 cancelled
+1. 当前时刻早于 starts_at 才允许首次取消
+2. 在独立只读事务中收集 reserved/checked_in 预约的编号、会员、产品和状态快照
+3. 新写事务按会员 ID 升序锁定候选会员，再锁定课次
+4. 课次锁内的第一次普通一致性读重取快照；变化则回滚并从只读阶段重开
+5. 快照不变时按产品 ID、预约 ID 升序加锁
+6. 全部锁取得后重新取当前时刻，并重查课次状态、取消时限、预约关联和占用
+7. 释放课节占用，更新预约及课次状态为 cancelled，并在同一事务提交
 
 **并发问题**：
 - 取消课次和新预约可能同时发生
-- 先收集预约列表，再逐个处理
-- 如果处理期间预约列表变化，回滚重试
-- 不能持有课次锁再反向等待会员锁（死锁）
+- 写事务始终先锁候选会员再锁课次，不能持有课次锁后再等待新发现的会员
+- 新发现预约时立即回滚，不在原事务补锁；最多重开 3 次，之后抛 ConflictError
+- 新预约取得会员锁后会等待课次锁；取消提交后，它必须在课次锁内复核状态并拒绝写入
+- 只有提交前的快照变化可以重开事务；提交确认丢失只能按 request_id 核实
 
 ### 签到与消课规则
 
@@ -4059,8 +4746,9 @@ class ProductService:
 
 **谁能签到**：
 - 会员：自己签到（扫码或手动）
+- 本课教练：代为签到
 - 前台、管理员：代签到
-- 教练：更正签到（补签或取消签到）
+- 教练、管理员：更正签到（补签或取消签到）
 
 **教练更正规则**：
 - 只能更正自己课次的预约
@@ -4089,6 +4777,7 @@ class ProductService:
 
 **标记缺席**：
 - 必须是 reserved（未签到）
+- 重复标记已为 no_show 的预约，返回当前状态
 - 已签到应该消课，不应该标记缺席
 
 **释放占用**：
@@ -4207,16 +4896,31 @@ class ProductService:
 4. 课程模板
 5. 场地
 6. 课次
-7. 产品
-8. 预约
+7. 卡产品（card_products）
+8. 已售会员卡（memberships）
+9. 预约
 
 **同类按 ID 升序**：
+- 多个账号：按 account_id 升序锁定
 - 多个会员：按 member_id 升序锁定
-- 多个产品：按 membership_id 升序锁定
+- 多个卡产品：按 product_id 升序锁定
+- 多张已售会员卡：按 membership_id 升序锁定
+- 多个预约：按 booking_id 升序锁定
+
+**身份复核与账号变更**：
+- 普通业务在同一服务事务内先锁当前账号，再锁该账号关联的会员或教练档案；
+  `verify_actor` 返回后继续持有这些锁，直到业务提交或回滚
+- 账号停用把操作者和目标账号组成一个集合；停用管理员时再并入全部启用管理员，
+  使用一条按 account_id 升序的锁定当前读取得全部账号
+- 档案移交先只读收集旧账号，再把操作者、旧账号和目标账号去重，使用一条按
+  account_id 升序的锁定当前读取得全部账号，随后才锁档案
+- 锁后发现档案的旧账号已变化时，整个事务回滚并重新收集完整账号集合；
+  停用或移交提交后，旧身份的后续业务复核抛出 `AuthenticationError`
 
 **只锁需要的资源**：
 - 不要"为了保险"锁不需要的资源
 - 例如：查询会员列表不需要锁定会员
+- 取消课次需要扇出到多个会员时，先在独立只读事务取得候选集合；写事务发现集合变化就整体回滚，不能越过课次锁补锁新会员
 
 #### 办卡并发
 
@@ -4225,9 +4929,9 @@ class ProductService:
 **处理**：
 1. 两个请求都锁会员（FOR UPDATE）
 2. 先到的获得锁，后到的等待
-3. 先到的读取最新期限、计算生效日、写入产品、提交
-4. 后到的获得锁，读取最新期限（包含刚才的产品）、计算新的生效日、写入产品、提交
-5. 两个产品正确接续
+3. 先到的锁定当前读既有已售会员卡，读取最新期限、计算生效日、写入新卡、提交
+4. 后到的获得锁，锁定当前读最新期限（包含刚才的新卡）、计算新的生效日、写入新卡、提交
+5. 两张已售会员卡正确接续
 
 **关键**：
 - 必须在锁内读取最新期限
@@ -4251,13 +4955,13 @@ class ProductService:
 **场景**：教练同时消同一会员的两个预约
 
 **处理**：
-1. 两个请求都需要锁产品（扣课节）
+1. 两个请求都需要锁已售会员卡（扣课节）
 2. 先到的获得锁，扣课节（remaining -= 1）、提交
 3. 后到的获得锁，读取最新余额、扣课节（remaining -= 1）、提交
 4. 两次正确扣除
 
 **关键**：
-- 必须锁定产品
+- 必须锁定已售会员卡
 - 不能让两个消课同时读取余额、同时扣除（丢失更新）
 
 ### 防重复提交规则
@@ -4267,6 +4971,14 @@ class ProductService:
 **生成规则**：
 - 标准 UUID 字符串（小写带短横线）
 - 由界面在确认操作时生成
+
+**校验顺序**：
+- 普通业务每次调用都先执行 `verify_actor` 和本操作的角色、数据归属校验；账号停用或当前无权时不能靠旧 request_id 取得结果
+- 账号停用和档案移交把所需账号组成完整集合，通过一次锁定当前读取得全部账号，
+  再执行与 `verify_actor` 相同的身份复核
+- 权限通过后，在会改变业务状态的校验之前先核对 operation_records
+- 已有记录必须同时匹配 actor_id、operation 和 payload_hash 才返回原结果
+- 不同 request_id 再操作已经进入终态的记录，仍按状态规则抛 InvalidState
 - 重试时沿用原 request_id
 
 **适用操作**：
@@ -4275,7 +4987,7 @@ class ProductService:
 - 排课：create_session
 - 取消课次：cancel_session
 - 预约：book
-- 取消预约：cancel
+- 取消预约：cancel_booking
 
 #### 操作记录（operation_records）
 
@@ -4286,6 +4998,29 @@ class ProductService:
 - payload_hash：输入数据的哈希
 - result_id：结果记录编号
 - created_at：操作时间
+
+**结果编号对应关系**：
+- sell_product → memberships.id；再按该会员卡编号查询唯一 payments 记录
+- register_entry → gym_entries.id
+- create_session、cancel_session → course_sessions.id
+- book、cancel_booking → bookings.id
+
+**操作记录仓储接口**：
+```python
+# src/db/operation_repo.py
+class OperationRepository:
+    def get_by_request(self, request_id: str) -> OperationRecord | None: ...
+    def lock_by_request(self, request_id: str) -> OperationRecord | None: ...
+    def create(
+        self,
+        *,
+        request_id: str,
+        actor_id: int,
+        operation: OperationName,
+        payload_hash: str,
+        result_id: int,
+    ) -> OperationRecord: ...
+```
 
 **payload_hash 计算**：
 1. 将输入数据序列化为 JSON：
@@ -4306,6 +5041,12 @@ class ProductService:
   - 不重复执行
 - 相同 request_id + 不同 payload_hash：
   - ConflictError（请求编号冲突）
+- 首次查询未命中后，取得该操作的首个业务行锁，再用 `lock_by_request` 当前读复核一次
+- 两个不同业务对象并发使用同一 request_id 时，数据库唯一约束仍是最终防线：
+  - 第二个事务遇到 request_id 唯一冲突后，回滚全部业务变更
+  - 使用新事务读取胜者记录；actor_id、operation、payload_hash 全部相同则返回胜者结果
+  - 任一字段不同则抛 ConflictError；回滚后仍查不到记录则抛 StorageError
+- 只有唯一约束竞争可以按上述流程核实；提交确认丢失不得自动重试
 
 #### 提交结果未知处理
 
@@ -4314,8 +5055,8 @@ class ProductService:
 - 客户端不知道是否已提交成功
 
 **处理流程**：
-1. 捕获提交阶段的数据库异常
-2. 抛出 OutcomeUnknownError（带 request_id）
+1. 带请求编号的服务用 `transaction(session, request_id=request_id)` 管理提交
+2. 事务辅助函数只在提交阶段失败时抛出 OutcomeUnknownError，并带原 request_id
 3. 界面显示"操作结果待核实"
 4. 提示用户按原 request_id 查询结果
 5. 提供 get_*_by_request 方法核实
@@ -4338,8 +5079,9 @@ class ProductService:
 - 修改资料：update_member（资料更新不需要防重复）
 
 **处理**：
-- 幂等方法：重复调用返回当前状态
-- 非幂等方法：提交未知时手工核实
+- 已有记录编号的操作把 `record_id` 传给事务辅助函数，提交未知时按该记录核实
+- 幂等方法：核实后重复调用返回当前状态
+- 新建且没有请求编号的操作：提交未知时通过查询入口手工核实
 
 ### 数据边界规则
 
@@ -4355,6 +5097,7 @@ class ProductService:
 - 报表总和：可以超过单笔上限
 - 必须用 Decimal，不能用 float
 - 必须有限数，拒绝 NaN 和 Infinity
+- 最多两位小数；服务层拒绝三位及以上小数，不依赖数据库舍入
 
 **体测数值**：
 - 身高：100.00 到 250.00 cm
@@ -4375,7 +5118,6 @@ class ProductService:
 **去首尾空白后校验**：
 - 姓名/名称/位置：1-100 字
 - 资产编号：1-50 字
-- 用户名：3-50 字（ASCII）
 - 电话：1-32 字（可空）
 - 专长：0-200 字（可空字符串）
 - 评价：0-1000 字（可空字符串）
@@ -4386,12 +5128,21 @@ class ProductService:
 - 电话可空用 None，不用空字符串
 - 资产编号保留大小写且区分大小写
 
+#### 用户名规则
+
+- 去首尾空白并转为小写后校验和保存
+- 只允许 ASCII 字母、数字和下划线 `_`
+- 长度为 3-50 位
+- 规范化后的正则为：`^[a-z0-9_]{3,50}$`
+- 创建、修改账号时格式不合法抛 `InvalidInputError`
+- 登录时使用相同方式规范化用户名，再按规范化结果查询账号
+
 #### 密码规则
 
 **字符限制**：
 - 只允许 ASCII 字母、数字、短横线 `-`、下划线 `_`
-- 长度：1-32 位
-- 正则：`^[A-Za-z0-9_-]{1,32}$`
+- 长度：6-32 位
+- 正则：`^[A-Za-z0-9_-]{6,32}$`
 
 **不允许**：
 - 空密码
@@ -4405,7 +5156,7 @@ class ProductService:
 - 用户名转小写，密码不转
 
 **哈希存储**：
-- 使用专用哈希算法（Argon2id 候选）
+- 使用 argon2-cffi 提供的 Argon2id 哈希算法
 - 32 位限制针对输入密码
 - 哈希长度不限制，数据库用 VARCHAR(255)
 
@@ -4428,6 +5179,13 @@ class ProductService:
 - 拒绝空区间、反向区间
 - 不接受无时区的时刻
 
+**写操作使用的当前时刻**：
+- 先取得该操作需要的全部业务行锁，再生成一次 UTC 当前时刻
+- 同一操作的状态边界、业务日期和写入时间都使用这一个时刻；门店日期由它转换得到
+- 锁等待跨过开课、下课或午夜边界时，按锁后时刻重新判断，不能沿用等待前的时间
+- 只有提交前的并发冲突可以重开事务；每次重开使用新的锁后时刻
+- 提交确认丢失时不得重开或重试，按原请求编号或记录编号核实
+
 ### 特殊情况处理
 
 #### 最后一个启用管理员
@@ -4435,24 +5193,32 @@ class ProductService:
 **问题**：如果停用最后一个管理员，系统无法管理
 
 **规则**：
-- 停用管理员前，检查是否是最后一个启用管理员
-- 如果是，拒绝停用 → InvalidState
+- 停用启用中的管理员前，使用 `AccountRepository.lock_active_admins((actor.account_id, account_id))`
+  在一条按账号编号升序的锁定当前读中取得操作者、目标账号与全部启用管理员
+- 在锁内重新检查目标账号仍为启用管理员，并按锁内结果计算人数
+- 如果锁内只剩一个启用管理员，拒绝停用 → InvalidState
+- 并发停用不同管理员时，后执行的事务必须看到前一事务提交后的启用人数
 - 提示：至少保留一个启用管理员
 
 #### 停用有业务的账号或档案
 
 **会员**：
-- 有未结束的预约 → InvalidState
-- 有未完成的签到 → InvalidState
+- 停用事务先锁会员，并在锁内检查 reserved/checked_in 预约；存在时 → InvalidState
+- 预约、办卡、入场和体测录入使用同一会员锁，并在锁内复核 `is_active`
 - 先处理完业务，再停用
 
 **教练**：
 - 有未结束的课次 → InvalidState
 - 先完成或取消课次，再停用
 
+**会员或教练档案**：
+- 档案停用后，关联账号不能登录或继续执行业务
+- 登录读取档案 `is_active`；每次业务操作在事务内锁定账号及关联档案后复核，停用时抛 AuthenticationError
+
 **账号**：
-- 停用账号时，档案也自动不可用
-- 账号停用后，verify_actor 抛出 AuthenticationError
+- 账号停用后，关联会员或教练暂时不能登录或执行业务；不修改档案自身的 `is_active`
+- 账号恢复后，关联档案按其自身 `is_active` 状态恢复业务资格
+- 账号停用与业务复核锁定同一账号行；停用提交后，verify_actor 抛出 AuthenticationError
 
 #### 未来排课与开课前预约
 
@@ -4475,13 +5241,11 @@ class ProductService:
 
 **Ctrl+C**：
 - 捕获 KeyboardInterrupt
-- 正常关闭资源
-- 退出码 0
+- 关闭资源，成功返回 0；关闭失败或再次中断返回 1
 
 **EOF**（输入结束）：
 - 捕获 EOFError
-- 正常关闭资源
-- 退出码 0
+- 关闭资源，成功返回 0；关闭失败或关闭中断返回 1
 
 **不是系统故障**：
 - 不记录 ERROR 级别日志
@@ -4503,6 +5267,7 @@ class ProductService:
 5. **外键约束**：保证引用完整性
 6. **唯一约束**：防止重复
 7. **索引**：加速查询
+8. **隔离级别**：所有池连接固定为 MySQL REPEATABLE READ；需要锁后最新状态的写流程仍显式使用锁定当前读
 
 ### 核心表结构
 
@@ -4515,7 +5280,8 @@ CREATE TABLE schema_versions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-**用途**：记录已应用的数据库版本
+**用途**：按应用顺序记录数据库结构版本。版本 1 建立 18 张表，当前版本 2 增加查询索引和
+器械位置非空白约束；应用启动、演示数据命令和初始化数据库测试 fixture 均要求版本 2。
 
 #### accounts（账号表）
 
@@ -4528,13 +5294,15 @@ CREATE TABLE accounts (
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    KEY ix_account_role_active (role, is_active, id),
+    CHECK (username REGEXP '^[a-z0-9_]{3,50}$'),
     CHECK (role IN ('member', 'coach', 'receptionist', 'admin')),
     CHECK (is_active IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
 **说明**：
-- username 使用 utf8mb4_bin 排序规则（区分大小写）
+- username 使用 utf8mb4_bin 排序规则，并只保存规范化后的小写值
 - password_hash 存储哈希后的密码，不存储明文
 - role 限定为四个固定值
 - is_active 用 BOOLEAN（实际是 TINYINT(1)）
@@ -4561,11 +5329,13 @@ CREATE TABLE members (
 - name 去首尾空白后不能为空
 - phone 可空
 
-（其余表结构省略，详见备份文档）
+（完整最终结构由 [`sql/001_initial_schema.sql`](../sql/001_initial_schema.sql) 与
+[`sql/002_query_indexes_and_equipment_location.sql`](../sql/002_query_indexes_and_equipment_location.sql)
+按版本顺序形成。）
 
 ### 索引策略
 
-**主键索引**：所有表都有 BIGINT AUTO_INCREMENT 主键
+**主键索引**：业务表使用 BIGINT AUTO_INCREMENT 主键；`schema_versions` 使用 INT 版本号主键
 
 **唯一索引**：
 - accounts.username
@@ -4577,26 +5347,56 @@ CREATE TABLE members (
 - bookings.(member_id, session_id)
 - operation_records.request_id
 
+`gym_entries` 使用 `(membership_id, member_id)` 复合外键引用
+`memberships.(id, member_id)`；会员卡记录再通过 `member_id` 引用 `members`，
+因此入场记录中的会员必须存在，且必须是该会员卡的持有人。
+
 **查询索引**：
+- accounts.(role, is_active, id) — 串行化最后一名启用管理员检查
+- memberships.(member_id, status, valid_until, id) — 续购最大到期日及会员持卡查询
+- memberships.(status, valid_until, id) — 全体到期提醒
 - payments.(paid_at, id) — 时间范围查询
+- payments.(member_id, paid_at, id) — 按会员查询收款并保持时间顺序
+- course_sessions.(starts_at, id) — 全部课表和课次报表的时间范围查询
 - course_sessions.(coach_id, starts_at, id) — 教练课表
 - course_sessions.(room_id, starts_at, id) — 场地安排
+- bookings.(member_id, status, session_id) — 会员开放预约及时间冲突候选
 - bookings.(session_id, status, id) — 课次学员名单
+- maintenance_records.(equipment_id, reported_at, id) — 器械维修历史
 - body_measurements.(member_id, created_at, id) — 体测权限判断
+
+其中 `accounts.(role, is_active, id)`、两个 `memberships` 查询索引、
+`payments.(member_id, paid_at, id)`、`course_sessions.(starts_at, id)`、
+`bookings.(member_id, status, session_id)` 与
+`maintenance_records.(equipment_id, reported_at, id)` 由版本 2 迁移增加。
+版本 2 同时为 `equipment.location` 增加去首尾空白后长度大于 0 的 CHECK。
 
 ### 数据库初始化
 
 **初始化流程**：
 1. 检查数据库连接
-2. 检查目标是否为空库（无业务表）
-3. 逐表执行 CREATE TABLE
-4. 记录版本号到 schema_versions
-5. 失败时报告已完成步骤，不删除已有数据
+2. 取得 `cs2g3:schema:` 加数据库名摘要的结构命名锁，并检查目标为空库
+3. 按表执行 `sql/001_initial_schema.sql`，成功后记录版本 1
+4. 在同一结构锁内按顺序执行 `sql/002_query_indexes_and_equipment_location.sql`
+5. 八个迁移步骤均确认存在后记录版本 2，并返回 `InitResult(schema_version=2)`
+6. 失败时通过 `InitializationError` 报告已完成表、失败步骤和结果状态
+
+**版本 1 升级流程**：
+1. 在仓库根目录执行 `python -m src.cmd.db migrate --config CONFIG_PATH`
+2. 命令取得结构命名锁并确认最新版本为 1
+3. 对每个版本 2 索引或 CHECK 查询 `information_schema`，按脚本顺序应用缺少的结构
+4. 全部步骤确认后写入版本 2；再次执行已完成迁移时返回版本 2 和零个新步骤
+5. `MigrationError.completed_steps`、`failed_step` 和 `outcome_unknown` 用于定位失败并安全重试
+
+迁移前，现有 `equipment.location` 数据应满足 1～100 字且去首尾空白后非空；约束失败时
+修正对应数据，再运行同一迁移命令，已存在的同名结构会被跳过。
 
 **注意事项**：
 - MySQL 建表会隐式提交，不能回滚
 - 脚本检查空库，避免覆盖已有数据
 - 不使用 DROP TABLE IF EXISTS
+- `sql/001_initial_schema.sql` 固定版本 1；版本 2 结构只由 `sql/002_query_indexes_and_equipment_location.sql` 增加
+- 本文件中的 SQL 展示当前最终结构；命令以两个版本脚本为执行来源
 
 ---
 
@@ -4681,8 +5481,8 @@ class Actor:
     """当前操作人"""
     account_id: int  # 账号编号
     role: Role  # 角色
-    member_id: int | None  # 会员编号（如果是会员）
-    coach_id: int | None  # 教练编号（如果是教练）
+    member_id: int | None  # member 角色必须有值，其他角色必须为 None
+    coach_id: int | None  # coach 角色必须有值，其他角色必须为 None
 ```
 
 ### 账号、会员与教练
@@ -4690,7 +5490,7 @@ class Actor:
 ```python
 @dataclass(frozen=True, kw_only=True)
 class AccountInput:
-    username: str
+    username: str  # 去首尾空白并转小写后，只允许 3–50 位 ASCII 字母、数字和下划线
     password: str = field(repr=False)  # 避免普通对象打印带出密码
     role: Role
 
@@ -4756,7 +5556,7 @@ class CardTerms:
     name: str
     kind: CardKind
     price: Decimal
-    private_lesson_credits: int  # 月/季/年私教课产品固定包含 20/64/256 节；次卡为 0
+    private_lesson_credits: int  # 购买 20/64/256 节私教课时附赠门禁卡；独立次卡为 0 节
     access_uses: int | None  # 次卡为总入场次数；期限卡为 None
     valid_days: int | None  # 月/季/年固定为 30/90/365；次卡无期限，为 None
 
@@ -5136,7 +5936,3 @@ from src.models.contracts import Page, Role, Actor, PageRequest
 - 不能重新赋值字段（如 `page.items = [...]`）
 - 但 items 仍是 list，调用方应只读使用
 - 界面排序时另复制列表
-
----
-
-_架构文档补充完成。完整的表结构 SQL 见备份文档 architecture-backup-*.md_

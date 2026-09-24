@@ -1,0 +1,5 @@
+# 核心运行依赖；MySQL 8.4 支持的 RSA 认证及 Windows 时区数据。
+SQLAlchemy>=2.0,<2.1
+PyMySQL[rsa]>=1.1,<2
+argon2-cffi>=23.1,<26
+tzdata>=2025.1

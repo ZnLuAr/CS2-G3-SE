@@ -1,4 +1,4 @@
-"""按业务划分的 CLI 交互接口。当前仅声明字段与签名，方法尚未实现。"""
+"""按业务划分的 CLI 交互接口。构造函数已实现，业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -24,7 +24,11 @@ class AuthHandler:
         *, timezone_name: str,
     ) -> None:
         """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
-        raise NotImplementedError("AuthHandler.__init__ 尚未实现")
+        self._service = service
+        self._get_actor = get_actor
+        self._set_actor = set_actor
+        self._logout = logout
+        self._timezone_name = timezone_name
 
     def login(self) -> None:
         """组织 AuthService.login 的交互步骤。
@@ -74,3 +78,9 @@ class AuthHandler:
         输入由 prompts 采集；成功结果交给 formatters 展示。
         异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
         raise NotImplementedError("AuthHandler.link_profile 尚未实现")
+
+    def query_logs(self) -> None:
+        """组织管理员日志筛选、翻页、详情和刷新。
+
+        同一次浏览沿用固定快照；刷新时重新取得快照并回到第一页。"""
+        raise NotImplementedError("AuthHandler.query_logs 尚未实现")

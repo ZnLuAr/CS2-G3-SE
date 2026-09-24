@@ -1,4 +1,4 @@
-"""按业务划分的 CLI 交互接口。当前仅声明字段与签名，方法尚未实现。"""
+"""按业务划分的 CLI 交互接口。构造函数已实现，业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ class CourseHandler:
         timezone_name: str,
     ) -> None:
         """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
-        raise NotImplementedError("CourseHandler.__init__ 尚未实现")
+        self._service = service
+        self._get_actor = get_actor
+        self._timezone_name = timezone_name
 
     def create_coach(self) -> None:
         """组织 CourseService.create_coach 的交互步骤。
@@ -110,8 +112,9 @@ class CourseHandler:
         raise NotImplementedError("CourseHandler.update_room 尚未实现")
 
     def get_room(self) -> None:
-        """组织 CourseService.get_room 的交互步骤。
+        """展示场地基础详情，并可按门店日期分页展示已排课时段。
 
+        日期转换为本地当日的 UTC DateWindow，再以 room_id 调用 list_sessions；日期为空只查详情。
         输入由 prompts 采集；成功结果交给 formatters 展示。
         异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
         raise NotImplementedError("CourseHandler.get_room 尚未实现")

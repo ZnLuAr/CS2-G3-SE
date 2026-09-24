@@ -47,3 +47,7 @@ class CapacityExceeded(GymError):
 
 class InputCancelled(Exception):
     """用户主动取消输入；后续统一处理时不记为业务错误。"""
+
+
+class ResourceError(GymError):
+    """文件、终端能力或外部工具不可用。"""

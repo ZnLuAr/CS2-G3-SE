@@ -1,4 +1,4 @@
-"""产品服务接口。当前仅声明字段与签名，方法尚未实现。"""
+"""产品服务接口。构造函数已实现，业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class ProductService:
 
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
     输入字段见 models/contracts.py；异常和事务约定见 docs/architecture.md 的会员与产品模块。
-    当前所有方法仅占位，调用会抛 NotImplementedError。
+    构造函数保存依赖；业务方法仍为占位。
     """
 
     def __init__(
@@ -37,7 +37,9 @@ class ProductService:
         *, timezone_name: str,
     ) -> None:
         """接收会话工厂、共用身份校验服务和门店时区；时区由 App 配置传入。"""
-        raise NotImplementedError("ProductService.__init__ 尚未实现")
+        self._session_factory = session_factory
+        self._auth = auth
+        self._timezone_name = timezone_name
 
     def create_product(self, actor: Actor, terms: CardTerms) -> CardProductView:
         """创建私教课产品或入场次卡。
@@ -95,6 +97,8 @@ class ProductService:
     def sell_product(self, actor: Actor, data: SaleInput, request_id: str) -> SaleView:
         """购买产品或续购：权益、收款、防重记录在同一事务内保存。
         输入不含生效日；会员锁内计算期限卡从所有未作废期限卡末尾接续，最早为今天。
+        依次锁定会员、卡产品并锁定当前读既有已售会员卡后，生成一次当前时刻；
+        生效门店日期及收款时间均由该时刻取得。
         次卡购买当天生效，不参与期限卡接续；相同请求不重新计算并再次销售。
         课节按产品购买数量初始化，预约占用为 0；不接收旧卡剩余课节。
         成功返回 SaleView；输入、权限、状态或请求冲突按公共失败规则抛出。
@@ -102,7 +106,9 @@ class ProductService:
         raise NotImplementedError("ProductService.sell_product 尚未实现")
 
     def get_sale_by_request(self, actor: Actor, request_id: str) -> SaleView:
-        """按原请求编号核实销售结果；核对操作者权限，不暴露别人的交易。"""
+        """按原请求编号核实销售结果；核对操作者且 operation 必须为 sell_product。
+
+        无记录或不可见抛 NotFoundError；操作类型或输入不一致抛 ConflictError。"""
         raise NotImplementedError("ProductService.get_sale_by_request 尚未实现")
 
     def get_today_entry(self, actor: Actor, member_id: int) -> EntryView:
@@ -116,9 +122,11 @@ class ProductService:
         """登记当日首次入场，会员同一天后续入场返回原 EntryView。
 
         会员仅本人，前台/管理员可代办；可信门店日期在会员锁内生成。
-        先核实原请求，再查当日记录；已有记录不因次卡上午用尽而拒绝，也不再扣次。
-        首次校验卡归属/状态/有效期；次卡扣 1 次，期限卡扣 0 次；三项写入共用事务。
-        同请求跨午夜重试返回旧记录，次日真实入场用新编号；失败按公共异常规则回滚。
+        首次处理锁定会员及所选会员卡，锁后时刻同时用于门店日期和 entered_at。
+        原请求重试先按幂等记录返回；每次请求均检查操作者权限和卡归属。
+        当日已有记录时将新 request_id 映射到该记录，不检查卡当日有效性或余额，也不再扣次。
+        首次入场再校验卡状态和有效期；次卡扣 1 次，期限卡扣 0 次；三项写入共用事务。
+        次日真实入场使用新编号；失败按公共异常规则回滚。
         卡不适用抛 CardNotEligible，余额不足抛 InsufficientCredits；当前仅占位。"""
         raise NotImplementedError("ProductService.register_entry 尚未实现")
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from src.models.contracts import (
@@ -45,7 +46,7 @@ class CoachRepository:
         raise NotImplementedError("CoachRepository.get 尚未实现")
 
     def list(self, query: NamedQuery) -> Page[CoachView]:
-        """分页查询教练。
+        """按 id 升序稳定分页查询教练。
 
         返回：Page[CoachView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CoachRepository.list 尚未实现")
@@ -104,7 +105,7 @@ class CourseRepository:
         raise NotImplementedError("CourseRepository.lock 尚未实现")
 
     def list(self, query: CourseQuery) -> Page[CourseView]:
-        """分页查询模板。
+        """按 id 升序稳定分页查询模板。
 
         返回：Page[CourseView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CourseRepository.list 尚未实现")
@@ -145,7 +146,7 @@ class RoomRepository:
         raise NotImplementedError("RoomRepository.get 尚未实现")
 
     def list(self, query: NamedQuery) -> Page[RoomView]:
-        """分页查询场地。
+        """按 id 升序稳定分页查询场地。
 
         返回：Page[RoomView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("RoomRepository.list 尚未实现")
@@ -191,8 +192,17 @@ class SessionRepository:
         返回：SessionView | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("SessionRepository.get 尚未实现")
 
-    def list(self, query: SessionQuery) -> Page[SessionView]:
-        """分页读取课表，不附带会员名单。
+    def list(
+        self,
+        query: SessionQuery,
+        *,
+        scope_coach_id: int | None,
+        bookable_after: datetime | None,
+    ) -> Page[SessionView]:
+        """在角色范围内按 starts_at、id 升序稳定分页读取课表。
+
+        教练传 scope_coach_id；会员传 bookable_after 并强制只读未开始的 scheduled 课次；
+        前台和管理员两项都传 None。范围在计数和分页前应用，不附带会员名单。
 
         返回：Page[SessionView]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("SessionRepository.list 尚未实现")
@@ -212,16 +222,23 @@ class SessionRepository:
         raise NotImplementedError("SessionRepository.set_status 尚未实现")
 
     def has_conflict(self, *, coach_id: int, room_id: int, window: DateWindow) -> bool:
-        """检查教练或场地时间重叠，排除取消课次。
+        """锁定当前读检查教练或场地时间重叠，排除取消课次。
 
+        调用方须先锁定教练和场地；不得沿用事务先前的一致性读快照。
         返回：bool；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("SessionRepository.has_conflict 尚未实现")
 
-    def has_course_sessions(self, course_id: int) -> bool:
-        """检查模板是否已有任何课次引用，包含取消课次；供服务限制类型修改。
+    def has_scheduled_for_coach(self, coach_id: int) -> bool:
+        """锁定当前读检查教练是否仍有 scheduled 课次；调用方已经锁定教练。
 
         返回 bool，不写数据；当前调用抛 NotImplementedError。"""
-        raise NotImplementedError("SessionRepository.has_course_sessions 尚未实现")
+        raise NotImplementedError("SessionRepository.has_scheduled_for_coach 尚未实现")
+
+    def has_scheduled_for_room(self, room_id: int) -> bool:
+        """锁定当前读检查场地是否仍有 scheduled 课次；调用方已经锁定场地。
+
+        返回 bool，不写数据；当前调用抛 NotImplementedError。"""
+        raise NotImplementedError("SessionRepository.has_scheduled_for_room 尚未实现")
 
     def lock(self, session_id: int) -> CourseSession | None:
         """锁定并读取课次，供容量与状态校验。

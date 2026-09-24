@@ -32,10 +32,13 @@ tmp/
 .env
 .env.*
 config.json
-!config.example.json
+config.test.json
+!config.json.example
+!config.test.json.example
 
 # ----  Agent 工具 ----
 .claude/
+CLAUDE.md
 
 # ---- 内部文档 ----
 docs/archive/

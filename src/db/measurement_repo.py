@@ -28,7 +28,7 @@ class MeasurementRepository:
         """读取范围内的体测详情；不存在或不可见返回 None。
 
         范围与 as_of 由服务根据可信身份生成，两种 scope 必须恰有一项非空。
-        会员范围按归属；教练范围按历史预约计算截止并限制 created_at，见设计第 3.6 节。
+        会员范围按归属；教练范围按历史预约计算截止并限制 created_at，见架构“体测权限规则”。
 
         返回：MeasurementView | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("MeasurementRepository.get 尚未实现")

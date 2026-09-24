@@ -1,4 +1,4 @@
-"""接口共用的数据格式，依据 docs/architecture.md 第 3 节定义。
+"""接口共用的数据格式，依据 docs/architecture.md“公共类型定义”。
 
 数据类只声明字段，不校验业务；计算属性尚未实现。
 服务只能返回约定的 View 或 Page，失败抛异常，不返回临时字典。
@@ -55,13 +55,13 @@ class NamedQuery:
 class Actor:
     account_id: int
     role: Role
-    member_id: int | None
-    coach_id: int | None
+    member_id: int | None  # member 角色必须有值，其他角色必须为 None
+    coach_id: int | None  # coach 角色必须有值，其他角色必须为 None
 
 
 @dataclass(frozen=True, kw_only=True)
 class AccountInput:
-    username: str
+    username: str  # 去首尾空白并转小写后，只允许 3–50 位 ASCII 字母、数字和下划线
     password: str = field(repr=False)  # 避免普通对象打印带出密码
     role: Role
 
@@ -132,7 +132,7 @@ class CardTerms:
     name: str
     kind: CardKind
     price: Decimal
-    private_lesson_credits: int  # 月/季/年固定赠送 20/64/256 节；次卡为 0
+    private_lesson_credits: int  # 月/季/年购买 20/64/256 节私教课；独立次卡为 0 节
     access_uses: int | None  # 次卡为总入场次数；期限卡为 None
     valid_days: int | None  # 月/季/年固定为 30/90/365；次卡无期限，为 None
 
@@ -169,7 +169,7 @@ class CardQuery:
     status: CardStatus | None = None
     valid_on: date | None = None  # 仅筛在该门店日期有效且未作废的卡
     expires_before: date | None = None  # valid_until 严格早于此日期
-    private_lessons_at_most: int | None = None  # 只筛赠课产品，按剩余减占用筛选，包含阈值
+    private_lessons_at_most: int | None = None  # 只筛私教课产品，按剩余减占用筛选，包含阈值
     paging: PageRequest = field(default_factory=PageRequest)
 
 
@@ -284,7 +284,7 @@ class SessionView:
     ends_at: datetime
     capacity: int
     occupied_count: int
-    available_count: int
+    available_count: int  # scheduled 课次的未占用容量；已完成或已取消时为 0
     status: SessionStatus
 
 
@@ -302,7 +302,7 @@ class SessionQuery:
 class BookingInput:
     member_id: int
     session_id: int
-    membership_id: int  # 同一张卡提供预约资格及赠课；旧赠课不得搭配新卡
+    membership_id: int  # 同一张卡提供预约资格及已购课节；旧卡课节不得搭配新卡
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -511,7 +511,16 @@ class LogEntry:
     error_message: str | None  # 脱敏后的错误消息
     attendance_change: AttendanceChange | None = None  # 签到状态变更
     frames: tuple[LogFrame, ...] = ()  # 堆栈帧
-    truncated: bool = False  # 堆栈是否被截断
+    truncated: bool = False  # 整条日志是否因 16 KiB 上限被截断
+
+
+@dataclass(frozen=True, kw_only=True)
+class LogSnapshot:
+    """一次日志浏览使用的固定快照。"""
+
+    captured_at: datetime
+    entries: tuple[LogEntry, ...]
+    skipped_lines: int
 
 
 @dataclass(frozen=True, kw_only=True)

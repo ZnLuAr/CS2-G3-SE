@@ -19,8 +19,49 @@ class OutcomeUnknownError(StorageError):
         self, message: str, *, request_id: str | None = None,
         record_id: int | None = None,
     ) -> None:
-        """接收安全提示与已验证编号，由统一错误处理器取出；不含原始表单。
+        """保存安全提示与核实编号，不含原始表单。"""
+        super().__init__(message)
+        self.request_id = request_id
+        self.record_id = record_id
 
-        record_id 对应当前操作的原业务记录，创建时未取得编号可以为 None。
-        当前仅声明接口，调用抛 NotImplementedError。"""
-        raise NotImplementedError("OutcomeUnknownError.__init__ 尚未实现")
+
+class InitializationError(StorageError):
+    """数据库初始化失败，保存已经确认完成的表和失败步骤。"""
+
+    completed_tables: tuple[str, ...]
+    failed_step: str
+    outcome_unknown: bool
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        completed_tables: tuple[str, ...],
+        failed_step: str,
+        outcome_unknown: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.completed_tables = completed_tables
+        self.failed_step = failed_step
+        self.outcome_unknown = outcome_unknown
+
+
+class MigrationError(StorageError):
+    """数据库迁移失败，保存已经确认完成的步骤和结果状态。"""
+
+    completed_steps: tuple[str, ...]
+    failed_step: str
+    outcome_unknown: bool
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        completed_steps: tuple[str, ...],
+        failed_step: str,
+        outcome_unknown: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.completed_steps = completed_steps
+        self.failed_step = failed_step
+        self.outcome_unknown = outcome_unknown
