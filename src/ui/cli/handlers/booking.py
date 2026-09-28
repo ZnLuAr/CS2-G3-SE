@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from typing import TYPE_CHECKING
+
 from src.models.contracts import Actor
 from src.services.booking_service import BookingService
-from src.services.product_service import ProductService
 from src.services.course_service import CourseService
+
+if TYPE_CHECKING:
+    from src.services.entitlement_query_service import EntitlementQueryService
 
 
 class BookingHandler:
@@ -22,14 +26,14 @@ class BookingHandler:
         service: BookingService,
         get_actor: Callable[[], Actor],
         course_service: CourseService,
-        product_service: ProductService,
+        entitlements: EntitlementQueryService,
         *, timezone_name: str,
     ) -> None:
-        """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
+        """接收服务、身份回调及 App 提供的门店时区；预约需要查询会员课包权益。"""
         self._service = service
         self._get_actor = get_actor
         self._course_service = course_service
-        self._product_service = product_service
+        self._entitlements = entitlements
         self._timezone_name = timezone_name
 
     def book(self) -> None:

@@ -669,6 +669,7 @@ class CoachAccountLinkInput:
 ### 9.2 `AuthService`
 
 ```python
+# src/services/auth_service.py
 class AuthService:
     def __init__(
         self,
@@ -1090,11 +1091,11 @@ def main(argv: list[str] | None = None) -> int: ...
 本领域复用第 9.1 节定义的 `MemberStatus`、`GymCardStatus`、`LessonPackageStatus`、`PaymentMethod` 等。本节补充销售与权益来源类型：
 
 ```python
-EntitlementOriginKind = Literal[“purchase”, “gift”]
-SaleKind = Literal[“gym_card”, “lesson_package”]
-SaleItemKind = Literal[“gym_card”, “lesson_package”]
+EntitlementOriginKind = Literal["purchase", "gift"]
+SaleKind = Literal["gym_card", "lesson_package"]
+SaleItemKind = Literal["gym_card", "lesson_package"]
 OperationResultKind = Literal[
-    “member”, “sale_order”, “course_session”, “booking”, “gym_entry”
+    "member", "sale_order", "course_session", "booking", "gym_entry"
 ]
 ```
 
@@ -1559,6 +1560,7 @@ class EntryView:
 #### 3.1 MemberService
 
 ```python
+# src/services/member_service.py
 class MemberService:
     def create_member(
         self, actor: Actor, data: MemberInput, request_id: str
@@ -1633,6 +1635,7 @@ class MemberService:
 #### 3.2 GymCardProductService
 
 ```python
+# src/services/gym_card_product_service.py
 class GymCardProductService:
     def create_gym_card_product(
         self, actor: Actor, terms: GymCardProductTerms
@@ -1677,6 +1680,7 @@ class GymCardProductService:
 #### 3.3 LessonPackageProductService 与赠卡规则
 
 ```python
+# src/services/lesson_package_product_service.py
 class LessonPackageProductService:
     def create_lesson_package_product(
         self, actor: Actor, terms: LessonPackageProductTerms
@@ -1743,6 +1747,7 @@ class LessonPackageProductService:
 #### 3.4 EntitlementQueryService
 
 ```python
+# src/services/entitlement_query_service.py
 class EntitlementQueryService:
     def get_gym_card(
         self, actor: Actor, gym_card_id: int
@@ -1790,6 +1795,7 @@ class EntitlementQueryService:
 #### 3.5 SalesService
 
 ```python
+# src/services/sales_service.py
 class SalesService:
     def get_sale_order(
         self, actor: Actor, sale_order_id: int
@@ -1892,6 +1898,7 @@ class SalesService:
 #### 3.6 BookingService 和 AttendanceService 对接
 
 ```python
+# src/services/booking_service.py
 class BookingService:
     def book(
         self, actor: Actor, data: BookingInput, request_id: str
@@ -1914,6 +1921,7 @@ class BookingService:
     ) -> Page[BookingView]: ...
 
 
+# src/services/attendance_service.py
 class AttendanceService:
     def check_in(
         self, actor: Actor, booking_id: int
@@ -1968,6 +1976,7 @@ AttendanceService.mark_no_show 执行：
 #### 3.7 AccessService
 
 ```python
+# src/services/access_service.py
 class AccessService:
     def get_today_entry(
         self, actor: Actor, member_id: int
@@ -3783,6 +3792,7 @@ class BookingQuery:
 #### 2.1 教练、课程模板与场地管理
 
 ```python
+# src/services/coach_service.py
 class CoachService:
     def create_coach(self, actor: Actor, data: CoachInput) -> CoachView: ...
     def update_coach(
@@ -3796,6 +3806,7 @@ class CoachService:
         self, actor: Actor, coach_id: int, is_active: bool,
     ) -> CoachView: ...
 
+# src/services/course_service.py
 class CourseService:
     def create_course(self, actor: Actor, data: CourseInput) -> CourseView: ...
     def update_course(
@@ -3809,6 +3820,7 @@ class CourseService:
         self, actor: Actor, course_id: int, is_active: bool,
     ) -> CourseView: ...
 
+# src/services/room_service.py
 class RoomService:
     def create_room(self, actor: Actor, data: RoomInput) -> RoomView: ...
     def update_room(
@@ -4095,16 +4107,18 @@ class MeasurementComparison:
 ```
 
 ```python
-def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView: ...
-def get_measurement(
-    self, actor: Actor, measurement_id: int,
-) -> MeasurementView: ...
-def list_measurements(
-    self, actor: Actor, query: MeasurementQuery,
-) -> Page[MeasurementView]: ...
-def compare(
-    self, actor: Actor, before_id: int, after_id: int,
-) -> MeasurementComparison: ...
+# src/services/measurement_service.py
+class MeasurementService:
+    def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView: ...
+    def get_measurement(
+        self, actor: Actor, measurement_id: int,
+    ) -> MeasurementView: ...
+    def list_measurements(
+        self, actor: Actor, query: MeasurementQuery,
+    ) -> Page[MeasurementView]: ...
+    def compare(
+        self, actor: Actor, before_id: int, after_id: int,
+    ) -> MeasurementComparison: ...
 ```
 
 `body_fat_pct=None` 表示未测体脂；仅当两条记录体脂均非空时比较结果非空。身高范围 100.00～250.00 cm，体重范围 30.00～150.00 kg，体脂范围 0.00～100.00%。授权完全基于会员与当前教练之间的预约关系，课包和健身房卡不参与判断。输入、权限或时间顺序错误抛项目异常，体测记录创建后不可修改或删除。
@@ -4159,11 +4173,13 @@ class ReviewQuery:
 ```
 
 ```python
-def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView: ...
-def get_review(self, actor: Actor, review_id: int) -> ReviewView: ...
-def list_reviews(
-    self, actor: Actor, query: ReviewQuery,
-) -> Page[ReviewView]: ...
+# src/services/review_service.py
+class ReviewService:
+    def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView: ...
+    def get_review(self, actor: Actor, review_id: int) -> ReviewView: ...
+    def list_reviews(
+        self, actor: Actor, query: ReviewQuery,
+    ) -> Page[ReviewView]: ...
 ```
 
 #### 7.1 创建评价
@@ -4268,33 +4284,35 @@ class CsvExport:
 #### 8.2 服务方法
 
 ```python
-def get_payment(self, actor: Actor, payment_id: int) -> PaymentView: ...
-def list_payments(
-    self, actor: Actor, query: PaymentQuery,
-) -> Page[PaymentView]: ...
-def revenue(self, actor: Actor, window: DateWindow) -> RevenueView: ...
-def membership_stats(self, actor: Actor) -> MembershipStats: ...
-def session_stats(
-    self, actor: Actor, query: SessionQuery,
-) -> Page[SessionStatsView]: ...
-def coach_stats(
-    self, actor: Actor, window: DateWindow, paging: PageRequest,
-) -> Page[CoachStatsView]: ...
-def export_payments(
-    self, actor: Actor, query: PaymentQuery,
-) -> CsvExport: ...
-def export_revenue(
-    self, actor: Actor, window: DateWindow,
-) -> CsvExport: ...
-def export_memberships(
-    self, actor: Actor, as_of: datetime,
-) -> CsvExport: ...
-def export_sessions(
-    self, actor: Actor, query: SessionQuery,
-) -> CsvExport: ...
-def export_coaches(
-    self, actor: Actor, window: DateWindow,
-) -> CsvExport: ...
+# src/services/report_service.py
+class ReportService:
+    def get_payment(self, actor: Actor, payment_id: int) -> PaymentView: ...
+    def list_payments(
+        self, actor: Actor, query: PaymentQuery,
+    ) -> Page[PaymentView]: ...
+    def revenue(self, actor: Actor, window: DateWindow) -> RevenueView: ...
+    def membership_stats(self, actor: Actor) -> MembershipStats: ...
+    def session_stats(
+        self, actor: Actor, query: SessionQuery,
+    ) -> Page[SessionStatsView]: ...
+    def coach_stats(
+        self, actor: Actor, window: DateWindow, paging: PageRequest,
+    ) -> Page[CoachStatsView]: ...
+    def export_payments(
+        self, actor: Actor, query: PaymentQuery,
+    ) -> CsvExport: ...
+    def export_revenue(
+        self, actor: Actor, window: DateWindow,
+    ) -> CsvExport: ...
+    def export_memberships(
+        self, actor: Actor, as_of: datetime,
+    ) -> CsvExport: ...
+    def export_sessions(
+        self, actor: Actor, query: SessionQuery,
+    ) -> CsvExport: ...
+    def export_coaches(
+        self, actor: Actor, window: DateWindow,
+    ) -> CsvExport: ...
 ```
 
 - 收款通过 `Payment.sale_order_id` 关联销售订单；`PaymentView` 返回 `sale_order_id` 和 `member_id`。
@@ -4390,30 +4408,32 @@ class MaintenanceView:
 ### 14.2 EquipmentService
 
 ```python
-def create_equipment(
-    self, actor: Actor, data: EquipmentInput,
-) -> EquipmentView: ...
-def get_equipment(
-    self, actor: Actor, equipment_id: int,
-) -> EquipmentView: ...
-def list_equipment(
-    self, actor: Actor, query: EquipmentQuery,
-) -> Page[EquipmentView]: ...
-def update_equipment(
-    self, actor: Actor, equipment_id: int, data: EquipmentUpdateInput,
-) -> EquipmentView: ...
-def report_fault(
-    self, actor: Actor, equipment_id: int, description: str,
-) -> MaintenanceView: ...
-def finish_maintenance(
-    self, actor: Actor, maintenance_id: int,
-) -> MaintenanceView: ...
-def retire_equipment(
-    self, actor: Actor, equipment_id: int,
-) -> EquipmentView: ...
-def list_maintenance(
-    self, actor: Actor, equipment_id: int, paging: PageRequest,
-) -> Page[MaintenanceView]: ...
+# src/services/equipment_service.py
+class EquipmentService:
+    def create_equipment(
+        self, actor: Actor, data: EquipmentInput,
+    ) -> EquipmentView: ...
+    def get_equipment(
+        self, actor: Actor, equipment_id: int,
+    ) -> EquipmentView: ...
+    def list_equipment(
+        self, actor: Actor, query: EquipmentQuery,
+    ) -> Page[EquipmentView]: ...
+    def update_equipment(
+        self, actor: Actor, equipment_id: int, data: EquipmentUpdateInput,
+    ) -> EquipmentView: ...
+    def report_fault(
+        self, actor: Actor, equipment_id: int, description: str,
+    ) -> MaintenanceView: ...
+    def finish_maintenance(
+        self, actor: Actor, maintenance_id: int,
+    ) -> MaintenanceView: ...
+    def retire_equipment(
+        self, actor: Actor, equipment_id: int,
+    ) -> EquipmentView: ...
+    def list_maintenance(
+        self, actor: Actor, equipment_id: int, paging: PageRequest,
+    ) -> Page[MaintenanceView]: ...
 ```
 
 创建、修改、完成维修、报废和查看维修明细仅管理员执行。所有已登录角色可查询器械并提交报修。`asset_code` 为 1～50 字且区分大小写；名称和位置为 1～100 字；故障描述为 1～1000 字。

@@ -13,9 +13,8 @@ class Coach:
     """对应 coaches 表的存储字段；尚未配置 ORM 映射。"""
 
     id: int
-    account_id: int
     name: str
-    specialty: str
+    phone: str | None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -27,6 +26,7 @@ class Course:
 
     id: int
     name: str
+    description: str | None
     kind: CourseKind
     duration_minutes: int
     is_active: bool
@@ -40,7 +40,7 @@ class Room:
 
     id: int
     name: str
-    capacity: int
+    location: str | None
     is_active: bool
     created_at: datetime
     updated_at: datetime

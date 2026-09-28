@@ -16,6 +16,7 @@ class OperationRecord:
     request_id: str
     actor_id: int
     operation: OperationName
+    payload_version: str
     payload_hash: str
     result_id: int
     created_at: datetime

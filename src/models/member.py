@@ -11,9 +11,9 @@ class Member:
     """对应 members 表的存储字段；尚未配置 ORM 映射。"""
 
     id: int
-    account_id: int | None
     name: str
     phone: str | None
-    is_active: bool
+    status: str
+    archived_at: datetime | None
     created_at: datetime
     updated_at: datetime

@@ -25,19 +25,6 @@ class Booking:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Consumption:
-    """对应 consumptions 表的存储字段；尚未配置 ORM 映射。"""
-
-    id: int
-    booking_id: int
-    membership_id: int
-    lessons_used: int
-    completed_at: datetime
-    operator_id: int
-    created_at: datetime
-
-
-@dataclass(frozen=True, kw_only=True)
 class Review:
     """对应 reviews 表的存储字段；尚未配置 ORM 映射。"""
 

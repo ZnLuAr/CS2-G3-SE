@@ -14,7 +14,7 @@ class Payment:
     """对应 payments 表的存储字段；尚未配置 ORM 映射。"""
 
     id: int
-    membership_id: int
+    sale_order_id: int
     member_id: int
     amount: Decimal
     method: PaymentMethod

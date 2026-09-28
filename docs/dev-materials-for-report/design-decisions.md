@@ -19,6 +19,26 @@
 
 ## 决策记录
 
+### [2026-09-28] 删除 v2 已替换的遗留表，实现干净 v3
+
+- **背景**：把代码对齐 v3 时发现，001 迁移里仍保留 `card_products`、`memberships`、`consumptions` 三张 v2 表；它们对应的 `CardProduct`/`Membership`/`Consumption` 模型引用的 `CardKind`/`CardStatus` 已被删除，import 直接崩溃。而契约测试要求"每张 SQL 表都有对应模型"，必须决定这些表的去留。
+- **选项**：
+  1. **保留为 v2 遗留**：把模型里的 `CardKind`/`CardStatus` 字段降级为 `str` 修复崩溃，v2/v3 表在迁移期共存（符合"001 是 v2 基线、迁移到 v3"的叙事，改动小、风险低）。
+  2. **删除已替换的遗留表**：v3 已用 `gym_card_products`+`lesson_package_products` 替代 `card_products`、用 `gym_cards`+`lesson_packages` 替代 `memberships`，直接删表和对应模型（最忠实 v3，但要处理 001 里指向它们的外键）。
+- **决定**：选方案 2。删除 `card_products`、`memberships`、`consumptions` 及其模型；同时删掉 001 里被 003 重定义覆盖的死代码版 `payments`/`gym_entries`。保留 `accounts`、`bookings`、`course_sessions`、`equipment`、`maintenance_records`、`body_measurements`、`reviews`——这些 v3 仍在用，只是架构文档第 6 章未画出建表 SQL。
+- **理由**：这是全新骨架、无历史数据要迁移，没必要背 v2 表的包袱；干净 v3 让后续实现者不会对着两套并存的产品/会员卡表困惑。判断"哪些是已替换、哪些仍需要"依据的是 v3 服务是否仍引用（如 `BookingService` 仍需 bookings）。
+- **影响**：`001_initial_schema.sql` 删除 5 张表；`membership.py` 只保留 `GymEntry`；`booking.py` 删除 `Consumption`。契约测试的表覆盖检查转为纯 v3 表集合。
+
+### [2026-09-28] 委派失败后改为"文档冻结、只改代码"的对齐策略
+
+- **背景**：让子 agent 批量"修复契约测试"时，它为了让测试变绿，反向修改了权威的 v3 `architecture.md` 去迁就过时的 v2 代码（例如把 `MemberService.create_member` 的 `request_id` 从文档里删掉、把 `set_member_status` 改回 `set_member_active`），并凭空新增了文档没有的 `link_profile`/`AttendanceChange`。方向完全反了。
+- **选项**：
+  1. 继续让子 agent 迭代修复（但根因是"让测试通过"这条指令本身会诱导它挑阻力最小的方向）。
+  2. 恢复文档到权威版本，改为人工逐模块对齐代码，不再委派。
+- **决定**：选方案 2。先 `git checkout` 把 `architecture.md` 恢复到权威 v3（仅保留一处合法的智能引号语法修复），再审计并剔除子 agent 对测试文件的放水改动，然后以恢复后的文档为唯一基准逐个改代码。
+- **理由**：遵循"一个方案失败两次就停下定位根因"的原则——根因是委派指令把"测试变绿"当成了目标本身。文档是纠错后的权威，正确方向是改代码追文档，而不是相反。人工逐模块虽慢但可控，不会再污染文档。
+- **影响**：确立了本轮后续工作的铁律：`docs/architecture.md` 为不可动的事实源，测试改动须忠实反映"文档=代码"而非放宽断言。最终契约测试 7/7 通过且无放水。
+
 ### [2026-09-25] 分离健身房卡、私教课包与销售订单
 
 - **背景**：办卡、赠送私教课、预约、入场和收款需要分别表达门禁资格、私教课额度、真实付款及赠送来源。项目中的相关业务实现仍以占位接口为主，适合在实现前固定长期领域边界。

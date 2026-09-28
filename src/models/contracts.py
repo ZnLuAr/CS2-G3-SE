@@ -13,15 +13,33 @@ from typing import Generic, Literal, TypeVar
 
 T = TypeVar("T")  # Page 可以装会员，也可以装预约等其他记录
 Role = Literal["member", "coach", "receptionist", "admin"]
-CardKind = Literal["monthly", "quarterly", "yearly", "count"]
-# 当前只做私教课；保留课程类型字段是为了让接口语义明确，唯一允许值为 private。
 CourseKind = Literal["private"]
-CardStatus = Literal["active", "void"]
+MemberStatus = Literal["active", "archived"]
+GymCardStatus = Literal["active", "void"]
+LessonPackageStatus = Literal["active", "void"]
 SessionStatus = Literal["scheduled", "completed", "cancelled"]
-BookingStatus = Literal["reserved", "cancelled", "checked_in", "completed", "no_show"]
+BookingStatus = Literal["reserved", "checked_in", "completed", "cancelled", "no_show"]
+PaymentMethod = Literal["cash", "card", "transfer"]
+GymCardStartPolicy = Literal["immediate", "append"]
+GiftActivationPolicy = Literal["immediate", "append"]
+GymCardKind = Literal["duration", "visit"]
+EntrySourceKind = Literal["duration_gym_card", "visit_gym_card", "booking"]
 EquipmentStatus = Literal["available", "maintenance", "retired"]
-PaymentMethod = Literal["cash", "card", "transfer"]  # 现金、刷卡、转账；仅记账
-OperationName = Literal["sell_product", "create_session", "cancel_session", "book", "cancel_booking", "register_entry"]
+EntitlementOriginKind = Literal["purchase", "gift"]
+SaleKind = Literal["gym_card", "lesson_package"]
+SaleItemKind = Literal["gym_card", "lesson_package"]
+OperationResultKind = Literal["member", "sale_order", "course_session", "booking", "gym_entry"]
+OperationName = Literal[
+    "create_member",
+    "sell_gym_card",
+    "sell_lesson_package",
+    "create_session",
+    "cancel_session",
+    "book",
+    "cancel_booking",
+    "register_entry",
+]
+ErrorAction = Literal["continue", "login", "exit", "verify"]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -77,12 +95,6 @@ class AccountView:
 
 
 @dataclass(frozen=True, kw_only=True)
-class AccountLinkInput:
-    member_id: int | None
-    coach_id: int | None  # 恰好一项有值；将指定档案移交给空闲且角色匹配的目标账号
-
-
-@dataclass(frozen=True, kw_only=True)
 class MemberInput:
     name: str
     phone: str | None
@@ -91,116 +103,382 @@ class MemberInput:
 @dataclass(frozen=True, kw_only=True)
 class MemberView:
     id: int
-    account_id: int | None
     name: str
     phone: str | None
-    is_active: bool
+    status: MemberStatus
+    archived_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
 class MemberQuery:
     member_id: int | None = None
-    keyword: str = ""  # 姓名包含匹配，同名用 ID 区分
-    is_active: bool | None = None
+    keyword: str = ""
+    status: MemberStatus | None = None
     paging: PageRequest = field(default_factory=PageRequest)
 
 
 @dataclass(frozen=True, kw_only=True)
-class CoachInput:
+class MemberAccountLinkInput:
     account_id: int
-    name: str
-    specialty: str
+    member_id: int
 
 
 @dataclass(frozen=True, kw_only=True)
-class CoachUpdateInput:
+class CoachAccountLinkInput:
+    account_id: int
+    coach_id: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class MemberAccountLinkView:
+    account_id: int
+    member_id: int
+    linked_at: datetime
+    linked_by: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class CoachInput:
     name: str
-    specialty: str  # 资料编辑不改变账号关联
+    phone: str | None
 
 
 @dataclass(frozen=True, kw_only=True)
 class CoachView:
     id: int
-    account_id: int
     name: str
-    specialty: str
+    phone: str | None
     is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
-class CardTerms:
+class DurationGymCardProductTerms:
+    kind: Literal["duration"]
     name: str
-    kind: CardKind
     price: Decimal
-    private_lesson_credits: int  # 月/季/年购买 20/64/256 节私教课；独立次卡为 0 节
-    access_uses: int | None  # 次卡为总入场次数；期限卡为 None
-    valid_days: int | None  # 月/季/年固定为 30/90/365；次卡无期限，为 None
+    valid_days: int
+    start_policy: GymCardStartPolicy
 
 
 @dataclass(frozen=True, kw_only=True)
-class CardProductView:
+class VisitGymCardProductTerms:
+    kind: Literal["visit"]
+    name: str
+    price: Decimal
+    total_entries: int
+
+
+GymCardProductTerms = DurationGymCardProductTerms | VisitGymCardProductTerms
+
+
+@dataclass(frozen=True, kw_only=True)
+class DurationGymCardProductView:
+    kind: Literal["duration"]
     id: int
-    terms: CardTerms
+    terms: DurationGymCardProductTerms
+    is_sale_enabled: bool
+    is_gift_enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class VisitGymCardProductView:
+    kind: Literal["visit"]
+    id: int
+    terms: VisitGymCardProductTerms
+    is_sale_enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+GymCardProductView = DurationGymCardProductView | VisitGymCardProductView
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageProductTerms:
+    name: str
+    price: Decimal
+    lesson_credits: int
+    valid_days: int | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageProductView:
+    id: int
+    terms: LessonPackageProductTerms
+    is_sale_enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageGiftRuleInput:
+    trigger_product_id: int
+    reward_gym_card_product_id: int
+    reward_quantity: int
+    activation_policy: GiftActivationPolicy
+
+
+@dataclass(frozen=True, kw_only=True)
+class GiftRuleRevisionInput:
+    reward_gym_card_product_id: int
+    reward_quantity: int
+    activation_policy: GiftActivationPolicy
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageGiftRuleView:
+    id: int
+    trigger_product_id: int
+    reward_gym_card_product_id: int
+    reward_quantity: int
+    activation_policy: GiftActivationPolicy
+    version: int
     is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
-class CardView:
-    id: int
-    member_id: int
-    product_id: int
-    terms: CardTerms  # 售出快照，不实时读取产品
-    valid_from: date
-    valid_until: date | None  # 不含此日期；次卡无期限，为 None
-    remaining_accesses: int | None
-    remaining_private_lessons: int
-    reserved_private_lessons: int
-    status: CardStatus
-
-    @property
-    def available_private_lessons(self) -> int:
-        """返回账面剩余减占用；卡过期时该余额不可新预约，日期资格另由服务检查。"""
-        raise NotImplementedError("CardView.available_private_lessons 尚未实现")
-
-
-@dataclass(frozen=True, kw_only=True)
-class CardQuery:
-    member_id: int | None = None
-    status: CardStatus | None = None
-    valid_on: date | None = None  # 仅筛在该门店日期有效且未作废的卡
-    expires_before: date | None = None  # valid_until 严格早于此日期
-    private_lessons_at_most: int | None = None  # 只筛私教课产品，按剩余减占用筛选，包含阈值
+class LessonPackageGiftRuleQuery:
+    trigger_product_id: int | None = None
+    reward_gym_card_product_id: int | None = None
+    is_active: bool | None = None
     paging: PageRequest = field(default_factory=PageRequest)
 
 
 @dataclass(frozen=True, kw_only=True)
-class SaleInput:
+class PurchasedGymCardOriginView:
+    sale_order_id: int
+    sale_item_id: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class GiftedGymCardOriginView:
+    gift_grant_id: int
+    trigger_sale_order_id: int
+    trigger_sale_item_id: int
+    gift_rule_id: int
+
+
+GymCardOriginView = PurchasedGymCardOriginView | GiftedGymCardOriginView
+
+
+@dataclass(frozen=True, kw_only=True)
+class DurationGymCardView:
+    kind: Literal["duration"]
+    id: int
     member_id: int
     product_id: int
+    name: str
+    valid_days: int
+    start_policy: GymCardStartPolicy
+    valid_from: date
+    valid_until: date
+    status: GymCardStatus
+    origin: GymCardOriginView
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class VisitGymCardView:
+    kind: Literal["visit"]
+    id: int
+    member_id: int
+    product_id: int
+    name: str
+    total_entries: int
+    remaining_entries: int
+    status: GymCardStatus
+    origin: PurchasedGymCardOriginView
+    created_at: datetime
+    updated_at: datetime
+
+
+GymCardView = DurationGymCardView | VisitGymCardView
+
+
+@dataclass(frozen=True, kw_only=True)
+class GymCardQuery:
+    member_id: int | None = None
+    kind: GymCardKind | None = None
+    status: GymCardStatus | None = None
+    origin_kind: EntitlementOriginKind | None = None
+    valid_on: date | None = None
+    expires_before: date | None = None
+    paging: PageRequest = field(default_factory=PageRequest)
+
+
+@dataclass(frozen=True, kw_only=True)
+class GymMembershipView:
+    member_id: int
+    business_date: date
+    is_member: bool
+    eligible_card_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class PurchasedDurationGymCardCreate:
+    member_id: int
+    product_id: int
+    purchase_sale_item_id: int
+    name: str
+    valid_days: int
+    start_policy: GymCardStartPolicy
+    valid_from: date
+    valid_until: date
+    status: GymCardStatus
+
+
+@dataclass(frozen=True, kw_only=True)
+class PurchasedVisitGymCardCreate:
+    member_id: int
+    product_id: int
+    purchase_sale_item_id: int
+    name: str
+    total_entries: int
+    remaining_entries: int
+    status: GymCardStatus
+
+
+@dataclass(frozen=True, kw_only=True)
+class GiftedDurationGymCardCreate:
+    member_id: int
+    product_id: int
+    gift_grant_id: int
+    name: str
+    valid_days: int
+    start_policy: GymCardStartPolicy
+    valid_from: date
+    valid_until: date
+    status: GymCardStatus
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageCreate:
+    member_id: int
+    product_id: int
+    purchase_sale_item_id: int
+    name: str
+    total_lessons: int
+    remaining_lessons: int
+    reserved_lessons: int
+    valid_from: date
+    valid_until: date | None
+    status: LessonPackageStatus
+
+
+@dataclass(frozen=True, kw_only=True)
+class GymCardSaleItemProductSnapshot:
+    product_name: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageSaleItemProductSnapshot:
+    product_name: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class GiftRuleSnapshot:
+    gift_rule_id: int
+    reward_gym_card_product_id: int
+    version: int
+    activation_policy: GiftActivationPolicy
+
+
+@dataclass(frozen=True, kw_only=True)
+class RewardGymCardProductSnapshot:
+    product_name: str
+    valid_days: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageView:
+    id: int
+    member_id: int
+    product_id: int
+    sale_order_id: int
+    sale_item_id: int
+    name: str
+    total_lessons: int
+    remaining_lessons: int
+    reserved_lessons: int
+    valid_from: date
+    valid_until: date | None
+    status: LessonPackageStatus
+    created_at: datetime
+    updated_at: datetime
+
+    @property
+    def available_lessons(self) -> int:
+        return self.remaining_lessons - self.reserved_lessons
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageQuery:
+    member_id: int | None = None
+    status: LessonPackageStatus | None = None
+    valid_on: date | None = None
+    expires_before: date | None = None
+    available_lessons_at_most: int | None = None
+    paging: PageRequest = field(default_factory=PageRequest)
+
+
+@dataclass(frozen=True, kw_only=True)
+class GymCardSaleInput:
+    member_id: int
+    gym_card_product_id: int
     method: PaymentMethod
 
 
 @dataclass(frozen=True, kw_only=True)
-class EntryInput:
+class LessonPackageSaleInput:
     member_id: int
-    membership_id: int  # 当日首次入场选择的卡；再次入场沿用当日记录
+    lesson_package_product_id: int
+    method: PaymentMethod
 
 
 @dataclass(frozen=True, kw_only=True)
-class EntryView:
+class SaleOrderView:
     id: int
     member_id: int
-    membership_id: int
-    business_date: date  # 服务按门店时区生成，不由界面指定
-    entered_at: datetime  # 当日首次登记的 UTC 时刻
-    accesses_used: int  # 首次用次卡为 1，用期限卡为 0；重复调用仍返回原值
+    kind: SaleKind
+    total_amount: Decimal
+    sold_at: datetime
     operator_id: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class SaleOrderQuery:
+    member_id: int | None = None
+    kind: SaleKind | None = None
+    operator_id: int | None = None
+    window: DateWindow | None = None
+    paging: PageRequest = field(default_factory=PageRequest)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SaleItemView:
+    id: int
+    sale_order_id: int
+    kind: SaleItemKind
+    product_id: int
+    product_name: str
+    quantity: int
+    unit_price: Decimal
+    line_amount: Decimal
 
 
 @dataclass(frozen=True, kw_only=True)
 class PaymentView:
     id: int
-    membership_id: int
+    sale_order_id: int
     member_id: int
     amount: Decimal
     method: PaymentMethod
@@ -209,9 +487,133 @@ class PaymentView:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SaleView:
-    card: CardView
+class GiftGrantView:
+    id: int
+    member_id: int
+    trigger_sale_order_id: int
+    trigger_sale_item_id: int
+    gift_rule_id: int
+    sequence: int
+    gym_card_id: int
+    granted_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class SaleOrderDetailView:
+    order: SaleOrderView
+    items: tuple[SaleItemView, ...]
     payment: PaymentView
+    gym_cards: tuple[GymCardView, ...]
+    lesson_packages: tuple[LessonPackageView, ...]
+    gift_grants: tuple[GiftGrantView, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class GymCardSaleResultView:
+    order: SaleOrderView
+    item: SaleItemView
+    payment: PaymentView
+    card: GymCardView
+
+
+@dataclass(frozen=True, kw_only=True)
+class LessonPackageSaleResultView:
+    order: SaleOrderView
+    item: SaleItemView
+    payment: PaymentView
+    package: LessonPackageView
+    gift_grants: tuple[GiftGrantView, ...]
+    gifted_cards: tuple[GymCardView, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class LegacyOperationResultView:
+    request_id: str
+    legacy_operation: str
+    target_operation: OperationName
+    result_kind: OperationResultKind
+    result_id: int
+    legacy_payload_hash: str
+    migrated_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class DurationGymCardEntrySourceInput:
+    kind: Literal["duration_gym_card"]
+    gym_card_id: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class VisitGymCardEntrySourceInput:
+    kind: Literal["visit_gym_card"]
+    gym_card_id: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class BookingEntrySourceInput:
+    kind: Literal["booking"]
+    booking_id: int
+
+
+EntrySourceInput = (
+    DurationGymCardEntrySourceInput
+    | VisitGymCardEntrySourceInput
+    | BookingEntrySourceInput
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntryInput:
+    member_id: int
+    source: EntrySourceInput
+
+
+@dataclass(frozen=True, kw_only=True)
+class DurationGymCardEntryAuthorization:
+    kind: Literal["duration_gym_card"]
+    entry_id: int
+    member_id: int
+    business_date: date
+    gym_card_id: int
+    authorized_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class VisitGymCardEntryAuthorization:
+    kind: Literal["visit_gym_card"]
+    entry_id: int
+    member_id: int
+    business_date: date
+    gym_card_id: int
+    remaining_entries: int
+    authorized_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class BookingEntryAuthorization:
+    kind: Literal["booking"]
+    entry_id: int
+    member_id: int
+    business_date: date
+    booking_id: int
+    authorized_at: datetime
+
+
+EntryAuthorization = (
+    DurationGymCardEntryAuthorization
+    | VisitGymCardEntryAuthorization
+    | BookingEntryAuthorization
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntryView:
+    id: int
+    member_id: int
+    authorization: EntryAuthorization
+    business_date: date
+    entered_at: datetime
+    operator_id: int
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -225,39 +627,37 @@ class PaymentQuery:
 @dataclass(frozen=True, kw_only=True)
 class CourseInput:
     name: str
+    description: str | None
     kind: CourseKind
-    duration_minutes: int  # 整数分钟，1–150；最长 2.5 小时
+    duration_minutes: int
 
 
 @dataclass(frozen=True, kw_only=True)
 class CourseView:
     id: int
     name: str
+    description: str | None
     kind: CourseKind
     duration_minutes: int
     is_active: bool
-
-
-@dataclass(frozen=True, kw_only=True)
-class CourseQuery:
-    keyword: str = ""
-    kind: CourseKind | None = None
-    is_active: bool | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
 class RoomInput:
     name: str
-    capacity: int
+    location: str | None
 
 
 @dataclass(frozen=True, kw_only=True)
 class RoomView:
     id: int
     name: str
-    capacity: int
+    location: str | None
     is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -267,33 +667,33 @@ class SessionInput:
     room_id: int
     starts_at: datetime
     ends_at: datetime
-    capacity: int
 
 
 @dataclass(frozen=True, kw_only=True)
 class SessionView:
     id: int
-    course_id: int
+    course: CourseView
+    coach: CoachView
+    room: RoomView
     course_name: str
     kind: CourseKind
-    coach_id: int
-    coach_name: str
-    room_id: int
-    room_name: str
+    duration_minutes: int
     starts_at: datetime
     ends_at: datetime
     capacity: int
     occupied_count: int
-    available_count: int  # scheduled 课次的未占用容量；已完成或已取消时为 0
+    available_count: int
     status: SessionStatus
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
 class SessionQuery:
-    window: DateWindow | None = None  # 按 starts_at 筛选
     kind: CourseKind | None = None
     coach_id: int | None = None
     room_id: int | None = None
+    window: DateWindow | None = None
     status: SessionStatus | None = None
     paging: PageRequest = field(default_factory=PageRequest)
 
@@ -302,7 +702,7 @@ class SessionQuery:
 class BookingInput:
     member_id: int
     session_id: int
-    membership_id: int  # 同一张卡提供预约资格及已购课节；旧卡课节不得搭配新卡
+    lesson_package_id: int
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -310,7 +710,7 @@ class BookingView:
     id: int
     member_id: int
     member_name: str
-    membership_id: int
+    lesson_package_id: int
     session: SessionView
     status: BookingStatus
     booked_at: datetime
@@ -322,7 +722,8 @@ class BookingView:
 class BookingQuery:
     member_id: int | None = None
     session_id: int | None = None
-    window: DateWindow | None = None  # 按关联课次 starts_at 筛选
+    lesson_package_id: int | None = None
+    window: DateWindow | None = None
     status: BookingStatus | None = None
     paging: PageRequest = field(default_factory=PageRequest)
 
@@ -331,7 +732,7 @@ class BookingQuery:
 class ConsumptionView:
     id: int
     booking_id: int
-    membership_id: int
+    lesson_package_id: int
     lessons_used: int
     completed_at: datetime
     operator_id: int
@@ -350,9 +751,17 @@ class ReviewView:
     booking_id: int
     member_id: int
     session_id: int
+    coach_id: int
     rating: int
     comment: str
     created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReviewQuery:
+    member_id: int | None = None
+    coach_id: int | None = None
+    paging: PageRequest = field(default_factory=PageRequest)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -375,6 +784,8 @@ class EquipmentView:
     name: str
     location: str
     status: EquipmentStatus
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -408,8 +819,9 @@ class MeasurementInput:
 class MeasurementView:
     id: int
     member_id: int
-    coach_id: int  # 从可信操作者取得，不由表单指定
+    coach_id: int
     measured_at: datetime
+    created_at: datetime
     height_cm: Decimal
     weight_kg: Decimal
     body_fat_pct: Decimal | None
@@ -432,22 +844,46 @@ class MeasurementComparison:
 
 
 @dataclass(frozen=True, kw_only=True)
-class RevenueView:
-    window: DateWindow
+class MembershipStats:
+    as_of: datetime
+    business_date: date
+    active_member_profiles: int
+    archived_member_profiles: int
+    valid_duration_gym_card_count: int
+    usable_visit_gym_card_count: int
+    members_with_gym_access: int
+    future_duration_gym_cards: int
+    expired_duration_gym_cards: int
+    exhausted_visit_gym_cards: int
+    void_gym_cards: int
+    remaining_visit_entries: int
+    active_lesson_package_count: int
+    future_lesson_packages: int
+    expired_lesson_packages: int
+    void_lesson_packages: int
+    exhausted_lesson_packages: int
+    remaining_lessons: int
+    available_lessons: int
+    reserved_lessons: int
+
+
+# 兼容层：v2 formatters 使用的 SaleView 别名指向 v3 的 SaleOrderView
+SaleView = SaleOrderView
+
+
+@dataclass(frozen=True, kw_only=True)
+class RevenueBreakdownView:
+    sale_kind: SaleKind
     payment_count: int
     total_amount: Decimal
 
 
 @dataclass(frozen=True, kw_only=True)
-class MembershipStats:
-    as_of: datetime  # 本次快照的统计时刻，由服务生成；不支持历史状态回放
-    active_members: int
-    inactive_members: int
-    valid_cards: int
-    expired_cards: int
-    future_cards: int
-    void_cards: int
-    exhausted_cards: int  # 已生效但入场次数为 0 的次卡
+class RevenueView:
+    window: DateWindow
+    total_payment_count: int
+    total_amount: Decimal
+    breakdowns: tuple[RevenueBreakdownView, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -489,14 +925,6 @@ class LogFrame:
 
 
 @dataclass(frozen=True, kw_only=True)
-class AttendanceChange:
-    """签到状态变更记录。"""
-
-    before: Literal["reserved", "checked_in"]
-    after: Literal["reserved", "checked_in"]
-
-
-@dataclass(frozen=True, kw_only=True)
 class LogEntry:
     """日志条目（查询结果）。"""
 
@@ -533,3 +961,4 @@ class LogQuery:
     actor_id: int | None = None  # 操作人编号
     request_id: str | None = None  # 请求编号
     paging: PageRequest = field(default_factory=PageRequest)
+

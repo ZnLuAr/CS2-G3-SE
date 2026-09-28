@@ -2,7 +2,7 @@
 
 
 from __future__ import annotations
-from src.models.contracts import AccountView, BookingView, CardProductView, CardView, CoachStatsView, CoachView, ConsumptionView, CourseView, EntryView, EquipmentView, MaintenanceView, MeasurementComparison, MeasurementView, MemberView, MembershipStats, Page, PaymentView, RevenueView, ReviewView, RoomView, SaleView, SessionStatsView, SessionView
+from src.models.contracts import AccountView, BookingView, CoachStatsView, CoachView, CourseView, EntryView, EquipmentView, MaintenanceView, MeasurementComparison, MeasurementView, MemberView, MembershipStats, Page, PaymentView, RevenueView, ReviewView, RoomView, SaleView, SessionStatsView, SessionView
 
 
 

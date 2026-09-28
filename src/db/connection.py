@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION: int = 3
 
 
 def create_engine(settings: AppSettings) -> Engine:
@@ -81,7 +81,7 @@ def check_connection(engine: Engine) -> None:
         raise StorageError("数据库连接失败") from exc
 
 
-def check_schema(engine: Engine, required_version: int) -> None:
+def check_schema(engine: Engine, required_version: int = 3) -> None:
     """核对结构版本；版本不符时拒绝普通启动，不自动改表。"""
     from sqlalchemy import text
     from src.errors.business import InvalidState
