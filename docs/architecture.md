@@ -1,234 +1,602 @@
 # 系统设计与架构方案
 
-> **版本：v3** · 更新：2026-09-25
-
-## 文档的用意
-
-这是健身房管理系统的**完整设计说明书**。在开发功能时，需要来这里查：
-
-- 我负责的功能要**保存哪些数据**，数据库表叫什么名字
-- 我写的方法要**接收什么参数、返回什么结果**
-- 出错了要**抛出什么异常**，给用户显示什么提示
-- 我的功能和**别人的功能怎么配合**（比如：预约要用到课包的余额）
-
-## 文档用法
-
-**查具体功能的设计**  
-→ 跳到对应章节。会员、销售、健身房卡在[第 12 章](#12-会员产品销售与权益领域)；课程、预约、签到在[第 13 章](#13-课程预约到课与关联业务)
-
-**看数据库表结构**  
-→ 每个业务章节最后有完整的建表 SQL。比如会员表在 [12.6.1 members](#61-members)
-
-**不知道从哪开始**  
-→ 看下面的"第一次开发功能"，或者直接去 [`docs/README.md`](README.md#从这里开始) 看完整参与指引
-
-**查代码放哪个文件**  
-→ 看[第 3 章：目录与文件职责](#3-目录与文件职责)
-
-## 第一次开发功能
-
-假设你要做"会员建档"，简单 3 步：
-
-1. **在下面的目录找到你负责开发的模块**，找到方法说明（输入什么、返回什么）
-2. **写代码**：`member_repo.py` 保存数据 → `member_service.py` 检查规则 → `member.py` 接收用户输入
-3. **测试**：正常情况、错误情况都要测
-
-详细步骤和示例见 [`docs/README.md`](README.md#怎样在骨架中完成一个功能)。
+> 更新：2026-09-24
+> 
+> **阅读建议**：这份文档按"你要做什么 → 怎么做 → 具体规则"组织。先看[你的模块](#你要实现哪个模块)了解任务；需要对接时查看对应的[模块详细说明](#基础框架与公共-cli)；遇到具体问题时查阅[业务规则](#业务规则详解)。
 
 ---
 
 ## 目录
 
-### 📖 开发前必读
+**快速导航**
+- [项目概览](#项目概览) — 这个系统是做什么的
+- [你要实现哪个模块](#你要实现哪个模块) — 按负责人分组的任务清单
+  - [Jiafeng YE：账号与日志](#jiafeng-ye账号与日志)
+  - [Xingzhou PENG：会员与产品](#xingzhou-peng会员与产品)
+  - [Weijie ZHOU & Yuxi ZHU：课程与预约](#weijie-zhou--yuxi-zhu课程与预约)
+  - [Yihao QIAN：签到与评价](#yihao-qian签到与评价)
+  - [Tuao SONG & Mingjin LI：体测与器械](#tuao-song--mingjin-li体测与器械)
+  - [Mingjin LI：报表](#mingjin-li报表)
+  - [Lvzhen ZHOU：基础框架与其余部分](#lvzhen-zhou基础框架与其余部分)
+  - [Guanyu ZHOU：文档与报告](#guanyu-zhou文档与报告)
+- [开发前必读](#开发前必读) — 所有人都要遵守的规则
 
-- [1. 项目基本情况](#1-项目基本情况) — 我们要做什么、用什么技术
-- [2. 代码怎么组织（分层架构）](#2-代码怎么组织分层架构) — CLI、Service、Repository 各负责什么
-- [3. 目录与文件职责](#3-目录与文件职责) — 代码文件放哪里
+**模块详细说明**
+- [基础框架与公共 CLI](#基础框架与公共-cli)
+- [账号与日志模块](#账号与日志模块)
+- [会员与产品模块](#会员与产品模块)
+- [课程与预约模块](#课程与预约模块)
+- [签到与评价模块](#签到与评价模块)
+- [体测与器械模块](#体测与器械模块)
+- [报表模块](#报表模块)
 
-### 🎯 业务功能（按负责人分工）
-
-- [12. 会员、产品、销售与权益](#12-会员产品销售与权益领域) — **Xingzhou PENG、Mingjin LI**
-  - 会员建档、健身房卡、私教课包、销售订单、收款、门禁入场
-- [13. 课程、预约、到课与关联业务](#13-课程预约到课与关联业务) — **Weijie ZHOU、Yuxi ZHU、Yihao QIAN、Tuao SONG**
-  - 教练管理、课程排期、预约、签到、评价、体测
-- [14. 器械与维修](#14-器械与维修) — **Tuao SONG**
-  - 器械登记、维修记录
-
-### 🔧 技术参考（开发时查阅）
-
-- [4. 公共接口约定](#4-公共接口约定) — Input、View、Page 等数据类型
-- [5. 配置与程序启动](#5-配置与程序启动) — config.json 怎么写
-- [6. 数据库连接与事务](#6-数据库连接与事务) — 怎么开事务、提交、回滚
-- [7. 数据库维护命令](#7-数据库维护命令) — `python -m src.cmd.db init/migrate/seed`
-- [8. 公共 CLI](#8-公共-cli) — 怎么收集用户输入、显示分页结果
-- [9. 账号、身份与权限](#9-账号身份与权限) — 登录、角色检查 — **Jiafeng YE**
-- [10. 错误处理](#10-错误处理) — 抛什么异常、怎么处理
-- [11. 日志系统](#11-日志系统) — 怎么记录日志
-
-### 📋 实施与迁移
-
-- [15. v3 迁移与实施同步](#15-v3-迁移与实施同步) — 数据库版本升级
-
-## 1. 项目基本情况
-
-本系统用于管理健身房会员、账号、产品销售、门禁入场、课程排期、预约、签到、消课、评价、体测、器械和经营报表。默认交互入口为命令行界面（CLI），可选终端界面（TUI）与 CLI 共用同一组业务服务。
-
-### 用什么技术
-
-- **编程语言**：Python 3.10+
-- **数据库**：MySQL 8.4
-- **界面**：命令行（CLI），有时间再做终端界面（TUI）
-- **测试**：pytest
-
-时间存储统一用 UTC，显示时转成上海时区。日期区间是 `[开始, 结束)`，包含开始那天，不包含结束那天。
+**参考资料**
+- [业务规则详解](#业务规则详解) — 产品、门禁、预约、体测的详细规则
+- [数据库设计](#数据库设计) — 表结构、字段、约束
+- [公共类型定义](#公共类型定义) — 所有模块共用的数据类型
 
 ---
 
-## 2. 代码怎么组织（分层架构）
+## 项目概览
+
+### 这个系统是做什么的
+
+健身房销售私教课和次卡，会员约课上课，教练管理课程。我们做一个命令行程序来管理这些。
+
+**核心业务流程**：
+1. 会员买私教课（附赠门禁卡）或买次卡（纯门禁）
+2. 会员刷卡入场
+3. 会员预约私教课
+4. 上课时签到
+5. 下课后消课（扣除课节）
+6. 会员评价
+
+**配套功能**：
+- 教练录入体测数据
+- 管理员管理器械
+- 查看营收和统计报表
+
+### 技术架构
+
+```
+命令行界面（CLI）
+    ↓ 调用
+业务服务层（Services）
+    ↓ 调用
+数据访问层（Repositories）
+    ↓ 操作
+MySQL 数据库
+```
+
+**技术选型**：
+- Python 3.10+
+- MySQL 8.4
+- SQLAlchemy 2、PyMySQL
+- argon2-cffi（Argon2id 密码哈希）
+- 标准库 logging
+
+**交互方式**：
+- 默认：命令行界面（CLI）
+- 可选：终端界面（TUI，根据时间补充）
+
+---
+
+## 系统架构与目录结构
+
+### 整体架构
 
 ```mermaid
 flowchart TB
     User["使用者<br/>会员 · 教练 · 前台 · 管理员"]
-    Main["进程入口<br/>main.py"]
-    App["应用协调<br/>src/app.py"]
+    App["应用协调 · App<br/>服务装配、登录状态、资源生命周期<br/>src/app.py"]
 
-    subgraph UI["交互层"]
-        CLI["CLI<br/>src/ui/cli/"]
-        TUI["可选 TUI<br/>src/ui/tui/"]
+    subgraph UI["交互层 · 菜单导航 / 输入收集 / 结果展示"]
+        direction LR
+        CLI["命令行界面 · CLI<br/>src/ui/cli/"]
+        TUI["可选终端界面 · TUI<br/>src/ui/tui/"]
     end
 
-    Services["业务服务层<br/>src/services/"]
-    Repositories["数据访问层<br/>src/db/*_repo.py"]
-    Infrastructure["基础设施<br/>配置 · 事务 · 日志 · 错误"]
-    Database[(MySQL)]
+    Services["业务服务层 · Services<br/>权限检查、业务规则、事务管理<br/>src/services/"]
+    Repos["数据访问层 · Repositories<br/>参数化查询、数据读写与转换<br/>src/db/*_repo.py"]
+    DB[("MySQL<br/>业务数据持久化")]
 
-    User --> Main
-    Main --> App
-    App --> CLI
-    App --> TUI
-    App --> Services
+    User -->|默认入口| CLI
+    User -->|--tui| TUI
+    App -.->|启动与关闭| UI
+    App -.->|创建与注入服务| Services
     CLI --> Services
     TUI --> Services
-    Services --> Repositories
-    Services --> Infrastructure
-    Repositories --> Database
-    Infrastructure --> Database
+    Services -->|使用同一事务中的会话| Repos
+    Repos -->|执行 SQL| DB
+
+    classDef neutral fill:#F3F4F6,stroke:#6B7280,color:#1F2937
+    classDef interface fill:#EAF4FC,stroke:#3973A5,color:#173C5C
+    classDef optional fill:#F5F8FC,stroke:#73859B,color:#34465A,stroke-dasharray:5 4
+    classDef service fill:#EAF6EF,stroke:#39805A,color:#1C5034
+    classDef storage fill:#FFF4DF,stroke:#A67C32,color:#634A1F
+
+    class User,App neutral
+    class CLI interface
+    class TUI optional
+    class Services service
+    class Repos,DB storage
+    style UI fill:#FAFBFC,stroke:#CBD5E1,color:#334155
 ```
 
-### 举个例子：会员买健身房卡
+实线表示操作与调用方向，虚线表示应用的装配和生命周期管理。各业务服务的文件与职责见下方目录。
 
-1. **用户在 CLI 输入**：买哪种卡、付多少钱
-2. **CLI 调用 Service**：`SalesService.sell_gym_card(...)`
-3. **Service 检查规则**：这个人有没有权限买、钱够不够
-4. **Service 调用 Repository**：往数据库写订单、收款记录、健身房卡
-5. **返回结果给用户**：显示订单编号、卡的有效期
+### 目录结构详解
 
-### 每层的职责
+<details>
+    <summary>点击展开项目目录结构详解</summary>
 
-| 层 | 文件位置 | 负责什么 |
-|---|---|---|
-| **CLI** | `src/ui/cli/` | 收集用户输入、显示结果 |
-| **Service** | `src/services/` | 检查权限、检查业务规则、开启和提交事务 |
-| **Repository** | `src/db/` | 执行 SQL 查询、保存数据 |
-
-**重要规则：**
-- Service 检查权限和业务规则，Repository 只负责保存数据
-- 一次完整操作（买卡 + 收款 + 发卡）要在 Service 用一个事务完成
-- Repository 不提交事务，由 Service 统一管理
-- 要么全部成功，要么全部回滚（不能出现"钱收了但卡没发"）
-
-### 具体文件的作用
-
-- `main.py`：程序入口
-- `src/app.py`：管理数据库连接、装配服务、管理登录状态
-- `src/config.py`：读取配置文件
-- `src/ui/cli/prompts.py`：从终端读取用户输入
-- `src/ui/cli/handlers/*.py`：处理具体的业务操作
-- `src/services/*_service.py`：各业务模块的服务类
-- `src/db/*_repo.py`：各数据表的访问类
-- `src/errors/`：定义统一的异常类型
-- `src/models/`：定义数据类型（Input、View、Query）
-
-
-
-## 3. 目录与文件职责
-
-| 路径 | 职责 |
-|---|---|
-| `main.py`、`src/app.py`、`src/config.py` | 入口、生命周期、装配和配置 |
-| `src/db/` | 连接、事务、结构检查和 Repository |
-| `src/errors/` | 项目异常、错误结果和安全转换 |
-| `src/models/` | 公共合同和内部存储模型 |
-| `src/services/` | 权限、规则、并发和业务事务 |
-| `src/ui/cli/`、`src/ui/tui/` | 默认 CLI 和可选 TUI |
-| `sql/`、`tests/`、`docs/` | 迁移、自动化验证和项目文档 |
-
-设计集中维护在 `docs/architecture.md`，参与步骤维护在 `docs/README.md`，工程规范维护在 `docs/project-standards.md`。开发进度、设计决策和测试发现分别记录到 `docs/dev-materials-for-report/development-log.md`、`design-decisions.md` 和 `testing-notes.md`。
-
-## 4. 公共接口约定
-
-### 4.1 返回类型
-
-- 详情方法返回对应的 `View`；目标不存在或对当前操作者不可见时抛 `NotFoundError`。
-- 列表方法返回 `Page[T]`；空结果为 `Page(items=[], total=0, page=..., page_size=...)`。
-- 创建和修改方法返回写入后的 View 或专用结果 View。
-- 失败通过项目异常表达，返回类型在所有执行分支保持一致。
-
-```python
-T = TypeVar("T")
-
-@dataclass(frozen=True, kw_only=True)
-class PageRequest:
-    page: int = 1
-    page_size: int = 20
-
-@dataclass(frozen=True, kw_only=True)
-class Page(Generic[T]):
-    items: list[T]
-    total: int
-    page: int
-    page_size: int
-
-@dataclass(frozen=True, kw_only=True)
-class DateWindow:
-    start: datetime
-    end: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class NamedQuery:
-    keyword: str = ""
-    is_active: bool | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
+```
+cs2-group3-se/
+│
+├── main.py                         # 程序入口，解析命令行参数，启动 CLI/TUI
+│
+├── src/                            # 源代码根目录
+│   │
+│   ├── app.py                      # 应用协调层：管理服务实例、登录状态
+│   ├── config.py                   # 配置读取：数据库连接、日志、时区
+│   │
+│   ├── cmd/                        # 独立命令入口
+│   │   ├── __init__.py
+│   │   ├── db.py                   # init：建表；seed：生成演示数据
+│   │   ├── test.py                 # unit/mysql/all：统一测试入口
+│   │   └── logs.py                 # 本机日志查询入口
+│   │
+│   ├── utils/                      # 工具模块（基础设施）
+│   │   ├── __init__.py
+│   │   └── logging_config.py       # 日志系统：配置、记录、脱敏、查询
+│   │
+│   ├── errors/                     # 异常定义与统一处理
+│   │   ├── __init__.py             # 导出所有异常类型
+│   │   ├── base.py                 # 基础异常类
+│   │   ├── business.py             # 业务异常（InvalidInput, PermissionDenied 等）
+│   │   ├── storage.py              # 存储异常（StorageError 等）
+│   │   └── handler.py              # 统一错误处理：异常 → 中文提示
+│   │
+│   ├── models/                     # 数据模型与类型定义
+│   │   ├── __init__.py
+│   │   └── contracts.py            # 公共类型：Input（输入）、View（输出）、Page（分页）
+│   │
+│   ├── services/                   # 业务服务层（核心业务逻辑）
+│   │   ├── __init__.py
+│   │   ├── auth_service.py         # 账号管理：登录、创建账号、权限校验、日志查询
+│   │   ├── member_service.py       # 会员服务：创建档案、更新信息、查询会员
+│   │   ├── product_service.py      # 产品服务：销售产品（私教课+门禁）、入场登记
+│   │   ├── course_service.py       # 课程服务：教练管理、课程定义、排课
+│   │   ├── booking_service.py      # 预约服务：预约课程、取消预约、查询预约
+│   │   ├── attendance_service.py   # 签到服务：签到、补签、消课、标记缺席
+│   │   ├── review_service.py       # 评价服务：创建评价、查询评价
+│   │   ├── measurement_service.py  # 体测服务：录入体测数据、查询历史
+│   │   ├── equipment_service.py    # 器械服务：创建器械、报修、维护、退役
+│   │   └── report_service.py       # 报表服务：收款统计、会员统计、CSV 导出
+│   │
+│   ├── db/                         # 数据访问层
+│   │   ├── __init__.py
+│   │   ├── connection.py           # 数据库连接池管理
+│   │   ├── account_repo.py         # 账号表的增删改查
+│   │   ├── member_repo.py          # 会员表的增删改查
+│   │   ├── membership_repo.py      # 产品与销售表的增删改查
+│   │   ├── course_repo.py          # 课程与排课表的增删改查
+│   │   ├── booking_repo.py         # 预约表的增删改查
+│   │   ├── attendance_repo.py      # 签到与消课表的增删改查
+│   │   ├── review_repo.py          # 评价表的增删改查
+│   │   ├── measurement_repo.py     # 体测表的增删改查
+│   │   ├── equipment_repo.py       # 器械表的增删改查
+│   │   ├── payment_repo.py         # 收款表的增删改查
+│   │   ├── report_repo.py          # 报表查询
+│   │   └── operation_repo.py       # 操作记录表的增删改查
+│   │
+│   └── ui/                         # 用户界面层
+│       ├── __init__.py
+│       ├── cli/                    # 命令行界面（默认）
+│       │   ├── __init__.py
+│       │   ├── app.py              # CLI 主循环：登录 → 菜单 → 操作 → 退出
+│       │   ├── menus.py            # 菜单定义：按角色显示不同菜单
+│       │   ├── prompts.py          # 输入收集：文本、数字、日期、确认
+│       │   ├── formatters.py       # 结果展示：表格、详情、分页
+│       │   └── handlers/           # 业务交互处理器（按模块分）
+│       │       ├── __init__.py
+│       │       ├── member.py       # 会员操作的交互步骤
+│       │       ├── product.py      # 产品销售的交互步骤
+│       │       ├── booking.py      # 预约操作的交互步骤
+│       │       └── ...             # 其他模块的 Handler
+│       │
+│       └── tui/                    # 终端界面（可选，时间允许时补充）
+│           ├── __init__.py
+│           └── app.py              # TUI 启动与关闭
+│
+├── tests/                          # 测试代码
+│
+├── sql/                            # SQL 脚本（如果不用 ORM 迁移工具）
+│   ├── 001_initial_schema.sql      # 版本 1 的 18 张表建表脚本
+│   └── 002_query_indexes_and_equipment_location.sql # 版本 2 迁移脚本
+│
+├── logs/                           # 日志文件目录（运行时生成）
+│   ├── app.log                     # 当前日志文件
+│   ├── app.log.1                   # 轮转备份 1
+│   ├── app.log.2                   # 轮转备份 2
+│   └── app.log.3                   # 轮转备份 3
+│
+├── docs/                           # 文档目录
+│   ├── architecture.md             # 本文件：系统设计与架构方案
+│   ├── README.md                   # 阅读入口、操作步骤与文档索引
+│   ├── project-standards.md        # 代码与文档规范
+│   ├── feature-list.csv            # 功能清单与实现状态
+│   └── dev-materials-for-report/   # 报告素材（开发日志、决策记录等）
+│
+├── README.md                       # 项目概述与快速入口
+├── requirements.txt                # 核心运行依赖
+├── requirements-dev.txt            # 测试与开发依赖
+└── .gitignore                      # Git 忽略规则
 ```
 
-`PageRequest.page` 从 1 开始，`page_size` 取 1～100。列表在唯一且稳定的排序规则下分页；默认使用 `id` 升序。报表等需要业务排序的接口在对应模块明确次级唯一排序键。
+</details>
 
-### 4.2 字段规则
+### 关键文件说明
 
-- 数据库编号和关联编号使用正整数 `int`。
-- 金额和精确业务小数使用 `Decimal`，从十进制字符串构造，并按字段精度量化。
-- 时刻使用带时区 `datetime`，进入持久层前转换为 UTC。
-- 纯日期使用 `date`。
-- 有限状态使用 `Literal` 或 `Enum` 的固定英文值。
-- 可空字段使用 `T | None`；文本进入服务后按字段规则去除首尾空白并校验长度。
-- `request_id` 使用标准 UUID 字符串，并在进入事务前完成格式校验。
+#### 启动与配置
+- **`main.py`**：程序入口，解析 `--tui` 和 `--config` 参数，启动界面
+- **`src/config.py`**：从 JSON 配置文件读取数据库连接、日志目录和时区；`DB_PASSWORD` 可覆盖数据库密码
+- **`src/app.py`**：创建所有服务实例，管理登录状态，协调应用生命周期
 
-### 4.3 方法文档
+#### 业务核心
+- **`src/services/*.py`**：业务规则、权限检查、事务管理的地方
+  - 每个服务对应一个业务领域（会员、产品、预约等）
+  - 所有写操作都在服务层开启和提交事务
+  - 失败时回滚并抛出自定义异常
 
-每个公开服务方法的类型签名和文档需明确：
+#### 数据访问
+- **`src/db/*_repo.py`**：封装 SQL 查询，返回 ORM 对象或原始数据
+  - 不包含业务规则，只负责数据库操作
+  - 服务层调用 Repository，不直接写 SQL
+  - 注：当前项目将所有 repo 文件直接放在 `src/db/` 下，未使用子目录
 
-1. 输入字段及完整提交语义；
-2. 返回类型；
-3. 角色权限和数据可见范围；
-4. 可抛出的项目异常；
-5. 写入、更新或删除的数据；
-6. 事务、幂等和并发锁定规则。
+#### 界面层
+- **`src/ui/cli/handlers/*.py`**：组织交互步骤
+  - 收集用户输入（调用 `prompts`）
+  - 调用业务服务
+  - 展示结果（调用 `formatters`）
+  - 不包含业务逻辑，只负责界面流程
 
-## 5. 配置与程序启动
+#### 错误处理
+- **`src/errors/base.py`**：基础异常类
+- **`src/errors/business.py`**：业务异常（InvalidInput, PermissionDenied 等）
+- **`src/errors/storage.py`**：存储异常（StorageError 等）
+- **`src/errors/handler.py`**：统一错误处理，将异常转为中文提示
 
-### 5.1 配置类型
+#### 日志系统
+- **`src/utils/logging_config.py`**：配置日志、记录操作、查询日志
+  - 日志文件：`settings.log.directory / "app.log"`，按 `settings.log.max_bytes` 和
+    `settings.log.backup_count` 轮转
+  - 格式：UTF-8 单行 JSON
+  - 脱敏：不记录密码、脱敏电话号码
 
+#### 数据库维护
+- **`src/cmd/db.py`**：独立于主程序的数据库命令
+  - `python -m src.cmd.db init`：初始化空数据库并升级到当前版本
+  - `python -m src.cmd.db migrate`：将已有版本 1 数据库升级到版本 2
+  - `python -m src.cmd.db seed`：生成演示数据（4 个账号 + 2 个档案）
+
+---
+
+## 你要实现哪个模块
+
+### Jiafeng YE：账号与日志
+
+**你的任务**：
+- 账号管理：创建账号、登录、权限校验
+- 错误处理：统一处理所有模块的错误，生成中文提示
+- 日志系统：记录操作日志、查询日志
+
+**你的文件**：
+- `src/services/auth_service.py` — 账号业务逻辑
+- `src/db/account_repo.py` — 账号数据库操作
+- `src/errors/` — 异常定义和处理
+- `src/utils/logging_config.py` — 日志配置
+
+**详细说明**：跳转到 [账号与日志模块](#账号与日志模块)
+
+---
+
+### Xingzhou PENG：会员与产品
+
+**你的任务**：
+- 会员档案：建档、查询、修改、启用/停用
+- 产品销售：卖私教课、卖次卡、记录收款
+
+**你的文件**：
+- `src/services/member_service.py` — 会员业务逻辑
+- `src/services/product_service.py` — 产品销售业务逻辑
+- `src/db/member_repo.py` — 会员数据库操作
+- `src/db/membership_repo.py` — 产品销售数据库操作
+- `src/models/member.py` — 会员数据结构
+- `src/models/membership.py` — 产品、会籍、门禁数据结构
+
+**详细说明**：跳转到 [会员与产品模块](#会员与产品模块)
+
+---
+
+### Weijie ZHOU & Yuxi ZHU：课程与预约
+
+**你们的任务**：
+- 教练管理：建档、查询、修改
+- 课程模板：创建课程、修改
+- 场地管理：创建场地、修改
+- 排课：安排具体课次（教练、场地、时间）
+- 预约：会员预约课次、取消预约
+
+**你们的文件**：
+- `src/services/course_service.py` — 教练、课程、场地、排课
+- `src/services/booking_service.py` — 预约、取消
+- `src/db/course_repo.py` — 教练、课程、场地、课次数据库操作
+- `src/db/booking_repo.py` — 预约数据库操作
+- `src/models/course.py` — 课程相关数据结构
+- `src/models/booking.py` — 预约数据结构
+
+**详细说明**：跳转到 [课程与预约模块](#课程与预约模块)
+
+---
+
+### Yihao QIAN：签到与评价
+
+**你的任务**：
+- 签到：会员签到、教练补签
+- 消课：扣除课节
+- 缺席处理：释放课节占用
+- 评价：会员评价课程
+
+**你的文件**：
+- `src/services/attendance_service.py` — 签到、消课、缺席
+- `src/services/review_service.py` — 评价
+- `src/db/attendance_repo.py` — 签到和消课数据库操作
+- `src/db/review_repo.py` — 评价数据库操作
+- `src/models/contracts.py` — 预约状态枚举（与预约模块共用）
+
+**详细说明**：跳转到 [签到与评价模块](#签到与评价模块)
+
+---
+
+### Tuao SONG & Mingjin LI：体测与器械
+
+**你们的任务**：
+- 体测记录：教练录入体测数据、查询体测历史
+- 器械管理：登记器械、报修、完成维修、报废
+
+**你们的文件**：
+- `src/services/measurement_service.py` — 体测业务逻辑
+- `src/services/equipment_service.py` — 器械业务逻辑
+- `src/db/measurement_repo.py` — 体测数据库操作
+- `src/db/equipment_repo.py` — 器械数据库操作
+- `src/models/measurement.py` — 体测数据结构
+- `src/models/equipment.py` — 器械数据结构
+
+**详细说明**：跳转到 [体测与器械模块](#体测与器械模块)
+
+---
+
+### Mingjin LI：报表
+
+**你的任务**：
+- 收款查询：查询收款记录
+- 统计报表：营收、会员、课程、教练统计
+- 数据导出：导出 CSV
+
+**你的文件**：
+- `src/services/report_service.py` — 报表业务逻辑
+- `src/db/report_repo.py` — 报表数据库查询
+- `src/db/payment_repo.py` — 收款数据库操作（被产品销售调用）
+
+**详细说明**：跳转到 [报表模块](#报表模块)
+
+---
+
+### Lvzhen ZHOU：基础框架与其余部分
+
+**你的任务**：
+- 程序启动：参数解析、配置加载、数据库连接
+- 数据库维护：建表命令、演示数据生成
+- 公共 CLI：菜单、输入、格式化
+- 门禁入场：会员刷卡入场
+- 测试统筹：协调各模块测试、集成验收
+
+**你的文件**：
+- `main.py` — 程序入口
+- `src/app.py` — 应用生命周期
+- `src/config.py` — 配置管理
+- `src/cmd/db.py` — 数据库维护命令
+- `src/ui/cli/` — 公共 CLI 组件
+- `src/services/product_service.py` 的入场部分
+
+**详细说明**：分散在各模块中，重点查看 [开发前必读](#开发前必读)
+
+---
+
+### Guanyu ZHOU：文档与报告
+
+**你的任务**：
+- 维护项目文档
+- 编写进展报告
+- 整理开发素材
+
+**你的文件**：
+- `docs/` — 所有文档
+- `docs/dev-materials-for-report/` — 报告素材
+
+---
+
+## 开发前必读
+
+### 核心规则（必须遵守）
+
+#### 1. 返回类型规则
+
+**查询单条记录**：
 ```python
+def get_member(self, actor, member_id) -> MemberView:
+    # 找到了 → 返回 MemberView 对象
+    # 找不到 → 抛 NotFoundError
+    # 不要返回 None
+```
+
+**查询列表**：
+```python
+def list_members(self, actor, query) -> Page[MemberView]:
+    # 有结果 → 返回 Page(items=[...], total=N)
+    # 没结果 → 返回 Page(items=[], total=0)
+    # 不要返回 None 或裸列表
+```
+
+**修改记录**：
+```python
+def update_member(self, actor, member_id, data) -> MemberView:
+    # 成功 → 返回修改后的 MemberView 对象
+    # 失败 → 抛异常
+    # 不要返回 True/False
+```
+
+#### 2. 错误处理规则
+
+**不要这样**：
+```python
+# ❌ 错误示例
+def get_member(self, actor, member_id):
+    try:
+        member = self.repo.get(member_id)
+        if member is None:
+            return None  # ❌ 不要返回 None
+    except Exception:
+        return {"error": "查询失败"}  # ❌ 不要返回错误字典
+```
+
+**要这样**：
+```python
+# ✅ 正确示例
+def get_member(self, actor, member_id):
+    member = self.repo.get(member_id)
+    if member is None:
+        raise NotFoundError("会员不存在")  # ✅ 抛出异常
+    return member
+```
+
+**异常类型对照表**：
+
+| 情况 | 抛出的异常 | 例子 |
+|------|----------|------|
+| 输入不合法 | `InvalidInputError` | 姓名为空、金额为负数 |
+| 没有权限 | `PermissionDenied` | 教练更正其他教练课次的签到 |
+| 账号失效 | `AuthenticationError` | 账号被停用 |
+| 记录不存在 | `NotFoundError` | 查询不存在的会员编号 |
+| 业务冲突 | `ConflictError` | 重复预约同一课次 |
+| 状态不允许 | `InvalidState` | 已取消的预约不能签到 |
+| 数据库失败 | `StorageError` | 数据库连接断开 |
+
+#### 3. 数据库事务规则
+
+**在哪里提交**：
+- 在**业务服务层**（`*_service.py`）提交或回滚
+- 不要在**数据访问层**（`*_repo.py`）提交
+
+**错误示例**：
+```python
+# member_repo.py
+class MemberRepository:
+    def create(self, data):
+        member = Member(**data)
+        self.session.add(member)
+        self.session.commit()  # ❌ 不要在这里提交
+        return member
+```
+
+**正确示例**：
+```python
+# member_service.py
+from src.db.connection import transaction
+
+class MemberService:
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
+
+    def create_member(self, actor, data):
+        with self._session_factory() as session:
+            with transaction(session):  # ✅ 在服务层管理提交、回滚和提交未知
+                self._auth.verify_actor(session, actor)
+                repo = MemberRepository(session)
+                member = repo.create(data)
+                return member  # 退出 with 时自动提交
+```
+
+**为什么**：
+- 一个业务操作可能涉及多个表（比如卖产品要同时写产品记录和收款记录）
+- 这些操作必须一起成功或一起失败
+- 只有业务服务层知道完整的事务边界
+
+#### 4. 字段类型规则
+
+**ID 和编号**：
+```python
+member_id: int  # 1 到 2^63-1 的整数
+request_id: str  # 标准 UUID 字符串
+```
+
+**金额**：
+```python
+from decimal import Decimal
+price = Decimal("199.00")  # 必须用字符串构造
+# 不要用 float：Decimal(199.0) ❌
+```
+
+**日期和时间**：
+```python
+from datetime import date, datetime
+business_date: date  # 纯日期，如 2026-09-20
+starts_at: datetime  # 带时区的时刻，内部转 UTC 存储
+```
+
+**状态值**：
+```python
+status: Literal["active", "void"]  # 固定的英文值
+# 不要用数字：0/1 ❌
+# 不要用中文："启用" ❌
+```
+
+**可空字段**：
+```python
+phone: str | None  # 电话可以为空
+# 空值用 None，不要用空字符串 "" ❌
+```
+
+### 常用术语解释
+
+| 术语 | 含义 | 例子 |
+|------|------|------|
+| Actor | 当前操作的人（谁在操作） | 前台帮会员办卡，Actor 是前台账号 |
+| View | 返回给界面看的数据 | `MemberView`：会员编号、姓名、电话 |
+| Input | 提交给服务的数据 | `MemberInput`：姓名、电话 |
+| Page | 分页结果 | `Page[MemberView]`：会员列表 + 总数 |
+| Repository（repo） | 数据访问层 | 直接操作数据库的代码 |
+| Service | 业务服务层 | 处理业务逻辑、权限、事务 |
+| Handler | 界面处理器 | 组织一次用户交互 |
+| Session | 数据库会话 | 一次操作使用的数据库连接 |
+| 事务 | 一组操作一起成功或失败 | 卖产品 = 写产品记录 + 写收款记录 |
+
+---
+
+## 基础框架与公共 CLI
+
+**负责人**：Lvzhen ZHOU
+
+### 你要实现的功能
+
+#### 1. 配置与程序启动
+
+**配置格式**：
+```python
+# src/config.py
 @dataclass(frozen=True, kw_only=True)
 class StartupOptions:
     tui: bool = False
@@ -236,6 +604,7 @@ class StartupOptions:
 
 @dataclass(frozen=True, kw_only=True)
 class DatabaseConfig:
+    """数据库配置；密码不参与对象的普通打印，字符集固定使用 utf8mb4。"""
     host: str
     port: int
     database: str
@@ -258,168 +627,88 @@ class AppSettings:
     log: LogConfig = field(default_factory=LogConfig)
 ```
 
-配置文件为 UTF-8 JSON。根对象只接受 `database`、`timezone_name` 和 `log`；各子对象也只接受已定义字段，以便把拼写错误在启动阶段转为明确错误。
-
-配置约束：
-
-- `database.port` 为 1～65535。
-- `database.charset` 固定为 `utf8mb4`。
-- `database.pool_size` 为 1～20。
-- `log.level` 为 `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL`。
-- `log.max_bytes` 为 1 字节～5 MiB，`backup_count` 为 0～3，日志文件总容量上限为 20 MiB。
-- `timezone_name` 必须是 `zoneinfo` 可识别的 IANA 时区名称。
-- 相对日志目录以配置文件所在目录为基准解析为绝对路径。
-- 环境变量 `DB_PASSWORD` 存在时覆盖配置文件中的数据库密码。
-
-### 5.2 `load_config`
-
+**读取配置**：
 ```python
-def load_config(config_path: str | None = None) -> AppSettings: ...
+# src/config.py
+def load_config(config_path: str | None = None) -> AppSettings:
+    """
+    读取配置文件
+
+    参数：
+    - config_path: JSON 文件路径；None 使用当前目录的 config.json
+    - database.password 必须是字符串并保留原值，允许为空
+    - DB_PASSWORD 变量存在时覆盖数据库密码，包括空字符串
+    - log.directory 为相对路径时，以配置文件所在目录为基准并转为绝对路径
+
+    返回：AppSettings
+
+    异常：
+    - InvalidInputError: 配置缺失或格式不合法
+    """
 ```
 
-- 输入：可选 JSON 路径；`None` 表示当前目录下的 `config.json`。
-- 返回：完成类型、范围、未知字段和时区校验的 `AppSettings`。
-- 异常：文件缺失、UTF-8 解码失败、JSON 语法错误、字段缺失或取值非法时抛 `InvalidInputError`。
-- 数据变更：无；读取配置不会创建目录、文件或数据库资源。
-
-### 5.3 主入口
-
+**解析启动参数**：
 ```python
-def parse_args(argv: list[str] | None = None) -> StartupOptions: ...
-def main(argv: list[str] | None = None) -> int: ...
+# main.py
+def parse_args(argv: list[str] | None = None) -> StartupOptions:
+    """
+    解析 --tui、--config 和 --help
+
+    参数：argv 为参数列表；None 使用进程参数
+    返回：StartupOptions
+    异常：SystemExit（帮助为 0，参数错误为 2）
+    """
 ```
 
-`parse_args` 接受 `--config PATH`、`--tui` 和 `--help`，返回 `StartupOptions`；帮助退出码为 0，参数错误退出码为 2。
-
-`main` 按以下顺序运行：
-
-1. 解析参数；
-2. 加载配置；
-3. 创建 `App`；
-4. 启动基础设施与业务服务；
-5. 运行默认 CLI 或可选 TUI；
-6. 关闭应用资源。
-
-正常退出、EOF 和 Ctrl+C 返回 0；配置、启动、运行或资源关闭失败返回 1。对终端输出项目异常的安全中文消息；未知异常输出固定提示，详细信息交给日志系统。
-
-### 5.4 `App` 生命周期
-
+**程序入口**：
 ```python
+# main.py
+def main(argv: list[str] | None = None) -> int:
+    """
+    加载配置、启动应用并在退出时关闭资源
+
+    参数：argv 为参数列表；None 使用进程参数
+    返回：正常退出为 0，启动、运行或资源关闭失败为 1，参数错误为 2
+    清理：先保留主流程结果和安全提示，再关闭资源；关闭失败追加安全提示。
+    """
+```
+
+**应用生命周期**：
+```python
+# src/app.py
 class App:
-    def __init__(self, settings: AppSettings) -> None: ...
-    def start(self) -> None: ...
-    def run(self, *, tui: bool = False) -> int: ...
-    def close(self) -> None: ...
-    def get_actor(self) -> Actor: ...
-    def set_actor(self, actor: Actor) -> None: ...
-    def logout(self) -> None: ...
+    def __init__(self, settings: AppSettings) -> None:
+        """保存应用配置。"""
+
+    def start(self) -> None:
+        """配置日志、检查数据库并装配服务；失败抛 GymError。"""
+
+    def run(self, *, tui: bool = False) -> int:
+        """运行 CLI 或可选 TUI，返回退出码。"""
+
+    def close(self) -> None:
+        """清除身份与界面引用并关闭资源；成功后清空引擎，允许重复调用。
+
+        异常：StorageError（数据库资源关闭失败）；保留引擎供再次 close。
+        关闭中断向调用方传播，资源归属同样保留。
+        """
+
+    def get_actor(self) -> Actor:
+        """取得当前身份；未登录抛 AuthenticationError。"""
+
+    def set_actor(self, actor: Actor) -> None:
+        """保存登录服务返回的身份。"""
+
+    def logout(self) -> None:
+        """清除身份和私有交互状态。"""
 ```
 
-#### `App.__init__`
 
-- 输入：已校验的 `AppSettings`。
-- 返回：新应用实例。
-- 异常：无业务异常。
-- 数据变更：只保存配置并初始化空资源引用。
+#### 2. 数据库维护
 
-#### `App.start`
-
-- 输入：无。
-- 返回：`None`。
-- 异常：重复启动抛 `InvalidState`；日志资源不可用抛 `ResourceError`；数据库连接失败抛 `StorageError`；结构不完整或版本不匹配抛 `InvalidState`。
-- 数据变更：配置日志，创建数据库引擎和会话工厂，检查数据库结构，创建 `ServiceBundle`、CLI Handlers 和 `GymCLI`。结构升级由数据库维护命令执行，普通启动只读检查结构。
-
-#### `App.run`
-
-- 输入：`tui` 指定交互模式。
-- 返回：界面进程退出码。
-- 异常：应用尚未启动抛 `InvalidState`；交互运行异常向主入口传播并由主入口转换。
-- 数据变更：业务数据变更由界面调用的服务方法完成；`App.run` 只管理交互流程。
-
-#### `App.close`
-
-- 输入：无。
-- 返回：`None`。
-- 异常：数据库连接池释放失败抛 `StorageError`；中断异常向主入口传播。
-- 数据变更：清除当前身份、界面和服务引用，关闭日志资源并释放数据库引擎。引擎成功释放后清空引用。
-
-#### `App.get_actor`
-
-- 输入：无。
-- 返回：当前 `Actor`。
-- 异常：未登录时抛 `AuthenticationError`。
-- 数据变更：无。
-
-#### `App.set_actor`
-
-- 输入：`AuthService.login` 返回的可信 `Actor`。
-- 返回：`None`。
-- 异常：无业务异常。
-- 数据变更：更新进程内当前身份，不写数据库。
-
-#### `App.logout`
-
-- 输入：无。
-- 返回：`None`。
-- 异常：无业务异常。
-- 数据变更：清除进程内当前身份和与登录会话关联的界面状态，不写数据库。
-
-## 6. 数据库连接与事务
-
-### 6.1 引擎和会话
-
+**维护命令的数据格式**：
 ```python
-CURRENT_SCHEMA_VERSION: int = 3
-
-def create_engine(settings: AppSettings) -> Engine: ...
-def create_session_factory(engine: Engine) -> Callable[[], Session]: ...
-def check_connection(engine: Engine) -> None: ...
-def check_schema(engine: Engine, required_version: int = 3) -> None: ...
-def close_engine(engine: Engine) -> None: ...
-```
-
-`create_engine` 使用 `mysql+pymysql` URL 对象创建连接池，连接字符串不会进入普通日志。连接池配置为：
-
-- `pool_size` 取配置值；
-- `max_overflow=0`；
-- 池等待和连接超时为 5 秒；
-- 读写超时为 30 秒；
-- `pool_pre_ping=True`；
-- 隔离级别为 `REPEATABLE READ`；
-- 新连接使用 UTC；
-- SQL 模式使用严格事务表模式并拒绝零日期。
-
-接口契约：
-
-- `create_engine` 输入 `AppSettings`，返回 `Engine`；创建失败抛 `StorageError`；只创建连接池对象。
-- `create_session_factory` 输入 `Engine`，返回每次调用产生独立 Session 的工厂；数据变更为无。
-- `check_connection` 执行 `SELECT 1`，成功返回 `None`，失败抛 `StorageError`；数据变更为无。
-- `check_schema` 读取必需表和最新结构版本，成功返回 `None`；缺表、缺版本或版本不符抛 `InvalidState`，查询失败抛 `StorageError`；数据变更为无。
-- `close_engine` 释放连接池并返回 `None`；失败抛 `StorageError`，EOF 和 KeyboardInterrupt 继续传播。
-
-### 6.2 事务接口
-
-```python
-def transaction(
-    session: Session,
-    *,
-    request_id: str | None = None,
-    record_id: int | None = None,
-) -> AbstractContextManager[Session]: ...
-```
-
-- 输入：当前业务 Session，以及提交结果未知时用于核实的请求编号或记录编号。
-- 返回：事务上下文管理器。
-- 异常：事务体或 `flush()` 失败时回滚并传播原异常；`commit()` 失败时回滚本地会话并抛 `OutcomeUnknownError`，携带核实编号。
-- 数据变更：上下文正常结束时先 `flush()` 再 `commit()`；异常路径回滚当前事务。
-
-带 `request_id` 的幂等写操作把原请求编号传入 `transaction`。对既有记录进行状态变更的操作可以传入 `record_id`。提交结果未知时，界面引导用户使用原编号查询结果。
-
-## 7. 数据库维护命令
-
-### 7.1 结果类型
-
-```python
+# src/cmd/db.py
 @dataclass(frozen=True, kw_only=True)
 class InitResult:
     tables_created: int
@@ -445,83 +734,176 @@ class DemoPasswordInput:
     admin_password: str = field(repr=False)
 ```
 
-### 7.2 `init_database`
-
+**初始化数据库**：
 ```python
-def init_database(connection: Connection) -> InitResult: ...
+# src/cmd/db.py
+def init_database(connection: Connection) -> InitResult:
+    """
+    按依赖顺序建立版本 1 结构，再应用迁移达到当前版本 2
+
+    参数：connection 为命令持有的专用数据库连接；结构命名锁、建表、迁移和版本记录使用同一连接
+    返回：InitResult
+    异常：
+    - InvalidState: 目标数据库非空
+    - InitializationError: 建表或后续迁移失败，携带已完成表名、失败步骤和结果未知标记
+    """
 ```
 
-- 输入：数据库命令持有的专用连接。
-- 返回：成功创建的表数和最终结构版本。
-- 异常：目标库已有对象或结构锁被占用时抛 `InvalidState`；脚本读取或校验失败抛 `StorageError`；执行失败抛 `InitializationError`，携带已确认完成的表、失败步骤和结果未知标记。
-- 数据变更：按依赖顺序执行初始结构脚本，写入初始版本，再顺序应用迁移链直至 `CURRENT_SCHEMA_VERSION`。
+初始化脚本只接受按表分组排列的 `CREATE TABLE` 和紧随其后的同表 `ALTER TABLE`；
+`CREATE TABLE` 的出现顺序必须与版本 1 的 18 张表一致，`ALTER TABLE` 只能补充已经创建表的
+注释和列定义。执行每条 DDL 后再进入下一步，`tables_created` 和 `completed_tables` 只按已收到
+成功响应的 `CREATE TABLE` 计算；后续 `ALTER TABLE` 失败时，`failed_step` 指向具体表及语句序号。
+版本 1 DDL 完成后记录版本 1，再继续应用版本 2 迁移；成功返回 `schema_version=2`。
 
-初始化使用基于数据库名摘要的 MySQL 命名锁。同一连接持有命名锁、执行 DDL 和写版本记录。初始脚本中的语句类型、表顺序和表名由命令白名单校验。
-
-### 7.3 `migrate_database`
-
+**迁移已有数据库**：
 ```python
-def migrate_database(connection: Connection) -> MigrationResult: ...
+# src/cmd/db.py
+def migrate_database(connection: Connection) -> MigrationResult:
+    """
+    将版本 1 数据库升级到当前版本 2
+
+    参数：connection 为命令持有的专用数据库连接
+    返回：MigrationResult（迁移前版本、当前版本、本次实际执行的 DDL 步骤数）
+    数据变更：增加 7 个查询索引、器械位置非空白 CHECK，并记录版本 2
+    异常：
+    - InvalidState: 版本记录缺失、版本不受支持或结构维护锁被占用
+    - MigrationError: 迁移失败，携带已确认步骤、失败步骤和结果未知标记
+    """
 ```
 
-- 输入：数据库命令持有的专用连接。
-- 返回：迁移前版本、目标版本和本次实际应用的 DDL 步骤数。
-- 异常：版本记录缺失、不支持的来源版本或结构锁被占用时抛 `InvalidState`；迁移失败抛 `MigrationError`，携带已确认步骤、失败步骤和结果未知标记。
-- 数据变更：从当前版本逐个应用后续 SQL 迁移，并在每个版本的结构步骤完成后写入对应版本记录。
+初始化与迁移共用 `cs2g3:schema:` 命名锁。版本 2 的每个步骤执行前通过
+`information_schema` 检查同名索引或 CHECK；MySQL DDL 部分生效后再次执行命令时，
+已有步骤计入已确认步骤，命令只应用剩余结构。全部八个结构步骤完成后才写入版本 2。
 
-每项迁移执行前通过 `information_schema` 检查目标对象。重复运行时跳过已确认存在且定义符合预期的对象，从未完成步骤继续。MySQL DDL 的隐式提交结果逐步记录，故障提示包含已确认步骤。
-
-### 7.4 `seed_demo_data`
-
+**生成演示数据**：
 ```python
+# src/cmd/db.py
 def seed_demo_data(
     session: Session,
     passwords: DemoPasswordInput,
     *,
     seed: int | None = None,
-) -> SeedResult: ...
+) -> SeedResult:
+    """
+    创建四个账号、一个会员档案和一个教练档案
+
+    参数：
+    - session: 调用方提供的事务会话，由调用方提交或回滚
+    - passwords: 四个账号的初始密码
+    - seed: 电话生成的随机种子；None 使用本次随机值
+
+    返回：SeedResult
+    异常：InvalidState（未初始化）、ConflictError（数据已存在）、
+          InvalidInputError（密码不合法）、StorageError（写入失败）
+    """
 ```
 
-- 输入：调用方事务 Session、四类演示账号的明文密码和可选随机种子。
-- 返回：创建的账号、会员档案和教练档案数量。
-- 异常：数据库未初始化抛 `InvalidState`；演示账号已存在或唯一约束冲突抛 `ConflictError`；密码非法抛 `InvalidInputError`；写入失败抛 `StorageError`。
-- 数据变更：创建会员、教练、前台和管理员账号，使用独立随机盐保存密码哈希，并创建一个会员档案和一个教练档案。提交或回滚由调用方事务完成。
+演示电话只写入会员档案；教练表没有电话字段，因此不生成或写入教练电话。
 
-### 7.5 数据库命令入口
-
+**数据库命令入口**：
 ```python
-def main(argv: list[str] | None = None) -> int: ...
+# src/cmd/db.py
+def main(argv: list[str] | None = None) -> int:
+    """
+    执行 init、migrate 或 seed 命令
+
+    参数：三个命令均支持 --config；seed 另接受 --seed
+    返回：成功为 0，失败为 1，参数错误为 2
+    """
 ```
 
-支持：
+`seed` 在写入演示数据前要求结构版本 2；版本 1 数据库先执行
+`python -m src.cmd.db migrate --config CONFIG_PATH`。
 
-- `python -m src.cmd.db init --config PATH`
-- `python -m src.cmd.db migrate --config PATH`
-- `python -m src.cmd.db seed --config PATH [--seed N]`
-
-成功返回 0，运行失败返回 1，参数错误返回 2。用户取消密码输入返回 0。`seed` 在读取四类密码时使用无回显输入并进行二次确认。
-
-## 8. 公共 CLI
-
-### 8.1 输入采集
-
-`src/ui/cli/prompts.py` 提供以下接口：
-
-- `prompt_password(label) -> str`：无回显读取原始密码；终端无法隐藏输入时抛 `ResourceError`。
-- `prompt_text(label, allow_empty=False) -> str`：去除首尾空白并校验必填。
-- `prompt_optional_text(label) -> str | None`：空输入返回 `None`。
-- `prompt_int(label, minimum=None, maximum=None) -> int`：读取十进制整数并校验闭区间。
-- `prompt_decimal(label, minimum=None) -> Decimal`：读取有限十进制数，最多两位小数。
-- `prompt_date(label) -> date`：读取 `YYYY-MM-DD` 日期。
-- `prompt_datetime(label, timezone_name) -> datetime`：读取门店时区的 `YYYY-MM-DD HH:MM`，拒绝夏令时重复或不存在的时刻，返回 UTC。
-- `prompt_confirm(label) -> bool`：读取确认结果。
-- `prompt_member_id() -> int`：读取正整数会员编号。
-
-文本、数字、日期和确认接口把 `q` 或 `Q` 解释为取消并抛 `InputCancelled`；密码输入保留其原始字符语义。EOF 和 Ctrl+C 向进程入口传播。
-
-### 8.2 菜单与操作调用
-
+**数据库连接与事务接口**：
 ```python
+# src/db/connection.py
+CURRENT_SCHEMA_VERSION = 2
+
+def check_connection(engine: Engine) -> None:
+    """执行只读连通性检查；失败抛 StorageError。"""
+
+def check_schema(engine: Engine, required_version: int) -> None:
+    """只读检查结构版本和 18 张必需表；版本过低时提示执行 migrate，不提交事务。"""
+
+def close_engine(engine: Engine) -> None:
+    """调用 dispose 释放连接池，成功返回 None。
+
+    异常：StorageError（关闭失败，固定安全提示，原异常作为 cause）；
+          EOFError、KeyboardInterrupt 向调用方传播。
+    调用方负责保留主流程错误，并单独报告关闭失败。
+    """
+
+def create_engine(settings: AppSettings) -> Engine:
+    """创建 MySQL 连接池；固定 REPEATABLE READ 隔离级别，连接超时 5 秒、
+    读写超时 30 秒、池等待 5 秒，溢出连接数为 0。"""
+
+def create_session_factory(engine: Engine) -> Callable[[], Session]:
+    """每次调用返回独立会话，由调用方关闭。"""
+
+def transaction(
+    session: Session,
+    *,
+    request_id: str | None = None,
+    record_id: int | None = None,
+) -> AbstractContextManager[Session]:
+    """先 flush 再提交；事务体或 flush 确定失败时回滚并保留原异常。
+
+    只有 commit 阶段失败才按结果未知抛 OutcomeUnknownError，并原样携带调用方提供的核实编号。
+    """
+```
+
+应用启动、`seed` 和 MySQL fixture 使用 `CURRENT_SCHEMA_VERSION` 检查同一当前版本；
+版本 2 迁移在执行前同时确认迁移链目标与该常量一致。
+
+带 `request_id` 的写操作必须把原请求编号传给 `transaction`；按既有记录修改的操作可以传
+`record_id`。事务体内的业务拒绝以及 `flush()` 发现的唯一约束、外键或 CHECK 约束失败
+原样抛出；只有 flush 成功后的 `commit()` 失败才转换为 `OutcomeUnknownError`，提交结果未知时
+不得自动重试。
+
+应用、数据库维护和测试命令在关闭前保存主流程结果；关闭失败或关闭中断时返回 1，
+保留已有安全提示并追加资源关闭提示。数据库写入的已提交结果保持原义。
+App 关闭失败后保留引擎，成功重试关闭后才允许重新启动；pytest 将 fixture 关闭失败记为清理错误。
+
+
+#### 3. 公共交互
+
+**密码输入**：
+```python
+# src/ui/cli/prompts.py
+def prompt_password(label: str) -> str:
+    """
+    不回显读取密码
+
+    参数：label 为输入提示
+    返回：原始密码字符串，q 和 Q 也作为密码字符
+    异常：EOFError、KeyboardInterrupt（结束输入）、ResourceError（无法隐藏输入）
+    """
+```
+
+**执行交互操作**：
+```python
+# src/ui/cli/app.py
+def invoke_action(
+    action: Callable[[], None],
+    *,
+    operation: str,
+    actor_id: int | None = None,
+    request_id: str | None = None,
+) -> ErrorResult:
+    """
+    执行操作并统一处理异常
+
+    参数：action 为交互函数，其余参数为操作名称、操作人和请求编号
+    返回：ErrorResult，保留错误处理返回的 request_id 和 record_id
+          成功或取消时 message=""、action="continue"
+    异常：EOFError、KeyboardInterrupt 传播到程序入口，清理后正常退出
+    """
+```
+
+**菜单数据格式**：
+```python
+# src/ui/cli/menus.py
 @dataclass(frozen=True, kw_only=True)
 class MenuItem:
     key: str
@@ -543,98 +925,4573 @@ class CliHandlers:
     report: ReportHandler
 ```
 
+**产品菜单**：
 ```python
-def invoke_action(
-    action: Callable[[], None],
-    *,
+# src/ui/cli/menus.py
+def product_menu(handler: ProductHandler) -> list[MenuItem]:
+    """
+    创建产品模块的菜单项
+
+    参数：handler 为产品交互处理器
+    返回：list[MenuItem]
+    """
+```
+
+**统一测试命令**：
+```python
+# src/cmd/test.py
+@dataclass(frozen=True, kw_only=True)
+class TestSettings:
+    test_database: bool
+    app: AppSettings
+
+def load_test_config(config_path: str) -> TestSettings:
+    """读取测试配置；根对象必须包含 test_database=true 和 app 配置。"""
+
+def main(argv: list[str] | None = None) -> int:
+    """运行 pytest；默认排除 mysql 标记，mysql/all 模式需显式测试配置。"""
+```
+
+`python -m src.cmd.test` 运行不依赖 MySQL 的测试；`mysql --config PATH` 运行 MySQL
+测试；`all --config PATH` 运行全部测试。测试命令自身的参数错误返回 2，测试或环境失败返回 1。
+
+测试库名以 `_test` 结尾，只使用 `TEST_DB_PASSWORD` 覆盖密码（包含空字符串）。
+控制连接持有 `cs2g3:test:` 加库名 SHA-256 摘要前 40 位的命名锁，等待时间为 0，
+保持到 pytest 子进程结束。子进程通过 `GYM_TEST_CONFIG`、`GYM_TEST_MODE` 和
+`GYM_TEST_LOCK_OWNER` 接收绝对配置路径、模式和持锁连接编号；fixture 核验持锁者。
+默认模式清除上述变量及两个数据库密码变量。MySQL 模式也清除 `DB_PASSWORD`。
+清理前核验测试标记、当前数据库名和对象集合；按固定逆外键顺序清理设计中的表。
+未知表或视图使测试失败。`empty_mysql_database` 提供空库；
+`initialized_mysql_database` 初始化并提供版本 2 结构，清除业务记录并保留版本行。
+
+**CLI 测试进程**：
+```python
+# tests/conftest.py：run_cli fixture 提供的调用接口
+def run_cli_process(
+    argv: list[str], *, env: dict[str, str] | None = None,
+    timeout: float = 120.0,
+) -> subprocess.CompletedProcess[str]:
+    """从仓库根目录使用当前解释器运行 main.py，发送 0\\n 并关闭标准输入。
+
+    返回：退出码、UTF-8 stdout 和 stderr；超时必须为有限正数。
+    异常：TimeoutExpired、KeyboardInterrupt 等在子进程回收后传播。
+    失败清理：terminate 后等待 5 秒；仍未结束则 kill，再 wait 确认退出。
+    所有退出路径关闭管道；测试在返回后检查登录菜单文字和退出码。
+    """
+```
+
+run_cli fixture 在自身结束时回收尚存进程；数据库测试同时依赖 run_cli 和数据库 fixture，
+数据库清理前再次回收本用例进程。pytest 运行在独立进程组；Windows 的 Ctrl+Break
+由测试钩子转换为 KeyboardInterrupt，POSIX 使用 SIGINT。测试父进程中断时，统一测试命令给 pytest 10 秒完成
+进程回收和 fixture 清理，超时后终止 pytest 进程树并确认结束，再释放测试库命名锁。
+主入口集成测试从测试配置解析 AppSettings，以临时普通应用 JSON 和子进程独立环境启动；
+密码经子进程 DB_PASSWORD 提供。只有登录菜单输出及退出码均正确，才算启动验收通过。
+
+**普通输入与分页**：
+```python
+# src/ui/cli/prompts.py
+def prompt_text(label: str, *, allow_empty: bool = False) -> str:
+    """去首尾空白；q/Q 抛 InputCancelled；非法空值提示重输。"""
+
+def prompt_optional_text(label: str) -> str | None:
+    """空输入返回 None；q/Q 取消。"""
+
+def prompt_int(label: str, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    """读取十进制整数，检查包含边界，非法时重输。"""
+
+def prompt_decimal(label: str, *, minimum: Decimal | None = None) -> Decimal:
+    """读取有限十进制数，最多两位小数，检查包含下界，非法时重输。"""
+
+def prompt_date(label: str) -> date:
+    """按 YYYY-MM-DD 读取有效日期。"""
+
+def prompt_datetime(label: str, *, timezone_name: str) -> datetime:
+    """按 YYYY-MM-DD HH:MM 读取门店时刻，返回 UTC；夏令时重复或不存在的时刻重输。"""
+
+def prompt_confirm(label: str) -> bool:
+    """y 返回 True，n 返回 False，q/Q 取消；其余重输。"""
+
+def prompt_member_id() -> int:
+    """读取正整数会员编号。"""
+
+# src/ui/cli/menus.py
+def browse_pages(fetch_page: Callable[[PageRequest], Page[T]], format_page: Callable[[Page[T]], str], *, page_size: int = 20) -> None:
+    """从第一页查询并展示；n/p 翻页、0 返回；每页 1～100 条，非法大小抛 InvalidInputError。"""
+
+# src/ui/cli/app.py
+class GymCLI:
+    def __init__(self, handlers: CliHandlers, get_actor: Callable[[], Actor], logout: Callable[[], None]) -> None:
+        """保存交互处理器及身份回调。"""
+
+    def run(self) -> int:
+        """运行登录、主菜单及子菜单；顶层 0 退出，子菜单 0 返回，退出登录清除身份。"""
+```
+
+**构造接口**：
+```python
+# src/services/attendance_service.py
+class AttendanceService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/auth_service.py
+class AuthService:
+    def __init__(
+        self, session_factory: Callable[[], Session], *, log_config: LogConfig,
+    ) -> None:
+        """保存数据库会话依赖和配置解析后的日志配置，由 App 统一装配。"""
+
+# src/services/booking_service.py
+class BookingService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/course_service.py
+class CourseService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/equipment_service.py
+class EquipmentService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/measurement_service.py
+class MeasurementService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/member_service.py
+class MemberService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/product_service.py
+class ProductService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/report_service.py
+class ReportService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/services/review_service.py
+class ReviewService:
+    def __init__(self, session_factory: Callable[[], Session], auth: AuthService) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/attendance.py
+class AttendanceHandler:
+    def __init__(self, service: AttendanceService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/auth.py
+class AuthHandler:
+    def __init__(self, service: AuthService, get_actor: Callable[[], Actor], set_actor: Callable[[Actor], None], logout: Callable[[], None], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/booking.py
+class BookingHandler:
+    def __init__(self, service: BookingService, get_actor: Callable[[], Actor], course_service: CourseService, product_service: ProductService, *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/course.py
+class CourseHandler:
+    def __init__(self, service: CourseService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/equipment.py
+class EquipmentHandler:
+    def __init__(self, service: EquipmentService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/measurement.py
+class MeasurementHandler:
+    def __init__(self, service: MeasurementService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/member.py
+class MemberHandler:
+    def __init__(self, service: MemberService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/product.py
+class ProductHandler:
+    def __init__(self, service: ProductService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/report.py
+class ReportHandler:
+    def __init__(self, service: ReportService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+
+# src/ui/cli/handlers/review.py
+class ReviewHandler:
+    def __init__(self, service: ReviewService, get_actor: Callable[[], Actor], *, timezone_name: str) -> None:
+        """保存依赖，由 App 统一装配。"""
+```
+
+**服务和处理器装配**：各构造函数保存现有参数，分别使用 `_session_factory`、`_auth`、
+`_service`、`_get_actor`、`_set_actor`、`_logout`、`_timezone_name` 等同名私有属性。
+`App.start` 检查版本 2，再创建固定的 `ServiceBundle` 和 `CliHandlers`。
+`App.close` 清除身份和界面引用、释放引擎；成功后清空引擎，失败时保留以便重试。
+部分启动和重复清理均可调用；主流程错误与关闭错误分别保留安全提示。
+菜单函数返回已交付操作的 `list[MenuItem]`，空列表显示待接入提示。
+账号管理面向管理员，报表面向管理员和前台，体测面向会员和教练；各服务继续验证实际权限。
+
+**格式化接口**：
+```python
+# src/ui/cli/formatters.py
+def format_account(view: AccountView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_member(member: MemberView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_card_product(view: CardProductView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_card(view: CardView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_sale(view: SaleView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_entry(view: EntryView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach(view: CoachView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_course(view: CourseView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_room(view: RoomView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session(view: SessionView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_booking(view: BookingView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_consumption(view: ConsumptionView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_review(view: ReviewView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_equipment(view: EquipmentView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_maintenance(view: MaintenanceView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurement(view: MeasurementView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurement_comparison(view: MeasurementComparison, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_payment(view: PaymentView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_revenue(view: RevenueView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_membership_stats(view: MembershipStats, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session_stats(view: SessionStatsView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach_stats(view: CoachStatsView, *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_accounts(page: Page[AccountView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_members(page: Page[MemberView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_products(page: Page[CardProductView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_cards(page: Page[CardView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coaches(page: Page[CoachView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_courses(page: Page[CourseView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_rooms(page: Page[RoomView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_sessions(page: Page[SessionView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_bookings(page: Page[BookingView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_reviews(page: Page[ReviewView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_equipment_list(page: Page[EquipmentView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_maintenance_records(page: Page[MaintenanceView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_measurements(page: Page[MeasurementView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_payments(page: Page[PaymentView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_session_stats_page(page: Page[SessionStatsView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+
+def format_coach_stats_page(page: Page[CoachStatsView], *, timezone_name: str) -> str:
+    """将固定数据格式转为中文文本，异常向调用方传播。"""
+```
+
+**格式化规则**：`src/ui/cli/formatters.py` 的详情函数显式读取对应 View 字段，
+分页函数接收 `Page[View]`，返回中文文本。金额两位小数，状态译成中文，空值显示“—”，
+时刻按 `timezone_name` 转换并显示时区偏移，日期原样显示。会员联系方式遮住中间四位；
+卡的 `valid_until` 标为“不含当日”，剩余和占用分别显示。分页显示页码、总数及空页提示。
+业务说明和备注中的控制字符转为可见转义文本。
+
+---
+
+## 账号与日志模块
+
+**负责人**：Jiafeng YE
+
+### 你要实现的功能
+
+#### 1. 账号管理
+
+**创建账号**：
+```python
+def create_account(self, actor: Actor, data: AccountInput) -> AccountView:
+    """
+    创建新账号
+    
+    参数：
+    - actor: 当前操作人（必须是管理员）
+    - data: AccountInput
+      - username: 用户名（3-50 位 ASCII 字母、数字或下划线）
+      - password: 密码（6-32 位 ASCII 字母、数字、下划线或短横线）
+      - role: 角色（"member" | "coach" | "receptionist" | "admin"）
+    
+    返回：AccountView（新账号信息，不含密码）
+    
+    可能的错误：
+    - 不是管理员 → PermissionDenied
+    - 用户名重复 → ConflictError
+    - 用户名或密码不符合格式 → InvalidInputError
+    
+    注意：
+    - 密码要用哈希算法加密后存储
+    - 用户名转小写并去首尾空白
+    - 密码按原值校验并哈希（不转小写、不去空白）
+    """
+```
+
+**登录**：
+```python
+def login(self, username: str, password: str) -> Actor:
+    """
+    用户登录
+    
+    参数：
+    - username: 用户名
+    - password: 密码（明文）
+    
+    返回：Actor
+      - account_id: 账号编号
+      - role: 角色
+      - member_id: 会员编号（如果是会员）
+      - coach_id: 教练编号（如果是教练）
+    
+    可能的错误：
+    - 用户名或密码错误 → AuthenticationError
+    - 账号已停用 → AuthenticationError
+    - 会员或教练账号尚未关联对应档案，或关联档案已停用 → AuthenticationError
+    
+    注意：
+    - 登录成功后，App 会保存 Actor
+    - 后续每次操作都会传入这个 Actor
+    - member 角色必须只有 member_id，coach 角色必须只有 coach_id；receptionist/admin
+      的两个档案编号都必须为 None，不满足时拒绝登录
+    """
+```
+
+**身份校验（内部方法）**：
+```python
+def verify_actor(self, session: Session, actor: Actor) -> Actor:
+    """
+    校验当前身份是否仍然有效
+    
+    用途：
+    - 每个业务操作开始时调用
+    - 检查账号是否被停用
+    - 检查档案关联是否变化、角色与档案是否匹配，以及档案是否被停用
+    - 在调用方事务内先锁定当前账号，再锁定其关联的会员或教练档案
+    
+    参数：
+    - session: 数据库会话（调用方提供）
+    - actor: 当前身份
+    
+    返回：Actor（最新的身份信息）
+    
+    可能的错误：
+    - 账号已停用 → AuthenticationError
+    - 权限变化、角色缺少对应档案或出现不应有的档案关联 → AuthenticationError
+    
+    注意：
+    - 这个方法会被其他所有服务调用
+    - 使用 AccountRepository.lock_many((actor.account_id,)) 锁定当前账号，
+      再以锁定当前读取得关联档案及最新 is_active；锁持有到调用方事务结束
+    - 账号停用或档案移交提交后，旧 Actor 的下一次复核必须失败，不能继续完成业务
+    - 涉及其他账号的 AuthService 操作先统一锁定全部账号，再执行同样的身份复核
+    - 不要在这里提交事务
+    """
+```
+
+**创建账号服务**：
+```python
+def __init__(
+    self, session_factory: Callable[[], Session], *, log_config: LogConfig,
+) -> None:
+    """
+    创建账号服务
+
+    参数：session_factory 为数据库会话工厂，log_config 为配置解析后的日志配置
+    返回：None
+    """
+```
+
+**查询账号**：
+```python
+def get_account(self, actor: Actor, account_id: int) -> AccountView:
+    """
+    查询账号详情
+
+    参数：actor 为管理员身份，account_id 为目标账号编号
+    返回：AccountView
+    异常：PermissionDenied（非管理员）、NotFoundError（账号不存在）
+    """
+
+def list_accounts(self, actor: Actor, query: NamedQuery) -> Page[AccountView]:
+    """
+    分页查询账号
+
+    参数：actor 为管理员身份，query 为用户名、启用状态和分页条件
+    返回：Page[AccountView]
+    排序：按 id 升序稳定分页
+    异常：PermissionDenied（非管理员）、InvalidInputError（查询条件不合法）
+    """
+```
+
+**启用/停用账号**：
+```python
+def set_account_active(self, actor: Actor, account_id: int, active: bool) -> AccountView:
+    """
+    修改账号启用状态
+
+    参数：actor 为管理员身份，active 为目标状态
+    返回：AccountView
+    业务规则：操作者与目标账号必须在同一次锁定当前读中按账号编号升序锁定；
+              停用管理员时，该锁定集合还包含全部启用管理员。取得全部账号锁后
+              再复核操作者、目标状态和启用管理员数量；只剩一人时拒绝停用。
+    异常：PermissionDenied（非管理员）、NotFoundError（账号不存在）、
+          InvalidState（停用最后一名启用管理员）
+    """
+```
+
+**关联账号与档案**：
+```python
+def link_profile(self, actor: Actor, account_id: int, data: AccountLinkInput) -> AccountView:
+    """
+    将指定会员或教练档案关联到目标账号
+
+    参数：actor 为管理员身份；data 中 member_id 和 coach_id 恰有一项非空
+    返回：目标账号的 AccountView
+    业务规则：
+    - 目标账号必须空闲且角色与档案类型匹配；同一关联重复提交时直接返回当前结果
+    - 先只读取得档案当前关联的旧账号，再把操作者、旧账号和目标账号去重，
+      通过一次锁定当前读按账号编号升序统一锁定，最后锁定档案
+    - 锁后发现档案关联已变化时回滚并重开事务，连续 3 次变化则抛 ConflictError
+    - 锁内把档案的 account_id 直接改为目标账号；旧账号随即解除关联，教练档案不能暂时写成 NULL
+    异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）、
+          InvalidState（角色不匹配）、ConflictError（目标账号已关联其他档案或关联持续变化）
+    """
+```
+
+**账号仓储接口**：
+```python
+# src/db/account_repo.py
+class AccountRepository:
+    def __init__(self, session: Session) -> None: ...
+    def get(self, account_id: int) -> Account | None: ...
+    def lock(self, account_id: int) -> Account | None: ...
+    def lock_many(self, account_ids: tuple[int, ...]) -> tuple[Account, ...]: ...
+    def lock_active_admins(
+        self, account_ids: tuple[int, ...],
+    ) -> tuple[Account, ...]: ...
+    def find_by_username(self, username: str) -> Account | None: ...
+    def get_actor(self, account_id: int) -> Actor | None: ...
+    def lock_profile_links(
+        self, account_id: int,
+    ) -> tuple[Member | None, Coach | None]: ...
+    def create(self, *, username: str, password_hash: str, role: Role) -> Account: ...
+    def list(self, query: NamedQuery) -> Page[AccountView]: ...
+    def set_active(self, account_id: int, active: bool) -> AccountView: ...
+```
+
+`get_actor` 只负责读取当前关联；`login` 和 `verify_actor` 必须按角色检查 Actor 不变量。
+`lock_many` 对传入编号去重，并在取得任何账号锁之前，用一条 `ORDER BY id FOR UPDATE`
+查询取得完整账号集合。`lock_active_admins` 在同一条锁定当前读中取得
+传入账号与全部启用管理员的并集。建立教练档案和移交档案时，服务先锁定账号，再调用 `lock_profile_links`
+分别以锁定当前读检查 `members.account_id` 和 `coaches.account_id`。返回值为完整的
+`(member, coach)` 锁定行，未关联项为 `None`；服务据此在锁内复核关联编号和 `is_active`。
+所有写入这两类关联的流程都先锁定同一账号行。`verify_actor` 按账号、会员、教练的固定顺序取得锁，
+并由调用方事务统一释放。
+未关联档案的 member/coach 账号可以由管理员继续配置，但不能登录或调用业务服务。服务层按
+`role` 明确传入会员或教练范围，不能把缺失的 `member_id`/`coach_id` 当成“查看全部”。
+
+**密码哈希与验证**：
+```python
+# src/utils/passwords.py
+def hash_password(password: str) -> str:
+    """
+    校验密码并生成带随机盐的哈希
+
+    参数：password 为原始密码，允许 ASCII 字母、数字、短横线和下划线，共 6-32 位
+    返回：包含算法、参数和盐的哈希字符串
+    异常：InvalidInputError（密码格式不合法）、ResourceError（哈希工具不可用）
+    """
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """
+    核对密码与存储的哈希
+
+    参数：password 为原始密码，password_hash 为已存储的哈希字符串
+    返回：匹配为 True，不匹配或密码格式不合法为 False
+    异常：StorageError（已存哈希损坏）、ResourceError（哈希工具不可用）
+    """
+```
+
+#### 2. 错误处理
+
+**统一处理入口**：
+```python
+def handle_error(
+    error: Exception, 
+    *, 
     operation: str,
     actor_id: int | None = None,
     request_id: str | None = None,
-) -> ErrorResult: ...
+    fatal: bool = False
+) -> ErrorResult:
+    """
+    统一处理所有模块的错误
+    
+    参数：
+    - error: 捕获到的异常
+    - operation: 操作名称（如 "member.create"）
+    - actor_id: 操作人编号
+    - request_id: 请求编号（如果有）
+    - fatal: 是否致命错误（如启动失败）
+    
+    返回：ErrorResult
+      - message: 中文提示（给用户看）
+      - action: 下一步动作（"continue" | "login" | "exit" | "verify"）
+      - request_id: 请求编号（如果有）
+      - record_id: 原记录编号（如果有）
+    
+    功能：
+    1. 根据异常类型生成中文提示
+    2. 决定下一步动作（继续、重新登录、退出、核实结果）
+    3. 记录脱敏日志
+    4. 返回处理结果（界面显示）
+    
+    注意：
+    - 不要在日志中记录密码、体测明细、完整联系方式
+    - 数据库错误不要暴露 SQL 或连接信息
+    """
 ```
 
-`invoke_action` 执行一个 Handler 操作。成功或主动取消返回 `ErrorResult(message="", action="continue")`；项目异常和未知异常交给 `handle_error`；EOF 和 Ctrl+C 继续传播。
-
-`GymCLI.run()` 负责登录菜单、角色模块菜单、子菜单、退出登录和程序退出。菜单可见性用于简化导航，服务层继续执行权限校验。`ErrorResult.action` 为：
-
-- `continue`：显示提示后留在当前交互层级；
-- `login`：清除当前身份并返回登录入口；
-- `exit`：结束 CLI 并返回失败退出码；
-- `verify`：显示请求编号或记录编号，引导用户核实结果。
-
-### 8.3 分页浏览
-
+**异常定义**：
 ```python
-def browse_pages(
-    fetch_page: Callable[[PageRequest], Page[T]],
-    format_page: Callable[[Page[T]], str],
+# src/errors/base.py
+class GymError(Exception):
+    """所有业务异常的基类"""
+    
+# src/errors/business.py
+class InvalidInputError(GymError): pass  # 输入不合法
+class AuthenticationError(GymError): pass  # 账号失效
+class PermissionDenied(GymError): pass  # 没权限
+class NotFoundError(GymError): pass  # 记录不存在
+class InvalidState(GymError): pass  # 状态不允许
+class ConflictError(GymError): pass  # 业务冲突
+
+# src/errors/storage.py
+class StorageError(GymError): pass  # 数据库失败
+class OutcomeUnknownError(StorageError):
+    """提交结果未知，携带核实所需的编号。"""
+
+    request_id: str | None
+    record_id: int | None
+
+    def __init__(
+        self, message: str, *, request_id: str | None = None,
+        record_id: int | None = None,
+    ) -> None:
+        """保存安全提示、原请求编号及原业务记录编号。"""
+
+class InitializationError(StorageError):
+    """初始化失败，携带已完成步骤和结果是否未知。"""
+
+    completed_tables: tuple[str, ...]
+    failed_step: str
+    outcome_unknown: bool
+
+    def __init__(
+        self, message: str, *, completed_tables: tuple[str, ...], failed_step: str,
+        outcome_unknown: bool = False,
+    ) -> None:
+        """保存安全提示、已完成表名、失败步骤和结果状态。
+
+        completed_tables 只记录已经收到 CREATE TABLE 成功响应的表。
+        """
+
+class MigrationError(StorageError):
+    """数据库迁移失败，携带已确认步骤和结果是否未知。"""
+
+    completed_steps: tuple[str, ...]
+    failed_step: str
+    outcome_unknown: bool
+
+    def __init__(
+        self, message: str, *, completed_steps: tuple[str, ...], failed_step: str,
+        outcome_unknown: bool = False,
+    ) -> None:
+        """保存安全提示、已确认迁移步骤、失败步骤和结果状态。"""
+
+# src/errors/business.py
+class ResourceError(GymError): pass  # 文件或工具不可用
+```
+
+**错误处理结果**：
+```python
+# src/errors/base.py
+ErrorAction = Literal["continue", "login", "exit", "verify"]
+
+@dataclass(frozen=True, kw_only=True)
+class ErrorResult:
+    message: str
+    action: ErrorAction
+    request_id: str | None = None
+    record_id: int | None = None
+```
+
+#### 3. 日志系统
+
+**日志记录**：
+```python
+def log_event(
+    level: int,
     *,
-    page_size: int = 20,
-) -> None: ...
+    operation: str,
+    outcome: str,
+    actor_id: int | None = None,
+    request_id: str | None = None,
+    result_id: int | None = None,
+    error: Exception | None = None,
+    attendance_change: AttendanceChange | None = None,
+) -> bool:
+    """
+    记录操作日志
+    
+    参数：
+    - level: 日志级别（logging.INFO / WARNING / ERROR）
+    - operation: 操作名称（如 "member.create"）
+    - outcome: 结果（"success" | "rejected" | "failed" | "unknown"）
+    - actor_id: 操作人编号
+    - request_id: 请求编号
+    - result_id: 结果记录编号
+    - error: 异常对象（如果有）
+    - attendance_change: 更正签到前后的状态；其他操作为 None
+    
+    返回：是否记录成功
+    
+    格式：UTF-8 单行 JSON
+    {
+      "timestamp": "2026-09-20T10:30:00.123456+00:00",
+      "level": "INFO",
+      "operation": "member.create",
+      "outcome": "success",
+      "actor_id": 1,
+      "request_id": "123e4567-e89b-12d3-a456-426614174000",
+      "result_id": 42,
+      "error_type": null,
+      "error_message": null,
+      "attendance_change": null,
+      "frames": [],
+      "truncated": false
+    }
+    
+    注意：
+    - 单条日志最大 16 KiB，超长截断并标记
+    - 不记录敏感信息（密码、体测、联系方式）
+    - GymError 只记录经统一错误处理确认可展示的安全信息
+    - 其他异常的 error_message 固定为 None，不写入 str(error)
+    - 只记录堆栈的文件名、行号、函数名
+    """
 ```
 
-- 输入：分页查询回调、分页格式化回调和每页条数。
-- 返回：`None`。
-- 异常：非法页大小抛 `InvalidInputError`；主动取消抛 `InputCancelled`；查询异常向操作边界传播。
-- 数据变更：无。
+**配置与关闭日志**：
+```python
+# src/utils/logging_config.py
+def configure_logging(settings: AppSettings) -> None:
+    """
+    按应用配置建立日志处理器
 
-首次进入从第 1 页查询；`n` 和 `p` 前后翻页，`0` 返回。筛选条件变化后创建新的浏览过程并回到第 1 页。
+    参数：settings.log 提供目录、级别、单文件字节上限和备份数
+    返回：None
+    异常：ResourceError（日志资源无法初始化）
+    """
 
-### 8.4 格式化
+def close_logging() -> None:
+    """
+    刷新并关闭日志资源
 
-详情 Formatter 接收一个明确 View，列表 Formatter 接收 `Page[View]`，均返回中文 `str`。统一展示规则：
+    返回：None；允许重复调用，关闭失败向标准错误输出安全提示
+    """
+```
 
-- 金额显示两位小数；
-- 状态映射为中文；
-- 空值显示“—”；
-- 时刻转换为门店时区并显示偏移；
-- 纯日期按 ISO 日期显示；
-- 会员电话遮住中间四位；
-- 来自业务数据的控制字符转换为可见转义文本；
-- 分页结果显示当前页、总数和空页提示。
+**日志轮转**：
+- 日志文件：`settings.log.directory / "app.log"`
+- 单文件大小：`settings.log.max_bytes`，默认 5 MiB
+- 备份数：`settings.log.backup_count`，默认 3 份，加当前文件共 4 份
+- 重新配置时按新的备份数参与查询，超出当前保留范围的旧备份不进入快照
 
-## 9. 账号、身份与权限
+**日志查询**：
+```python
+def query_logs(
+    self,
+    actor: Actor,
+    query: LogQuery,
+    *,
+    snapshot: LogSnapshot,
+) -> Page[LogEntry]:
+    """
+    查询日志记录
+    
+    参数：
+    - actor: 当前操作人（必须是管理员）
+    - query: 查询条件（LogQuery 对象，包含时间范围、日志级别、操作名称等）
+    - snapshot: 本次浏览的快照，筛选和翻页沿用同一份
+    
+    返回：Page[LogEntry]
+    
+    异常：
+    - PermissionDenied: 非管理员调用时抛出
 
-### 9.1 公共类型
+    注意：
+    - 按时间倒序分页；时间相同时按文件中的记录顺序倒序
+    - 刷新时重新取得快照并回到第一页
+    - 每次查询重新校验管理员身份
+    """
+```
+
+**取得日志快照**：
+```python
+# AuthService
+def open_log_snapshot(self, actor: Actor) -> LogSnapshot:
+    """
+    取得一次日志浏览的快照
+
+    参数：actor 为管理员身份；日志目录和备份数取自构造时传入的 LogConfig
+    返回：LogSnapshot
+    异常：PermissionDenied（非管理员）、ResourceError（读取失败）
+    """
+```
+
+**读取与筛选日志文件**：
+```python
+# src/utils/logging_config.py
+def read_log_snapshot(directory: Path, *, backup_count: int) -> LogSnapshot:
+    """
+    读取当前日志和配置数量的备份
+
+    参数：directory 为日志目录，backup_count 为本次配置允许读取的备份数
+    返回：LogSnapshot；无日志时 entries 为空，损坏行计入 skipped_lines
+    异常：ResourceError（文件或文件锁不可用）
+    注意：读取当前文件和 `app.log.1` 至 `app.log.<backup_count>`；
+          文件锁内复制内容，释放锁后解析
+    """
+
+def query_log_snapshot(snapshot: LogSnapshot, query: LogQuery) -> Page[LogEntry]:
+    """
+    筛选快照中的记录并分页
+
+    参数：snapshot 为固定快照，query 为筛选条件和分页参数
+    返回：Page[LogEntry]
+    异常：InvalidInputError（查询条件不合法）
+    """
+```
+
+**日志查询交互**：
+```python
+# src/ui/cli/handlers/auth.py：AuthHandler
+def query_logs(self) -> None:
+    """
+    组织管理员日志查询、筛选、翻页、详情和刷新
+
+    返回：None
+    异常：由 CLI 的 invoke_action 统一处理
+    """
+```
+
+**本机日志命令入口**：
+```python
+# src/cmd/logs.py
+def main(argv: list[str] | None = None) -> int:
+    """
+    从配置目录读取日志并进入查询交互
+
+    参数：支持 --config，按本机文件读取权限访问日志
+    返回：正常退出为 0，读取失败为 1，参数错误为 2
+    """
+```
+
+### 与其他模块的对接
+
+**其他服务调用你的方法**：
+```python
+# 在 MemberService 中
+from src.db.connection import transaction
+
+class MemberService:
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth  # 注入 AuthService
+    
+    def create_member(self, actor, data):
+        with self._session_factory() as session:
+            with transaction(session):
+                # 1. 调用你的身份校验
+                current = self._auth.verify_actor(session, actor)
+                
+                # 2. 检查权限
+                if current.role not in ("admin", "receptionist"):
+                    raise PermissionDenied("只有管理员和前台能建档")
+                
+                # 3. 执行业务逻辑
+                ...
+```
+
+**界面调用你的错误处理**：
+```python
+# 在 CLI 主循环中
+from src.errors import handle_error
+
+try:
+    handler.create_member()  # 调用某个操作
+except Exception as error:
+    result = handle_error(
+        error,
+        operation="member.create",
+        actor_id=current_user.account_id
+    )
+    print(result.message)  # 显示中文提示
+    
+    if result.action == "exit":
+        sys.exit(1)  # 退出程序
+    elif result.action == "login":
+        clear_session()  # 重新登录
+```
+
+### 测试要点
+
+1. **密码哈希**：
+   - 同一密码生成不同哈希（每次随机盐）
+   - 正确密码可以验证通过
+   - 错误密码验证失败
+
+2. **身份校验**：
+   - 账号停用后，verify_actor 抛出 AuthenticationError
+   - 档案解绑后，verify_actor 抛出 AuthenticationError
+   - verify_actor 持有账号与关联档案锁时，并发停用或移交必须等待
+   - 停用或移交先提交时，旧 Actor 等待后复核失败，不能执行后续业务写入
+   - 账号停用和档案移交按 account_id 升序统一锁定操作者、旧账号和目标账号
+
+3. **错误处理**：
+   - InvalidInputError → action="continue", 警告级别
+   - AuthenticationError → action="login", 警告级别
+   - StorageError → action="exit", 错误级别
+   - OutcomeUnknownError → action="verify", 错误级别
+
+4. **日志系统**：
+   - 轮转：文件超过 `settings.log.max_bytes` 后自动切换，并保留
+     `settings.log.backup_count` 份备份
+   - 脱敏：日志中不含密码、SQL、完整电话
+   - 并发：多进程同时写入不会互相覆盖
+   - 查询：按时间、级别、操作筛选正确
+
+---
+
+## 会员与产品模块
+
+**负责人**：Xingzhou PENG
+
+### 你要实现的功能
+
+#### 1. 会员档案管理
+
+**建档**：
+```python
+def create_member(self, actor: Actor, data: MemberInput) -> MemberView:
+    """
+    创建会员档案
+    
+    权限：管理员、前台
+    
+    参数：
+    - actor: 当前操作人
+    - data: MemberInput
+      - name: 姓名（1-100 字，去首尾空白）
+      - phone: 电话（字段必须传入；值可以为空，非空时为 1-32 位）
+    
+    返回：MemberView
+      - id: 会员编号
+      - account_id: 关联账号编号（可能为空）
+      - name: 姓名
+      - phone: 电话
+      - is_active: 是否启用
+    
+    业务规则：
+    - 姓名不能为空
+    - 电话可以为空（None），但不能是空字符串
+    - 初始状态为启用
+    - 可以先建档后开账号
+    """
+```
+
+**查询单个会员**：
+```python
+def get_member(self, actor: Actor, member_id: int) -> MemberView:
+    """
+    查询会员详情
+    
+    权限：
+    - 会员：只能查自己
+    - 管理员、前台：可以查所有人
+    
+    参数：
+    - actor: 当前操作人
+    - member_id: 会员编号
+    
+    返回：MemberView
+    
+    可能的错误：
+    - 会员不存在 → NotFoundError
+    - 会员查询别人 → NotFoundError（不暴露是否存在）
+    """
+```
+
+**查询会员列表**：
+```python
+def list_members(self, actor: Actor, query: MemberQuery) -> Page[MemberView]:
+    """
+    分页查询会员列表
+    
+    权限：
+    - 会员：只能查自己（返回单条记录的列表）
+    - 管理员、前台：可以查所有人
+    
+    参数：
+    - actor: 当前操作人
+    - query: MemberQuery
+      - member_id: 会员编号（可选，精确匹配）
+      - keyword: 关键词（可选，姓名模糊匹配）
+      - is_active: 是否启用（可选，True/False/None）
+      - paging: 分页参数（页码、每页条数）
+    
+    返回：Page[MemberView]
+      - items: 会员列表
+      - total: 总数
+      - page: 当前页码
+      - page_size: 每页条数
+    
+    注意：
+    - 空结果返回 Page(items=[], total=0)
+    - 不要返回 None 或裸列表
+    - 按 id 升序稳定排序后再分页
+    """
+```
+
+**修改会员**：
+```python
+def update_member(
+    self, 
+    actor: Actor, 
+    member_id: int, 
+    data: MemberInput
+) -> MemberView:
+    """
+    修改会员档案
+    
+    权限：管理员、前台
+    
+    参数：
+    - actor: 当前操作人
+    - member_id: 会员编号
+    - data: MemberInput（完整提交，phone=None 表示清空）
+    
+    返回：MemberView（修改后的会员信息）
+    
+    注意：
+    - 必须提交完整数据（姓名 + 电话）
+    - phone=None 表示清空电话
+    - 不能只传 {"name": "新姓名"} 而不传 phone
+    """
+```
+
+**启用/停用会员**：
+```python
+def set_member_active(
+    self, 
+    actor: Actor, 
+    member_id: int, 
+    active: bool
+) -> MemberView:
+    """
+    启用或停用会员
+    
+    权限：管理员
+    
+    参数：
+    - actor: 当前操作人
+    - member_id: 会员编号
+    - active: True=启用, False=停用
+    
+    返回：MemberView（修改后的会员信息）
+    
+    业务规则：
+    - 停用事务先锁定会员，并在锁内重新检查会员状态
+    - 停用前检查是否存在 reserved 或 checked_in 的预约
+    - 如果有，先处理完再停用
+    - 办卡、预约、入场和体测录入也先锁定同一会员并复核启用状态
+    - 停用后不能登录、不能预约、不能入场
+    """
+```
+
+**会员停用所需的预约查询接口**：
+```python
+# src/db/booking_repo.py
+class BookingRepository:
+    def has_open_for_member(self, member_id: int) -> bool:
+        """在会员已加锁的事务中，以锁定当前读检查 reserved/checked_in 预约；不提交事务。"""
+```
+
+该查询必须使用 `SELECT ... FOR UPDATE` 或等价锁定当前读，不能沿用事务先前普通查询建立的
+REPEATABLE READ 快照。这样，停用操作等待会员锁后能看到等待期间刚提交的预约。
+
+#### 2. 产品销售
+
+**创建产品服务**：
+```python
+def __init__(
+    self, session_factory: Callable[[], Session], auth: AuthService,
+    *, timezone_name: str,
+) -> None:
+    """接收会话工厂、身份校验服务和 App 提供的门店时区。"""
+```
+
+**创建产品**：
+```python
+def create_product(self, actor: Actor, terms: CardTerms) -> CardProductView:
+    """
+    创建私教课产品或入场次卡
+
+    参数：actor 为管理员身份，terms 为完整产品规则
+    返回：CardProductView
+    业务规则：新产品的 is_active=True
+    异常：PermissionDenied（非管理员）、InvalidInputError（产品规则不合法）
+    """
+```
+
+**修改产品**：
+```python
+def update_product(self, actor: Actor, product_id: int, terms: CardTerms) -> CardProductView:
+    """
+    修改产品的后续销售规则
+
+    参数：actor 为管理员身份，product_id 为卡产品编号（card_products.id），terms 为完整新规则
+    返回：CardProductView；已售产品继续使用购买时的快照
+    业务规则：更新 terms 不改变当前 is_active
+    异常：PermissionDenied（非管理员）、NotFoundError（产品不存在）、
+          InvalidInputError（产品规则不合法）
+    """
+```
+
+**查询产品详情**：
+```python
+def get_product(self, actor: Actor, product_id: int) -> CardProductView:
+    """
+    查询产品规则
+
+    参数：actor 为当前身份，product_id 为卡产品编号（card_products.id）
+    权限：管理员可查看启用和停用产品；其他角色只能查看启用产品
+    返回：CardProductView
+    异常：NotFoundError（产品不存在或不可见）
+    """
+```
+
+**启用/停用产品**：
+```python
+def set_product_active(self, actor: Actor, product_id: int, active: bool) -> CardProductView:
+    """
+    停售或恢复产品
+
+    参数：actor 为管理员身份，active 为目标状态
+    返回：CardProductView；保留已售产品的权益
+    异常：PermissionDenied（非管理员）、NotFoundError（产品不存在）
+    """
+```
+
+**查询会员产品详情**：
+```python
+def get_card(self, actor: Actor, membership_id: int) -> CardView:
+    """
+    查询会员购买后的权益
+
+    参数：actor 为当前身份，membership_id 为已售会员卡编号（memberships.id）
+    权限：会员只能查本人；前台、管理员可查全部；教练无权调用
+    返回：CardView
+    异常：PermissionDenied（教练角色）、NotFoundError（记录不存在或会员越权）
+    """
+```
+
+**销售产品（核心业务）**：
+```python
+def sell_product(
+    self, 
+    actor: Actor, 
+    data: SaleInput, 
+    request_id: str
+) -> SaleView:
+    """
+    销售产品（私教课或次卡）
+    
+    权限：管理员、前台
+    
+    参数：
+    - actor: 当前操作人
+    - data: SaleInput
+      - member_id: 会员编号
+      - product_id: 卡产品编号（card_products.id）
+      - method: 收款方式（"cash" | "card" | "transfer"）
+    - request_id: 请求编号（UUID，防重复提交）
+    
+    返回：SaleView
+      - card: CardView（已售会员卡记录）
+      - payment: PaymentView（收款记录）
+    
+    业务规则（重要）：
+    1. 锁定会员，再锁定卡产品
+    2. 在锁内重新检查会员存在且启用、卡产品存在且启用
+    3. 私教课产品使用锁定当前读取得该会员未作废期限卡的最大 valid_until
+    4. 上述读取完成后生成一次当前时刻及对应门店日期；以锁内读取的价格和权益生成快照，
+       收款 paid_at 使用同一当前时刻；停售与销售并发时，锁内复核结果决定本次是否允许销售
+    5. 计算生效日期：
+       - 私教课产品：valid_from = max(门店今天, 最大 valid_until)；无记录时取门店今天
+       - 次卡：valid_from = 门店今天
+    6. 创建已售会员卡快照（memberships 表）
+       - 新售权益的 status="active"
+    7. 记录收款（payments 表）
+    8. 记录操作（operation_records 表）
+    9. 一起提交
+    
+    并发控制：
+    - 锁定顺序为会员 → 卡产品 → 既有已售会员卡（FOR UPDATE）
+    - 在锁内读取最新到期日、卡产品启用状态、售价和权益快照
+    
+    防重复：
+    - 相同 request_id + actor_id + 相同输入 → 返回原结果
+    - 相同 request_id + 不同输入 → ConflictError
+    
+    可能的错误：
+    - 会员不存在/停用 → NotFoundError / InvalidState
+    - 产品不存在/停用 → NotFoundError / InvalidState
+    - 请求冲突 → ConflictError
+    - 提交结果未知 → OutcomeUnknownError（带 request_id）
+    
+    提交结果未知的处理：
+    - 捕获提交阶段的数据库异常
+    - 抛出 OutcomeUnknownError，带上 request_id
+    - 界面提示用户按 request_id 核实结果
+    - 不要自动重试（可能重复收款）
+    """
+```
+
+**核实销售结果**：
+```python
+def get_sale_by_request(self, actor: Actor, request_id: str) -> SaleView:
+    """
+    按请求编号核实销售结果
+    
+    用途：提交结果未知时，用户按原 request_id 查询
+    
+    权限：只能查询自己的操作记录
+    
+    参数：
+    - actor: 当前操作人
+    - request_id: 原请求编号
+    
+    返回：SaleView
+    
+    可能的错误：
+    - 操作记录不存在 → NotFoundError（可能确实失败了）
+    - 操作记录属于别人 → NotFoundError（不暴露）
+    - operation 不是 "sell_product" → ConflictError
+    """
+```
+
+**查询产品列表**：
+```python
+def list_products(self, actor: Actor, query: NamedQuery) -> Page[CardProductView]:
+    """
+    查询产品列表
+    
+    权限：所有角色都可以查询启用产品；管理员可以查询全部产品
+    
+    参数：
+    - actor: 当前操作人
+    - query: NamedQuery
+      - keyword: 产品名称模糊匹配
+      - is_active: 是否启用
+      - paging: 分页参数
+    
+    返回：Page[CardProductView]
+    
+    注意：
+    - 会员、教练、前台的查询条件不能放宽到停用产品
+    - `get_product` 使用相同的可见范围，不能通过编号直接查看停用产品
+    - 按 id 升序稳定排序后再分页
+    """
+```
+
+**查询会员的产品**：
+```python
+def list_cards(self, actor: Actor, query: CardQuery) -> Page[CardView]:
+    """
+    查询会员持有的产品
+    
+    权限：
+    - 会员：只能查自己的
+    - 管理员、前台：可以查所有人的
+    
+    参数：
+    - actor: 当前操作人
+    - query: CardQuery
+      - member_id: 会员编号
+      - status: 状态（"active" | "void"）
+      - valid_on: 在指定日期有效
+      - expires_before: 在指定日期前到期
+      - private_lessons_at_most: 可用课节不超过
+      - paging: 分页参数
+    
+    返回：Page[CardView]
+    
+    业务规则：
+    - valid_on: 
+      - 私教课产品：valid_from <= 指定日期 < valid_until
+      - 次卡：valid_from <= 指定日期 且 remaining_accesses > 0
+    - expires_before:
+      - 只筛选有到期日的产品（排除次卡）
+      - valid_until < 指定日期
+    - private_lessons_at_most:
+      - 只筛选私教课产品（排除次卡）
+      - remaining_private_lessons - reserved_private_lessons <= 阈值
+    
+    用途示例：
+    - 查询快到期的产品：valid_on=今天, expires_before=7天后
+    - 查询课节不足的产品：valid_on=今天, private_lessons_at_most=3
+    - 结果按 id 升序稳定排序后再分页
+    """
+```
+
+**续购日期查询接口**：
+```python
+# src/db/membership_repo.py
+class MembershipRepository:
+    def latest_term_end(self, member_id: int) -> date | None:
+        """在会员已加锁的事务中锁定当前期限卡并读取最大 valid_until；无记录返回 None。"""
+```
+
+`latest_term_end` 使用锁定当前读，排除 `status="void"` 的记录。销售服务先完成该读取，
+再生成唯一的锁后当前时刻，并按 `max(门店今天, latest_term_end 或 门店今天)` 计算生效日。
+
+#### 3. 门禁入场
+
+**查询今日入场记录**：
+```python
+def get_today_entry(self, actor: Actor, member_id: int) -> EntryView:
+    """
+    查询会员今日入场记录
+    
+    权限：
+    - 会员：只能查自己
+    - 管理员、前台：可以查所有人
+    
+    参数：
+    - actor: 当前操作人
+    - member_id: 会员编号
+    
+    返回：EntryView
+      - id: 入场记录编号
+      - member_id: 会员编号
+      - membership_id: 使用的已售会员卡编号（memberships.id）
+      - business_date: 门店日期
+      - entered_at: 登记时刻
+      - accesses_used: 扣除次数（0 或 1）
+      - operator_id: 操作人编号
+    
+    可能的错误：
+    - 今天没有入场记录 → NotFoundError
+    - 会员已停用 → InvalidState
+    """
+```
+
+**登记入场**：
+```python
+def register_entry(
+    self, 
+    actor: Actor, 
+    data: EntryInput, 
+    request_id: str
+) -> EntryView:
+    """
+    登记会员入场
+    
+    权限：
+    - 会员：只能登记自己
+    - 管理员、前台：可以代登记
+    
+    参数：
+    - actor: 当前操作人
+    - data: EntryInput
+      - member_id: 会员编号
+      - membership_id: 使用的已售会员卡编号（memberships.id）
+    - request_id: 请求编号（防重复）
+    
+    返回：EntryView
+    
+    业务规则：
+    1. 按请求编号查询幂等记录；同一编号先按全局防重复规则核对操作者和输入
+    2. 检查会员存在且启用，并确认操作者有权为该会员办理入场
+    3. 锁定会员，再锁定所选已售会员卡，并在锁内重新确认会员状态及卡属于该会员
+    4. 全部锁取得后生成一次当前时刻，并由它转换门店日期；entered_at 使用同一时刻
+    5. 查询当日入场记录：
+       - 如果已有记录 → 在同一事务登记本次新的 request_id 到原 EntryView.id，再返回原记录；不检查本次卡的有效期或余额，也不再扣次
+       - 如果没有记录 → 继续
+    6. 首次入场检查产品有效性：
+       - 私教课产品：检查日期在有效期内
+       - 次卡：检查剩余次数 > 0
+    7. 扣除次数：
+       - 私教课产品：accesses_used = 0
+       - 次卡：accesses_used = 1，更新 remaining_accesses
+    8. 创建入场记录
+    9. 记录操作
+    10. 一起提交
+    
+    防重复：
+    - 同一天同一会员只能有一条入场记录
+    - 原请求编号和新的请求编号都必须映射到同一结果；跨午夜使用已登记的请求编号不得再次扣次
+    
+    可能的错误：
+    - 产品不属于该会员 → PermissionDenied（即使当天已有入场记录也要检查归属）
+    - 当天尚无入场记录且产品已作废 → InvalidState
+    - 当天尚无入场记录且私教课产品日期不在有效期内 → CardNotEligible
+    - 当天尚无入场记录且次卡余额不足 → InsufficientCredits
+    """
+```
+
+**核实入场结果**：
+```python
+def get_entry_by_request(self, actor: Actor, request_id: str) -> EntryView:
+    """
+    按原入场请求编号查询结果
+
+    参数：actor 为当前身份，request_id 为本人原 register_entry 请求编号
+    返回：原日期的 EntryView，查询不扣次
+    异常：NotFoundError（无记录或不可见）、ConflictError（操作类型不符）
+    """
+```
+
+### 与其他模块的对接
+
+**你需要调用的方法**：
+```python
+# 调用账号模块
+from src.db.connection import transaction
+from src.services.auth_service import AuthService
+
+class MemberService:
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
+    
+    def create_member(self, actor, data):
+        with self._session_factory() as session:
+            with transaction(session):
+                # 1. 校验身份
+                self._auth.verify_actor(session, actor)
+                
+                # 2. 检查权限
+                if actor.role not in ("admin", "receptionist"):
+                    raise PermissionDenied("...")
+                
+                # 3. 执行业务
+                ...
+
+# 调用报表模块（收款）
+from src.db.connection import transaction
+from src.db.payment_repo import PaymentRepository
+
+class ProductService:
+    def sell_product(self, actor, data, request_id):
+        with self._session_factory() as session:
+            with transaction(session, request_id=request_id):
+                # ... 锁定会员、卡产品，并锁定当前读既有已售会员卡 ...
+                now_utc = datetime.now(UTC)
+                # 由 now_utc 转换门店日期并创建已售会员卡快照
+                
+                # 记录收款
+                payment_repo = PaymentRepository(session)
+                payment = payment_repo.create(
+                    membership_id=card.id,
+                    member_id=data.member_id,
+                    amount=card.terms.price,
+                    method=data.method,
+                    paid_at=now_utc,
+                    operator_id=actor.account_id
+                )
+                
+                return SaleView(card=card, payment=payment)
+```
+
+**其他模块调用你的方法**：
+```python
+# 预约模块在自己的事务中读取会员卡
+from src.db.connection import transaction
+from src.db.membership_repo import MembershipRepository
+
+class BookingService:
+    def __init__(self, session_factory, auth: AuthService, *, timezone_name: str):
+        self._session_factory = session_factory
+        self._auth = auth
+    
+    def book(self, actor, data, request_id):
+        with self._session_factory() as session:
+            with transaction(session, request_id=request_id):
+                # 卡、预约及课次均在此事务中通过对应 Repository 检查和锁定
+                card_repo = MembershipRepository(session)
+                card = card_repo.lock(data.membership_id)
+                if card is None or card.remaining_private_lessons <= card.reserved_private_lessons:
+                    raise InsufficientCredits("课节余额不足")
+        
+        # 继续预约流程...
+```
+
+### 测试要点
+
+1. **会员档案**：
+   - 创建：姓名为空 → InvalidInputError
+   - 查询：会员查询别人 → NotFoundError
+   - 列表：会员只能看到自己（items 只有一条）
+   - 停用：有未结束预约 → InvalidState
+
+2. **产品销售**：
+   - 续购接续：
+     - 9/20 买 20 节课（到 10/19）
+     - 9/25 再买 64 节课（从 10/20 开始）
+   - 次卡：今天生效，不接续
+   - 并发：两个前台同时卖给同一会员 → 一个成功，一个等待
+   - 防重复：相同 request_id → 返回原结果
+   - 提交未知：模拟数据库断线 → OutcomeUnknownError
+
+3. **门禁入场**：
+   - 同一天重复入场 → 返回原记录，不再扣次
+   - 次卡余额不足 → InsufficientCredits
+   - 私教课产品过期 → CardNotEligible
+   - 跨午夜：
+     - 昨天入场用 request_id=A
+     - 今天真实入场用 request_id=B（新记录）
+     - 今天重试 request_id=A → 返回昨天的记录
+
+---
+
+## 课程与预约模块
+
+**负责人**：Weijie ZHOU & Yuxi ZHU
+
+### 你们要实现的功能
+
+这个模块分为两部分：
+- **Weijie ZHOU**：教练管理、课程模板、场地管理、排课
+- **共同负责**：预约、取消预约
+
+#### 1. 教练管理（Weijie ZHOU）
+
+**建立教练档案**：
+```python
+def create_coach(self, actor: Actor, data: CoachInput) -> CoachView:
+    """
+    创建教练档案
+    
+    权限：管理员
+    
+    参数：
+    - actor: 当前操作人
+    - data: CoachInput
+      - account_id: 教练账号编号（必须先创建账号）
+      - name: 姓名（1-100 字）
+      - specialty: 专长（0-200 字，可以为空字符串）
+    
+    返回：CoachView
+      - id: 教练编号
+      - account_id: 账号编号
+      - name: 姓名
+      - specialty: 专长
+      - is_active: 是否启用
+    
+    业务规则：
+    - 必须先有教练账号（role="coach"）
+    - 一个账号只能绑定一个教练档案
+    - 账号已绑定其他档案 → ConflictError
+    - 先锁定目标账号，再调用 `AccountRepository.lock_profile_links`
+      以锁定当前读复核会员/教练档案关联；与档案移交共用同一账号锁
+    """
+```
+
+**查询教练**：
+```python
+def get_coach(self, actor: Actor, coach_id: int) -> CoachView:
+    """查询教练详情"""
+    
+def list_coaches(self, actor: Actor, query: NamedQuery) -> Page[CoachView]:
+    """
+    查询教练列表
+    
+    权限：所有角色都可以查询
+    
+    参数：
+    - query: NamedQuery
+      - keyword: 姓名模糊匹配
+      - is_active: 是否启用
+      - paging: 分页参数
+    
+    返回：Page[CoachView]
+    排序：按 id 升序稳定分页
+    """
+```
+
+**修改教练**：
+```python
+def update_coach(
+    self, 
+    actor: Actor, 
+    coach_id: int, 
+    data: CoachUpdateInput
+) -> CoachView:
+    """
+    修改教练资料
+    
+    权限：管理员
+    
+    参数：
+    - data: CoachUpdateInput
+      - name: 姓名
+      - specialty: 专长
+    
+    注意：不能修改账号绑定，只能修改资料
+    """
+```
+
+**启用/停用教练**：
+```python
+def set_coach_active(self, actor: Actor, coach_id: int, active: bool) -> CoachView:
+    """
+    修改教练的启用状态
+
+    参数：actor 为管理员身份，coach_id 为目标编号，active 为目标状态
+    返回：CoachView
+    业务规则：停用前锁定教练并检查是否存在 status="scheduled" 的课次；存在时抛 InvalidState。
+    排课同样先锁教练，因此停用检查与新排课串行。
+    异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）、InvalidState（仍有未结束课次）
+    """
+```
+
+#### 2. 课程模板管理（Weijie ZHOU）
+
+**什么是课程模板**：
+- "瑜伽入门"是一个课程模板
+- 模板定义课程名称、时长
+- 排课时选择模板，填入教练、场地、具体时间
+
+**创建课程模板**：
+```python
+def create_course(self, actor: Actor, data: CourseInput) -> CourseView:
+    """
+    创建课程模板
+    
+    权限：管理员
+    
+    参数：
+    - data: CourseInput
+      - name: 课程名称（1-100 字）
+      - kind: 课程类型（固定为 "private"，私教课）
+      - duration_minutes: 时长（1-150 分钟）
+    
+    返回：CourseView
+      - id: 课程编号
+      - name: 课程名称
+      - kind: 课程类型
+      - duration_minutes: 时长
+      - is_active: 是否启用
+    
+    业务规则：
+    - 当前只做私教课，kind 只能是 "private"
+    - 时长最长 150 分钟（2.5 小时）
+    - 其他值 → InvalidInputError
+    """
+```
+
+**查询和修改课程模板**：
+```python
+def get_course(self, actor: Actor, course_id: int) -> CourseView:
+    """查询课程模板详情"""
+    
+def list_courses(self, actor: Actor, query: CourseQuery) -> Page[CourseView]:
+    """
+    查询课程模板列表
+    
+    参数：
+    - query: CourseQuery
+      - keyword: 课程名称模糊匹配
+      - kind: 课程类型（固定为 "private"）
+      - is_active: 是否启用
+      - paging: 分页参数
+    排序：按 id 升序稳定分页
+    """
+    
+def update_course(
+    self, 
+    actor: Actor, 
+    course_id: int, 
+    data: CourseInput
+) -> CourseView:
+    """
+    修改课程模板
+    
+    权限：管理员
+    
+    注意：课程类型固定传入 `"private"`。名称和时长只影响新排的课次，
+          已排课次保留排课时的名称、类型和起止时刻。
+    """
+```
+
+**启用/停用课程模板**：
+```python
+def set_course_active(self, actor: Actor, course_id: int, active: bool) -> CourseView:
+    """
+    修改课程模板的启用状态
+
+    参数：actor 为管理员身份，course_id 为目标编号，active 为目标状态
+    返回：CourseView
+    异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）
+    """
+```
+
+#### 3. 场地管理（Weijie ZHOU）
+
+**创建场地**：
+```python
+def create_room(self, actor: Actor, data: RoomInput) -> RoomView:
+    """
+    创建场地
+    
+    权限：管理员
+    
+    参数：
+    - data: RoomInput
+      - name: 场地名称（1-100 字，如 "A 教室"）
+      - capacity: 容量（正整数）
+    
+    返回：RoomView
+      - id: 场地编号
+      - name: 场地名称
+      - capacity: 容量
+      - is_active: 是否启用
+    
+    业务规则：
+    - 私教课固定容量为 1
+    - 场地容量必须 >= 1
+    """
+```
+
+**查询和修改场地**：
+```python
+def get_room(self, actor: Actor, room_id: int) -> RoomView:
+    """查询场地基础详情；已排课时段由 list_sessions 按 room_id 和日期窗口分页查询。"""
+    
+def list_rooms(self, actor: Actor, query: NamedQuery) -> Page[RoomView]:
+    """查询场地列表，按 id 升序稳定分页。"""
+    
+def update_room(self, actor: Actor, room_id: int, data: RoomInput) -> RoomView:
+    """修改场地名称和容量。
+
+    锁定场地后更新；容量至少为 1，能够容纳当前固定容量为 1 的私教课。
+    返回：RoomView；参数或容量不合法抛 InvalidInputError。
+    """
+```
+
+CLI 的场地详情流程先调用 `get_room` 显示容量和状态，再把用户输入的门店日期转换为该日
+`[00:00, 次日 00:00)` 的 UTC `DateWindow`，调用 `list_sessions` 并固定
+`room_id=该场地编号`。排课时段沿用 `Page[SessionView]`，不在 `RoomView` 中嵌入长度不定的列表。
+日期为空时只显示基础详情；日期非法时不调用服务。
+
+**启用/停用场地**：
+```python
+def set_room_active(self, actor: Actor, room_id: int, active: bool) -> RoomView:
+    """
+    修改场地的启用状态
+
+    参数：actor 为管理员身份，room_id 为目标编号，active 为目标状态
+    返回：RoomView
+    业务规则：停用前锁定场地并检查是否存在 status="scheduled" 的课次；存在时抛 InvalidState。
+    排课也会锁定同一场地，因此停用检查与新排课串行。
+    异常：PermissionDenied（非管理员）、NotFoundError（记录不存在）、InvalidState（仍有未结束课次）
+    """
+```
+
+**停用教练和场地所需的课次查询接口**：
+```python
+# src/db/course_repo.py
+class SessionRepository:
+    def has_scheduled_for_coach(self, coach_id: int) -> bool:
+        """锁定当前读检查教练是否仍有 scheduled 课次；调用方已锁定教练，不提交事务。"""
+
+    def has_scheduled_for_room(self, room_id: int) -> bool:
+        """锁定当前读检查场地是否仍有 scheduled 课次；调用方已锁定场地，不提交事务。"""
+```
+
+这两个查询必须使用 `SELECT ... FOR UPDATE` 或等价锁定当前读。`set_coach_active` 和
+`set_room_active` 在等待父资源行锁前可能已经执行过普通查询；锁定当前读才能看到等待期间
+刚提交的排课，避免停用仍有课次的教练或场地。
+
+#### 4. 排课（Weijie ZHOU）
+
+**什么是排课**：
+- 选择课程模板（如"瑜伽入门"）
+- 指定教练、场地、具体时间
+- 生成一个具体的课次（如"周三 14:00-15:00，张教练，A 教室"）
+
+**排课（创建课次）**：
+```python
+def create_session(
+    self, 
+    actor: Actor, 
+    data: SessionInput, 
+    request_id: str
+) -> SessionView:
+    """
+    排课（创建课次）
+    
+    权限：管理员
+    
+    参数：
+    - data: SessionInput
+      - course_id: 课程模板编号
+      - coach_id: 教练编号
+      - room_id: 场地编号
+      - starts_at: 开始时间（带时区的时刻）
+      - ends_at: 结束时间（带时区的时刻）
+      - capacity: 容量（私教课固定为 1）
+    - request_id: 请求编号（防重复）
+    
+    返回：SessionView
+      - id: 课次编号
+      - course_id: 课程模板编号
+      - course_name: 课程名称（排课时的快照）
+      - kind: 课程类型（"private"）
+      - coach_id: 教练编号
+      - coach_name: 教练姓名（当前档案）
+      - room_id: 场地编号
+      - room_name: 场地名称（当前档案）
+      - starts_at: 开始时间
+      - ends_at: 结束时间
+      - capacity: 容量
+      - occupied_count: 已预约人数
+      - available_count: 当前未被非取消预约占用的名额；非 scheduled 课次固定为 0
+      - status: 状态（"scheduled" | "completed" | "cancelled"）
+    
+    业务规则：
+    1. 校验开始、结束时刻均带时区且 starts_at < ends_at
+    2. 锁定教练 → 课程模板 → 场地，并在锁内重新读取三者
+    3. 检查教练、课程模板、场地均存在且启用；全部锁取得后生成当前时刻，
+       首次排课必须 starts_at > 当前时刻，不接受历史课次
+    4. 检查时长：ends_at - starts_at 必须等于锁内课程模板时长，且不超过 150 分钟
+    5. 检查教练在 [starts_at, ends_at) 是否有其他课次；有冲突 → ScheduleConflict
+    6. 检查场地在 [starts_at, ends_at) 是否有其他课次；有冲突 → ScheduleConflict
+    7. 私教课容量必须为 1
+    8. 使用锁内课程模板名称和类型保存课次快照
+    9. 初始状态为 "scheduled"
+    10. 记录操作并提交
+    
+    时间区间规则：
+    - [starts_at, ends_at) 前含后不含
+    - 14:00-15:00 和 15:00-16:00 不冲突
+    - 14:00-15:00 和 14:30-15:30 冲突
+    
+    并发控制：
+    - 锁顺序：教练 → 课程模板 → 场地（同类资源按 ID 排序）
+    - 在锁内重查启用状态、模板时长和模板快照，并以锁定当前读读取最新冲突课次
+    
+    可能的错误：
+    - 教练或场地时间冲突 → ScheduleConflict
+    - 时长超过 150 分钟 → InvalidInputError
+    - 容量不为 1 → InvalidInputError
+    """
+```
+
+**查询课次**：
+```python
+def get_session(self, actor: Actor, session_id: int) -> SessionView:
+    """
+    查询课次详情
+    
+    权限：
+    - 会员：只能查看 status="scheduled" 且 starts_at 晚于本次查询时刻的公开详情；
+      已预约课次的后续状态通过 BookingService.get_booking/list_bookings 查询
+    - 教练：可以看自己的课次
+    - 管理员、前台：可以看所有课次
+    
+    异常：记录不存在或不在当前角色可见范围时均抛 NotFoundError。
+    注意：会员查询时不显示其他会员的预约信息。
+    """
+    
+def list_sessions(self, actor: Actor, query: SessionQuery) -> Page[SessionView]:
+    """
+    查询课次列表
+    
+    参数：
+    - query: SessionQuery
+      - window: 时间范围（按 starts_at 筛选）
+      - kind: 课程类型（固定为 "private"）
+      - coach_id: 教练编号
+      - room_id: 场地编号
+      - status: 状态
+      - paging: 分页参数
+
+    权限与强制范围：
+    - 会员：服务固定 status="scheduled"，并只返回 starts_at 晚于服务生成的同一查询时刻的课次
+    - 教练：服务强制 scope_coach_id=当前教练编号，query.coach_id 不能扩大范围
+    - 前台、管理员：可按 query 查询全部课次
+    
+    用途示例：
+    - 教练查看自己的课表：coach_id=自己的编号
+    - 查看场地安排：room_id=场地编号
+    - 会员查看可预约课程：返回范围已限定为未开课的 scheduled 课次，
+      页面展示 available_count；预约时由 BookingService 在锁内再次检查余位
+    排序：按 starts_at 升序、id 升序稳定分页
+    """
+```
+
+`SessionView.available_count` 是查询时的容量投影，不代替预约资格判断。对于
+`completed` 或 `cancelled` 课次它固定为 0；`scheduled` 课次按
+`max(capacity - occupied_count, 0)` 计算。会员查询范围另外排除已开课课次。
+
+**课次列表的数据范围接口**：
+```python
+# src/db/course_repo.py
+class SessionRepository:
+    def list(
+        self,
+        query: SessionQuery,
+        *,
+        scope_coach_id: int | None,
+        bookable_after: datetime | None,
+    ) -> Page[SessionView]:
+        """
+        在 SQL 计数和分页前应用服务给定的权限范围。
+
+        教练查询传 scope_coach_id；会员查询传 bookable_after，并强制
+        status="scheduled" 且 starts_at > bookable_after；前台和管理员两项都传 None。
+        两个范围参数不能同时非空。
+        """
+```
+
+**核实课次操作结果**：
+```python
+def get_session_by_request(self, actor: Actor, request_id: str) -> SessionView:
+    """
+    按原排课或取消课次请求核实结果
+
+    参数：actor 为当前身份，request_id 为本人原请求编号
+    返回：当前 SessionView
+    异常：NotFoundError（无记录或不可见）、ConflictError（操作类型不符）
+    """
+```
+
+**取消课次**：
+```python
+def cancel_session(
+    self, 
+    actor: Actor, 
+    session_id: int, 
+    request_id: str
+) -> SessionView:
+    """
+    取消课次
+    
+    权限：管理员
+    
+    参数：
+    - session_id: 课次编号
+    - request_id: 请求编号（防重复）
+    
+    返回：SessionView（status 变为 "cancelled"）
+    
+    业务规则：
+    1. 先重新校验账号和管理员权限，再按 request_id 核对 actor_id、operation 和 payload_hash；
+       全部相同则返回原结果，任一不同则抛 ConflictError
+    2. 步骤 1 在独立短只读事务中完成；未命中旧请求时，同一只读事务取得该课次
+       reserved/checked_in 预约的候选快照，固定保存
+       (booking_id, member_id, membership_id, status)，然后关闭会话
+    3. 使用新的写事务，按 member_id 升序锁定候选会员，再锁定课次
+    4. 写事务取得课次锁后，第一次普通一致性读重新取得同一候选快照：
+       - 快照变化 → 回滚整个写事务，从步骤 2 重新开始
+       - 快照不变 → 继续；写事务在本次重读前不得执行普通一致性读
+    5. 按 membership_id 升序锁定已售会员卡，再按 booking_id 升序锁定预约
+    6. 全部写锁取得后重新生成当前时刻，最终确认课次仍为 "scheduled"、
+       当前时刻仍早于 starts_at，并复核预约关联、状态和占用量
+    7. 释放课节占用，把预约和课次改为 "cancelled"，记录操作并提交
+    
+    并发控制：
+    - 锁顺序：会员 → 课次 → 已售会员卡 → 预约；同类资源按 ID 升序
+    - 取得课次锁后，新预约会等待并在锁后看到 cancelled；已经先提交的新预约会使快照变化
+    - 快照变化只允许在提交前有界重开事务；连续 3 次变化 → ConflictError，提示稍后重试
+    - 发生提交结果未知时不得自动重试，必须按原 request_id 核实
+    - 每次因候选变化重开写事务时都重新取得锁内当前时刻；若等待期间到达 starts_at，
+      本次取消返回 InvalidState，不写 operation_records，原 request_id 和 payload_hash 保持不变
+    
+    可能的错误：
+    - 已完成，或不同请求再次取消已取消课次 → InvalidState
+    - 预约列表持续变化 → ConflictError
+    """
+```
+
+**取消课次所需的预约查询接口**：
+```python
+# src/db/booking_repo.py
+class BookingRepository:
+    def list_open_for_session(self, session_id: int) -> tuple[Booking, ...]:
+        """按 member_id、membership_id、id 升序读取 reserved/checked_in 预约；不加锁、不提交。"""
+```
+
+排课、停用教练和停用场地时，分别调用 `SessionRepository.has_conflict`、
+`has_scheduled_for_coach` 和 `has_scheduled_for_room`。这些方法都在相应父资源已加锁后
+执行锁定当前读，不能使用事务先前普通
+查询建立的 REPEATABLE READ 快照。
+
+**完成课次**：
+```python
+def complete_session(self, actor: Actor, session_id: int) -> SessionView:
+    """
+    完成课次（收尾）
+    
+    权限：管理员、教练（本课教练）
+    
+    用途：
+    - 课次结束后，所有预约都已处理（消课或缺席）
+    - 调用此方法将课次状态改为 "completed"
+    
+    业务规则：
+    - 已为 "completed" 时返回当前 SessionView
+    - 首次完成先锁定课次，在锁内确认必须是 "scheduled"；已取消 → InvalidState
+    - 取得课次锁后生成当前时刻，必须满足 now >= ends_at；未到结束时间 → InvalidState
+    - 必须没有 reserved/checked_in 预约
+    - 有未处理预约 → InvalidState
+    """
+```
+
+完成课次在取得课次锁后调用 `BookingRepository.has_open_for_session(session_id)`；该方法使用
+锁定当前读检查 reserved/checked_in 预约，不能使用事务在等待课次锁前建立的一致性读快照。
 
 ```python
+# src/db/booking_repo.py
+class BookingRepository:
+    def has_open_for_session(self, session_id: int) -> bool:
+        """课次已加锁后，以锁定当前读检查 reserved/checked_in 预约；不提交事务。"""
+```
+
+#### 5. 预约（Weijie ZHOU & Yuxi ZHU 共同负责）
+
+**预约课次**：
+```python
+def book(
+    self, 
+    actor: Actor, 
+    data: BookingInput, 
+    request_id: str
+) -> BookingView:
+    """
+    预约课次
+    
+    权限：
+    - 会员：只能预约自己的
+    - 前台、管理员：可以代预约
+    
+    参数：
+    - data: BookingInput
+      - member_id: 会员编号
+      - session_id: 课次编号
+      - membership_id: 已售会员卡编号（memberships.id，提供课节和日期资格）
+    - request_id: 请求编号（防重复）
+    
+    返回：BookingView
+      - id: 预约编号
+      - member_id: 会员编号
+      - member_name: 会员姓名
+      - membership_id: 已售会员卡编号
+      - session: SessionView（课次详情）
+      - status: 状态（"reserved"）
+      - booked_at: 预约时间
+      - checked_in_at: 签到时间（null）
+      - closed_at: 关闭时间（null）
+    
+    业务规则：
+    1. 锁定：会员 → 课次 → 已售会员卡（同类资源按 ID 排序）
+    2. 在锁内重新检查会员启用状态、课次和已售会员卡是否存在且可用，并确认卡属于该会员
+    3. 检查课次状态和预约时机：
+       - 必须是 "scheduled"
+       - 全部锁取得后生成同一个当前时刻，必须早于 starts_at；历史课次或已经开课 → InvalidState
+       - 已完成/已取消 → InvalidState
+    4. 检查会员是否已预约此课次：
+       - 以锁定当前读查询同会员、同课次的预约
+       - 已有预约（任何状态） → ConflictError
+       - 已取消预约也保留历史，不能恢复或重新占用；如需再次上课必须选择其他课次
+    5. 检查容量：
+       - 以锁定当前读查询该课次的非取消预约记录并计数
+       - 已满员 → CapacityExceeded
+    6. 检查会员时间冲突：
+       - 以锁定当前读查询会员在 [starts_at, ends_at) 是否有其他非取消预约
+       - 有冲突 → ScheduleConflict
+    7. 检查产品类型：
+       - 次卡不能预约私教课 → CardNotEligible
+    8. 检查产品日期资格：
+       - 课次开始时间转为门店日期
+       - 检查 valid_from <= 上课日期 < valid_until
+       - 未来生效的产品可以提前预约其有效期内的课
+       - 不符合 → CardNotEligible
+    9. 检查课节余额：
+        - available_private_lessons = remaining - reserved
+        - 余额 <= 0 → InsufficientCredits
+    10. 占用课节：
+        - reserved_private_lessons += 1
+    11. 创建预约：
+        - status = "reserved"
+        - booked_at = 当前时刻
+    12. 记录操作
+    13. 提交
+    
+    并发控制：
+    - 必须在锁内以当前读重新读取重复预约、容量、时间冲突和余额；
+      不能使用等待课次或会员锁前建立的快照
+    - 两人同时预约最后一个名额 → 一个成功，一个等待
+    
+    防重复：
+    - 相同 request_id + actor_id + 相同输入 → 返回原预约
+    - 相同 request_id + 不同输入 → ConflictError
+    
+    可能的错误：
+    - 次卡预约私教课 → CardNotEligible
+    - 产品日期不符合 → CardNotEligible
+    - 课节不足 → InsufficientCredits
+    - 时间冲突 → ScheduleConflict
+    - 满员 → CapacityExceeded
+    - 已有预约 → ConflictError
+    """
+```
+
+**核实预约操作结果**：
+```python
+def get_booking_by_request(self, actor: Actor, request_id: str) -> BookingView:
+    """
+    按原预约或取消预约请求核实结果
+
+    参数：actor 为当前身份，request_id 为本人原请求编号
+    返回：当前 BookingView
+    异常：NotFoundError（无记录或不可见）、ConflictError（操作类型不符）
+    """
+```
+
+**取消预约**：
+```python
+def cancel(
+    self, 
+    actor: Actor, 
+    booking_id: int, 
+    request_id: str
+) -> BookingView:
+    """
+    取消预约
+    
+    权限：
+    - 会员：只能取消自己的
+    - 前台、管理员：可以代取消
+    
+    参数：
+    - booking_id: 预约编号
+    - request_id: 请求编号（防重复）
+    
+    返回：BookingView（status 变为 "cancelled"）
+    
+    业务规则：
+    1. 检查预约存在
+    2. 检查权限（会员只能取消自己的）
+    3. 锁定：会员 → 已售会员卡 → 预约
+    4. 检查预约状态：
+       - 已签到/已完成/已取消 → InvalidState
+       - 首次取消必须是 "reserved"
+    5. 检查时间：
+       - 全部锁取得后生成当前时刻，只能在课次开始前取消
+       - 已到开课时间 → InvalidState
+    6. 释放课节占用：
+       - reserved_private_lessons -= 1
+    7. 更新预约状态：
+       - status = "cancelled"
+       - closed_at = 当前时刻
+    8. 记录操作
+    9. 提交
+    
+    防重复：
+    - 相同 request_id → 返回原预约状态
+    
+    可能的错误：
+    - 已到开课时间 → InvalidState
+    - 已签到/已完成 → InvalidState
+    """
+```
+
+**查询预约**：
+```python
+def get_booking(self, actor: Actor, booking_id: int) -> BookingView:
+    """
+    查询预约详情
+    
+    权限：
+    - 会员：只能查自己的
+    - 教练：可以查自己课次的预约
+    - 前台、管理员：可以查所有预约
+    """
+    
+def list_bookings(self, actor: Actor, query: BookingQuery) -> Page[BookingView]:
+    """
+    查询预约列表
+    
+    参数：
+    - query: BookingQuery
+      - member_id: 会员编号
+      - session_id: 课次编号
+      - window: 时间范围（按课次 starts_at 筛选）
+      - status: 预约状态
+      - paging: 分页参数
+    
+    权限：
+    - 会员：只能查自己的预约
+    - 教练：可以查自己课次的学员名单
+    - 前台、管理员：可以查所有预约
+    
+    用途示例：
+    - 会员查看我的预约：member_id=自己的编号
+    - 教练查看学员名单：session_id=课次编号
+    - 前台查询某会员的预约记录：member_id=会员编号
+    排序：按关联课次 starts_at 降序、预约 id 降序稳定分页
+    """
+```
+
+### 与其他模块的对接
+
+**你们需要调用的方法**：
+```python
+# 调用账号模块
+from src.db.connection import transaction
+from src.services.auth_service import AuthService
+
+class CourseService:
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
+    
+    def create_coach(self, actor, data):
+        with self._session_factory() as session:
+            with transaction(session):
+                # 1. 校验身份
+                self._auth.verify_actor(session, actor)
+                
+                # 2. 检查权限
+                if actor.role != "admin":
+                    raise PermissionDenied("...")
+                
+                # 3. 执行业务
+                ...
+
+# 在预约事务中通过数据访问层锁定会员卡
+from src.db.connection import transaction
+from src.db.membership_repo import MembershipRepository
+
+class BookingService:
+    def __init__(self, session_factory, auth: AuthService, *, timezone_name: str):
+        self._session_factory = session_factory
+        self._auth = auth
+    
+    def book(self, actor, data, request_id):
+        with self._session_factory() as session:
+            with transaction(session, request_id=request_id):
+                # 在当前事务中锁定预约使用的会员卡
+                card_repo = MembershipRepository(session)
+                card = card_repo.lock(data.membership_id)
+                
+                # 检查课节余额
+                if card is None or card.remaining_private_lessons <= card.reserved_private_lessons:
+                    raise InsufficientCredits("...")
+                
+                # 继续预约...
+```
+
+**其他模块调用你们的方法**：
+```python
+# 签到模块在自己的事务中读取预约
+from src.db.connection import transaction
+from src.db.booking_repo import BookingRepository
+
+class AttendanceService:
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
+    
+    def check_in(self, actor, booking_id):
+        with self._session_factory() as session:
+            with transaction(session, record_id=booking_id):
+                booking = BookingRepository(session).lock(booking_id)
+                # 先处理已签到重试，再校验首次签到状态和课次开始时间
+```
+
+### 测试要点
+
+1. **教练管理**：
+   - 创建：账号已绑定其他档案 → ConflictError
+   - 停用：有未完成课次 → InvalidState
+
+2. **排课**：
+   - 教练时间冲突：14:00-15:00 和 14:30-15:30 → ScheduleConflict
+   - 场地时间冲突：同上
+   - 时长超过 150 分钟 → InvalidInputError
+   - 并发排课：两个管理员同时给同一教练排同一时间 → 一个成功，一个失败
+
+3. **预约**：
+   - 次卡预约私教课 → CardNotEligible
+   - 产品过期 → CardNotEligible
+   - 未来生效产品预约其有效期内的课 → 成功
+   - 课节不足 → InsufficientCredits
+   - 时间冲突：已预约 14:00-15:00，再约 14:30-15:30 → ScheduleConflict
+   - 满员：最后一个名额被抢 → CapacityExceeded
+   - 并发预约：两人同时预约最后一个名额 → 一个成功，一个失败
+   - 防重复：相同 request_id → 返回原预约
+
+4. **取消预约**：
+   - 已到开课时间 → InvalidState
+   - 已签到 → InvalidState
+   - 取消后课节占用释放
+
+5. **取消课次**：
+   - 有预约的课次 → 所有预约都被取消
+   - 课节占用都被释放
+   - 并发：取消课次和新预约同时发生 → 正确处理
+
+---
+
+## 签到与评价模块
+
+**负责人**：Yihao QIAN（签到、评价）；Lvzhen ZHOU（消课、缺席处理）
+
+### 你要实现的功能
+
+#### 1. 签到
+
+**会员签到**：
+```python
+def check_in(self, actor: Actor, booking_id: int) -> BookingView:
+    """
+    会员签到
+    
+    权限：
+    - 会员：只能给自己签到
+    - 本课教练、前台、管理员：可以代签到
+    
+    参数：
+    - booking_id: 预约编号
+    
+    返回：BookingView（status 变为 "checked_in"）
+    
+    业务规则：
+    1. 检查预约存在
+    2. 检查权限（会员只能签到自己的；本课教练、前台和管理员可代签到）
+    3. 锁定预约，并在取得锁后生成当前时刻
+    4. 检查预约状态：
+       - 已签到 → 返回当前 BookingView
+       - 已完成/已取消/已缺席 → InvalidState
+       - 首次签到必须是 "reserved"
+    5. 检查时间：
+       - 必须从课次开始时间起才能签到
+       - 早于开课时间 → InvalidState
+    6. 更新预约状态：
+       - status = "checked_in"
+       - checked_in_at = 当前时刻
+    7. 提交
+    
+    重复签到：
+    - 已签到 → 返回当前 BookingView
+    - 不再修改，不报错
+    
+    可能的错误：
+    - 早于开课时间 → InvalidState
+    - 已取消 → InvalidState
+    """
+```
+
+**教练更正签到（补签或取消签到）**：
+```python
+def correct_attendance(
+    self, 
+    actor: Actor, 
+    booking_id: int, 
+    present: bool
+) -> BookingView:
+    """
+    教练更正签到情况
+    
+    权限：
+    - 教练：只能更正自己课次的预约
+    - 管理员：可以更正所有预约
+    
+    参数：
+    - booking_id: 预约编号
+    - present: True=到场（补签），False=未到场（取消签到）
+    
+    返回：BookingView
+    
+    业务规则：
+    1. 检查预约存在
+    2. 检查权限：
+       - 教练只能更正自己课次的预约
+       - 管理员可以更正所有预约
+    3. 锁定预约，并在取得锁后生成当前时刻
+    4. 检查预约状态：
+       - 只能更正 reserved 或 checked_in
+       - 已完成/已取消/缺席 → InvalidState
+    5. 检查时间：
+       - 必须从课次开始时间起才能更正
+       - 早于开课时间 → InvalidState
+    6. 更新状态：
+       - present=True 且当前是 reserved：
+         - status = "checked_in"
+         - checked_in_at = 当前时刻
+       - present=True 且当前是 checked_in：
+         - 不变（已经是签到状态）
+       - present=False 且当前是 checked_in：
+         - status = "reserved"
+         - checked_in_at = null
+       - present=False 且当前是 reserved：
+         - 不变（本来就是未签到）
+    7. 记录日志：
+       - 记录签到前后状态
+       - 记录操作人
+    8. 提交
+    
+    用途：
+    - 会员忘记签到，教练课后补签
+    - 会员误签到，教练更正为未到场
+    
+    注意：
+    - 只能在消课前更正
+    - 已消课的预约不能更正
+    
+    可能的错误：
+    - 已消课 → InvalidState
+    - 教练更正别的教练的课 → PermissionDenied
+    """
+```
+
+#### 2. 消课
+
+**消课（扣除课节）**：
+```python
+def complete(self, actor: Actor, booking_id: int) -> ConsumptionView:
+    """
+    消课（扣除课节）
+    
+    权限：
+    - 教练：只能消自己课次的预约
+    - 管理员：可以消所有预约
+    
+    参数：
+    - booking_id: 预约编号
+    
+    返回：ConsumptionView（消课记录）
+      - id: 消课记录编号
+      - booking_id: 预约编号
+      - membership_id: 已售会员卡编号
+      - lessons_used: 扣除课节数（固定为 1）
+      - completed_at: 消课时间
+      - operator_id: 操作人编号
+    
+    业务规则：
+    1. 检查预约存在
+    2. 检查权限（教练只能消自己课次的）
+    3. 锁定：已售会员卡 → 预约
+    4. 检查预约状态：
+       - 已完成时以锁定当前读查询消课记录；存在则返回原 ConsumptionView
+       - 首次消课必须是 "checked_in"（已签到）
+       - 未签到/已取消 → InvalidState
+    5. 检查时间：
+       - 全部锁取得后生成当前时刻，必须大于或等于课次 ends_at；否则抛 InvalidState
+    6. 完成首次消课并写入消课记录
+    7. 扣除课节：
+       - remaining_private_lessons -= 1
+       - reserved_private_lessons -= 1
+    8. 创建消课记录：
+       - lessons_used = 1
+       - completed_at = 当前时刻
+    9. 更新预约状态：
+       - status = "completed"
+       - closed_at = 当前时刻
+    10. 提交
+    
+    重复消课：
+    - 已消课 → 返回原 ConsumptionView
+    - 不重复扣课节
+    
+    并发控制：
+    - 锁定已售会员卡，防止同时消多个预约导致余额错误
+    - 取得已售会员卡和预约锁后，消课记录查询必须使用锁定当前读，避免并发重复扣课
+    
+    可能的错误：
+    - 未签到 → InvalidState
+    - 已取消 → InvalidState
+    - 课次尚未结束 → InvalidState
+    """
+```
+
+#### 3. 缺席处理
+
+**标记缺席**：
+```python
+def mark_no_show(self, actor: Actor, booking_id: int) -> BookingView:
+    """
+    标记缺席
+    
+    权限：
+    - 教练：只能标记自己课次的预约
+    - 管理员：可以标记所有预约
+    
+    参数：
+    - booking_id: 预约编号
+    
+    返回：BookingView（status 变为 "no_show"）
+    
+    业务规则：
+    1. 检查预约存在
+    2. 检查权限（教练只能标记自己课次的）
+    3. 锁定：已售会员卡 → 预约
+    4. 检查预约状态：
+       - 已缺席 → 返回当前 BookingView
+       - 首次标记必须是 "reserved"（未签到）
+       - 已签到/已完成/已取消 → InvalidState
+    5. 检查时间：
+       - 全部锁取得后生成当前时刻，必须大于或等于课次 ends_at；否则抛 InvalidState
+    6. 释放课节占用（不扣除课节）：
+       - reserved_private_lessons -= 1
+       - remaining_private_lessons 不变
+    7. 更新预约状态：
+       - status = "no_show"
+       - closed_at = 当前时刻
+    8. 提交
+    
+    重复标记：
+    - 已标记缺席 → 返回当前 BookingView
+    
+    注意：
+    - 缺席只释放占用，不扣课节
+    - 会员还可以用这节课预约其他课次
+    
+    可能的错误：
+    - 已签到 → InvalidState（应该消课而不是标记缺席）
+    """
+```
+
+#### 4. 评价
+
+**创建评价**：
+```python
+def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView:
+    """
+    创建评价
+    
+    权限：会员只能评价自己已完成的预约
+    
+    参数：
+    - data: ReviewInput
+      - booking_id: 预约编号
+      - rating: 评分（1-5 分）
+      - comment: 评价内容（0-1000 字）
+    
+    返回：ReviewView
+      - id: 评价编号
+      - booking_id: 预约编号
+      - member_id: 会员编号
+      - session_id: 课次编号
+      - rating: 评分
+      - comment: 评价内容
+      - created_at: 评价时间
+    
+    业务规则：
+    1. 锁定预约；不存在 → NotFoundError
+    2. 在锁内检查预约属于当前会员
+    3. 在锁内检查预约状态：
+       - 必须是 "completed"（已完成）
+       - 未完成 → InvalidState
+    4. 检查是否已评价：
+       - 查询该预约的评价记录
+       - 已评价 → ConflictError（不允许重复评价）
+    5. 校验评分：
+       - 必须是 1-5 的整数
+       - 其他值 → InvalidInputError
+    6. 校验评价内容：
+       - 0-1000 字
+       - 可以为空字符串
+    7. 创建评价记录；数据库唯一约束的并发冲突统一转换为 ConflictError
+    8. 提交
+    
+    可能的错误：
+    - 预约不属于当前会员 → PermissionDenied
+    - 预约未完成 → InvalidState
+    - 已评价 → ConflictError
+    - 评分不在 1-5 → InvalidInputError
+    """
+```
+
+**评价防重查询接口**：
+```python
+# src/db/review_repo.py
+class ReviewRepository:
+    def get_by_booking(self, booking_id: int) -> ReviewView | None:
+        """预约已加锁后以锁定当前读读取已有评价；未找到返回 None，不提交事务。"""
+```
+
+**查询评价**：
+```python
+def get_review(self, actor: Actor, review_id: int) -> ReviewView:
+    """
+    查询评价详情
+    
+    权限：
+    - 会员：只能查自己的评价
+    - 管理员：首版不提供评价查询入口
+    """
+    
+def list_reviews(self, actor: Actor, paging: PageRequest) -> Page[ReviewView]:
+    """
+    查询评价列表
+    
+    权限：
+    - 会员：只能查自己的评价
+    - 管理员：首版不提供评价查询入口
+    
+    参数：
+    - paging: 分页参数
+    
+    返回：Page[ReviewView]
+    排序：按 created_at 降序、id 降序稳定分页
+    
+    注意：按评价时间降序、id 降序稳定分页
+    """
+```
+
+### 预约状态流转图
+
+```
+新建 → reserved（已预约）
+         ↓ check_in
+         ↓
+    checked_in（已签到）
+         ↓ complete
+         ↓
+    completed（已完成）→ 可以评价
+
+reserved → cancelled（已取消）
+reserved → no_show（缺席）
+
+教练更正：
+- reserved ⇄ checked_in（correct_attendance）
+- 只能在消课前更正
+```
+
+### 与其他模块的对接
+
+**你需要调用的方法**：
+```python
+# 预约状态通过同一事务中的 Repository 读取和更新
+from src.db.connection import transaction
+from src.db.booking_repo import BookingRepository
+
+class AttendanceService:
+    def __init__(self, session_factory, auth: AuthService):
+        self._session_factory = session_factory
+        self._auth = auth
+    
+    def check_in(self, actor, booking_id):
+        with self._session_factory() as session:
+            with transaction(session, record_id=booking_id):
+                booking_repo = BookingRepository(session)
+                booking = booking_repo.lock(booking_id)
+                # 先检查已签到重试，再校验首次签到状态和开课时间
+```
+
+### 测试要点
+
+1. **签到**：
+   - 早于开课时间 → InvalidState
+   - 已签到 → 返回当前状态（不报错）
+   - 已完成、已取消或已缺席的预约 → InvalidState
+
+2. **教练更正**：
+   - 补签：reserved → checked_in
+   - 取消签到：checked_in → reserved
+   - 已消课的预约 → InvalidState
+   - 教练更正别的教练的课 → PermissionDenied
+
+3. **消课**：
+   - 未签到 → InvalidState
+   - 已消课 → 返回原 ConsumptionView（不重复扣）
+   - 扣课节：remaining -= 1, reserved -= 1
+   - 并发：两个教练同时消同一会员的不同预约 → 正确扣课节
+
+4. **缺席**：
+   - 已签到 → InvalidState（应该消课）
+   - 释放占用：reserved -= 1, remaining 不变
+   - 已标记缺席 → 返回当前状态
+
+5. **评价**：
+   - 未完成的预约 → InvalidState
+   - 已评价 → ConflictError
+   - 评分不在 1-5 → InvalidInputError
+   - 评价别人的预约 → PermissionDenied
+
+---
+
+## 体测与器械模块
+
+**负责人**：Tuao SONG & Mingjin LI
+
+### 你们要实现的功能
+
+这个模块分为两部分：
+- **体测**（Tuao SONG & Mingjin LI 共同负责）
+- **器械**（Tuao SONG）
+
+#### 1. 体测记录
+
+**录入体测数据**：
+```python
+def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView:
+    """
+    录入体测数据
+    
+    权限：教练只能录入有权限的会员的体测
+    
+    参数：
+    - data: MeasurementInput
+      - member_id: 会员编号
+      - measured_at: 测量时刻（可以补录不晚于录入时刻的历史数据）
+      - height_cm: 身高（100.00-250.00 厘米）
+      - weight_kg: 体重（30.00-150.00 千克）
+      - body_fat_pct: 体脂率（0.00-100.00，可选）
+    
+    返回：MeasurementView
+      - id: 体测记录编号
+      - member_id: 会员编号
+      - coach_id: 教练编号（从操作人获取）
+      - measured_at: 测量时刻
+      - height_cm: 身高
+      - weight_kg: 体重
+      - body_fat_pct: 体脂率
+    
+    业务规则：
+    1. 锁定会员，并在锁内重新检查会员存在且启用
+    2. 取得会员锁后生成一次可信 created_at；从操作人获取 coach_id，
+       并用同一个 created_at 作为 at 检查当前授课预约
+       - 教练必须有权限录入该会员的体测
+       - 权限规则见下方"体测权限规则"
+    3. 校验数值范围：
+       - 身高：100.00-250.00 cm
+       - 体重：30.00-150.00 kg
+       - 体脂：0.00-100.00%（可选）
+       - 超出范围 → InvalidInputError
+    4. 校验 measured_at：必须带时区且 measured_at <= 同一个 created_at；未来测量时刻 → InvalidInputError
+    5. 创建体测记录：
+       - created_at = 步骤 2 生成的实际录入时刻
+       - measured_at = 输入的测量时刻（可以补录）
+    6. 提交
+    
+    注意：
+    - coach_id 从操作人获取，不由表单指定
+    - measured_at 可以补录不晚于录入时刻的历史时间
+    - created_at 是实际录入时间，用于权限判断
+    
+    可能的错误：
+    - 不是教练 → PermissionDenied
+    - 没有权限录入该会员 → PermissionDenied
+    - 数值超出范围 → InvalidInputError
+    """
+```
+
+**查询体测记录**：
+```python
+def get_measurement(
+    self, 
+    actor: Actor, 
+    measurement_id: int
+) -> MeasurementView:
+    """
+    查询体测记录详情
+    
+    权限：
+    - 会员：只能查自己的
+    - 教练：只能查有权限的会员的
+    - 前台、管理员：不能查看个人体测明细
+    
+    注意：教练查看权限按"体测权限规则"判断
+    """
+    
+def list_measurements(
+    self, 
+    actor: Actor, 
+    query: MeasurementQuery
+) -> Page[MeasurementView]:
+    """
+    查询体测记录列表
+    
+    参数：
+    - query: MeasurementQuery
+      - member_id: 会员编号（必填）
+      - window: 时间范围（按 measured_at 筛选）
+      - paging: 分页参数
+    
+    返回：Page[MeasurementView]
+    
+    权限：
+    - 会员：只能查自己的（member_id 必须是自己）
+    - 教练：只能查有权限的会员的，按权限过滤记录
+    - 前台、管理员：不能查看个人体测明细
+    
+    排序：按 measured_at 降序、id 降序
+    
+    注意：
+    - member_id 是必填的，不允许查询全部会员的体测
+    - 教练查看时，按"体测权限规则"过滤记录
+    """
+```
+
+**对比体测数据**：
+```python
+def compare(
+    self, 
+    actor: Actor, 
+    before_id: int, 
+    after_id: int
+) -> MeasurementComparison:
+    """
+    对比两次体测数据
+    
+    参数：
+    - before_id: 前一次体测记录编号
+    - after_id: 后一次体测记录编号
+    
+    返回：MeasurementComparison
+      - before: MeasurementView（前一次）
+      - after: MeasurementView（后一次）
+      - height_delta_cm: 身高变化（后-前）
+      - weight_delta_kg: 体重变化（后-前）
+      - body_fat_delta_pct: 体脂率变化（后-前，可选）
+    
+    业务规则：
+    1. 检查两条记录都存在
+    2. 检查权限（同 get_measurement）
+    3. 检查是同一会员的记录：
+       - before.member_id == after.member_id
+       - 不同会员 → InvalidInputError
+    4. 检查时间顺序：
+       - before_id 必须不同于 after_id
+       - 必须满足 (before.measured_at, before.id) < (after.measured_at, after.id)
+       - 顺序错误或两条记录相同 → InvalidInputError
+    5. 计算差值：
+       - 后 - 前
+       - 体脂率任一为空时，体脂差值为 None
+    
+    用途：
+    - 会员查看自己的进步
+    - 教练查看学员的变化
+    
+    可能的错误：
+    - 不是同一会员 → InvalidInputError
+    - 时间顺序错误 → InvalidInputError
+    """
+```
+
+**体测权限规则（重要）**：
+
+教练查看体测数据的权限规则：
+
+1. **历史查看权永久保留**：
+   - 只要成功预约过该教练的私教课，该教练就可以查看会员的体测历史
+   - 即使预约后来被取消，查看权仍保留
+
+2. **数据更新权限随预约状态变化**：
+   - **有有效预约期间**：教练可以查看最新数据
+   - **预约结束后**：教练停止看到新增的数据
+   - **再次预约该教练**：恢复查看最新数据
+
+3. **具体判断逻辑**：
+   - 查询该会员对该教练的所有历史预约
+   - 计算最晚的授权截止时刻：
+     - 已取消的预约：min(取消时刻, 课次结束时刻)
+     - 其他预约：课次结束时刻
+     - 取所有预约的最大值
+   - 只返回 created_at <= 授权截止时刻的体测记录
+
+4. **例子**：
+   - 9 月 1 日：会员预约张教练 9 月 15 日 14:00-15:00 的课
+   - 9 月 1 日起：张教练可以查看该会员的所有当前体测
+   - 9 月 10 日：录入新体测 → 张教练可见
+   - 9 月 15 日 15:00：课程结束
+   - 9 月 16 日：录入新体测 → 张教练**不可见**
+   - 9 月 20 日：会员再次预约张教练 10 月 1 日的课
+   - 9 月 20 日起：张教练可以查看所有最新体测（包括 9 月 16 日的）
+
+5. **实现要点**：
+   - 体测记录不可修改或删除
+   - 权限按 created_at（实际录入时刻）判断
+   - 不能按 measured_at（测量时刻）判断，否则可以通过补录绕过权限
+
+#### 2. 器械管理
+
+**登记器械**：
+```python
+def create_equipment(self, actor: Actor, data: EquipmentInput) -> EquipmentView:
+    """
+    登记器械
+    
+    权限：管理员
+    
+    参数：
+    - data: EquipmentInput
+      - asset_code: 资产编号（1-50 字，区分大小写）
+      - name: 器械名称（1-100 字）
+      - location: 位置（1-100 字）
+    
+    返回：EquipmentView
+      - id: 器械编号
+      - asset_code: 资产编号
+      - name: 器械名称
+      - location: 位置
+      - status: 状态（"available"）
+    
+    业务规则：
+    - 资产编号唯一，区分大小写
+    - 初始状态为 "available"（可用）
+    - 重复资产编号 → ConflictError
+    """
+```
+
+**查询器械**：
+```python
+def get_equipment(self, actor: Actor, equipment_id: int) -> EquipmentView:
+    """查询器械详情。
+
+    权限：所有已登录角色可查看器械基础资料，以便提交报修。
+    返回：EquipmentView；记录不存在抛 NotFoundError。
+    """
+    
+def list_equipment(
+    self, 
+    actor: Actor, 
+    query: EquipmentQuery
+) -> Page[EquipmentView]:
+    """
+    查询器械列表
+    
+    参数：
+    - query: EquipmentQuery
+      - keyword: 关键词（匹配资产编号、名称、位置）
+      - status: 状态
+      - paging: 分页参数
+    
+    返回：Page[EquipmentView]
+
+    权限：所有已登录角色可查询器械基础资料；空结果返回空 Page。
+    排序：按 id 升序稳定分页。
+    """
+```
+
+**修改器械**：
+```python
+def update_equipment(
+    self, 
+    actor: Actor, 
+    equipment_id: int, 
+    data: EquipmentUpdateInput
+) -> EquipmentView:
+    """
+    修改器械信息
+    
+    权限：管理员
+    
+    参数：
+    - data: EquipmentUpdateInput
+      - name: 器械名称
+      - location: 位置
+    
+    注意：不能修改资产编号
+    """
+```
+
+**报修**：
+```python
+def report_fault(
+    self, 
+    actor: Actor, 
+    equipment_id: int, 
+    description: str
+) -> MaintenanceView:
+    """
+    报修器械
+    
+    权限：所有角色都可以报修
+    
+    参数：
+    - equipment_id: 器械编号
+    - description: 故障描述（1-1000 字）
+    
+    返回：MaintenanceView
+      - id: 维修记录编号
+      - equipment_id: 器械编号
+      - description: 故障描述
+      - reported_at: 报修时间
+      - resolved_at: 解决时间（null）
+      - operator_id: 报修人编号
+      - resolved_by: 解决人编号（null）
+    
+    业务规则：
+    1. 检查器械存在
+    2. 锁定器械
+    3. 检查当前状态：
+       - 如果已有未完成维修 → ConflictError
+       - 已报废的器械不能报修 → InvalidState
+    4. 更新器械状态 → "maintenance"
+    5. 创建维修记录：
+       - reported_at = 当前时刻
+       - operator_id = 报修人编号
+    6. 提交
+    
+    并发控制：
+    - 锁定器械
+    - 同一器械最多一条未完成的维修记录
+    
+    可能的错误：
+    - 器械已报废 → InvalidState
+    - 已有未完成的维修 → ConflictError
+    """
+```
+
+**完成维修**：
+```python
+def finish_maintenance(
+    self, 
+    actor: Actor, 
+    maintenance_id: int
+) -> MaintenanceView:
+    """
+    完成维修
+    
+    权限：管理员
+    
+    参数：
+    - maintenance_id: 维修记录编号
+    
+    返回：MaintenanceView（resolved_at 和 resolved_by 被填充）
+    
+    业务规则：
+    1. 读取维修记录以取得 equipment_id；不存在 → NotFoundError
+    2. 锁定器械，并在锁内重新读取并锁定该维修记录
+    3. 检查维修记录仍属于该器械且未完成：
+       - resolved_at 为空
+       - 已完成 → InvalidState
+       - 器械状态必须仍为 "maintenance"，否则 → InvalidState
+    4. 更新维修记录：
+       - resolved_at = 当前时刻
+       - resolved_by = 操作人编号
+    5. 更新器械状态 → "available"
+    6. 提交
+    
+    可能的错误：
+    - 维修已完成 → InvalidState
+    """
+```
+
+**报废器械**：
+```python
+def retire_equipment(self, actor: Actor, equipment_id: int) -> EquipmentView:
+    """
+    报废器械
+    
+    权限：管理员
+    
+    参数：
+    - equipment_id: 器械编号
+    
+    返回：EquipmentView（status 变为 "retired"）
+    
+    业务规则：
+    1. 检查器械存在
+    2. 锁定器械
+    3. 检查维修状态：
+       - 如果有未完成的维修 → InvalidState
+    4. 更新器械状态 → "retired"
+    5. 提交
+    
+    注意：
+    - 报废后的器械不能恢复
+    - 报废后不能报修
+    - 历史维修记录保留
+    
+    可能的错误：
+    - 有未完成的维修 → InvalidState
+    """
+```
+
+**查询维修历史**：
+```python
+def list_maintenance(
+    self, 
+    actor: Actor, 
+    equipment_id: int, 
+    paging: PageRequest
+) -> Page[MaintenanceView]:
+    """
+    查询器械的维修历史
+    
+    参数：
+    - equipment_id: 器械编号
+    - paging: 分页参数
+    
+    返回：Page[MaintenanceView]
+
+    权限：管理员可查看全部维修历史；其他角色只能查看不含操作人字段的器械基础资料，不能调用此明细接口。
+    
+    排序：按 reported_at 降序、id 降序
+    """
+```
+
+**维修仓储的并发接口**：
+```python
+# src/db/equipment_repo.py
+class MaintenanceRepository:
+    def lock(self, maintenance_id: int) -> MaintenanceView | None:
+        """在当前事务中锁定并读取维修记录；未找到返回 None，不提交事务。"""
+```
+
+完成维修先取得维修记录对应的器械编号，再锁定器械和维修记录；锁内重新确认维修未完成且器械仍为 `maintenance`，然后在同一事务更新两条记录。
+
+### 与其他模块的对接
+
+**体测录入授权**：体测服务先取得会员行锁，再在同一事务内重新检查会员状态和身份范围，并使用 `BookingRepository.has_current_coaching_booking(member_id, coach_id, at)` 检查当前有效授课关系。该查询在已持有会员锁后锁定匹配预约并重读课次状态，避免取消预约或停用会员与录入并发穿透；历史查看权不授予新增权。
+
+### 测试要点
+
+1. **体测录入**：
+   - 数值超出范围 → InvalidInputError
+   - 教练录入无权限的会员 → PermissionDenied
+   - coach_id 从操作人获取，不从表单获取
+
+2. **体测权限**：
+   - 预约后录入 → 教练可见
+   - 预约结束后录入 → 教练不可见
+   - 再次预约后 → 教练可见所有最新数据
+   - 按 created_at 判断，不按 measured_at
+
+3. **器械报修**：
+   - 报修后状态变为 "maintenance"
+   - 已在维修中 → ConflictError
+   - 报废的器械 → InvalidState
+
+4. **完成维修**：
+   - 维修完成后状态变为 "available"
+   - 重复完成 → InvalidState
+
+5. **报废器械**：
+   - 有未完成维修 → InvalidState
+   - 报废后不能报修
+
+---
+
+## 报表模块
+
+**负责人**：Mingjin LI
+
+### 你要实现的功能
+
+#### 1. 收款查询
+
+**查询收款记录详情**：
+```python
+def get_payment(self, actor: Actor, payment_id: int) -> PaymentView:
+    """
+    查询收款记录详情
+    
+    权限：管理员、前台
+    
+    返回：PaymentView
+      - id: 收款记录编号
+      - membership_id: 已售会员卡编号
+      - member_id: 会员编号
+      - amount: 金额
+      - method: 收款方式
+      - paid_at: 收款时间
+      - operator_id: 操作人编号
+    """
+```
+
+**查询收款记录列表**：
+```python
+def list_payments(
+    self, 
+    actor: Actor, 
+    query: PaymentQuery
+) -> Page[PaymentView]:
+    """
+    查询收款记录列表
+    
+    权限：管理员、前台
+    
+    参数：
+    - query: PaymentQuery
+      - window: 时间范围（按 paid_at 筛选）
+      - member_id: 会员编号
+      - method: 收款方式
+      - paging: 分页参数
+    
+    返回：Page[PaymentView]
+    
+    排序：按 paid_at 降序、id 降序
+    """
+```
+
+#### 2. 营收报表
+
+**营收统计**：
+```python
+def revenue(self, actor: Actor, window: DateWindow) -> RevenueView:
+    """
+    营收统计
+    
+    权限：管理员
+    
+    参数：
+    - window: 时间范围
+      - start: 开始时间（包含）
+      - end: 结束时间（不包含）
+    
+    返回：RevenueView
+      - window: 时间范围
+      - payment_count: 收款笔数
+      - total_amount: 总金额
+    
+    业务规则：
+    - 按 paid_at 筛选
+    - [start, end) 前含后不含
+    - 没有数据时返回 payment_count=0, total_amount=0.00
+    - 不要返回 None
+    """
+```
+
+#### 3. 会员统计
+
+**会员卡统计**：
+```python
+def membership_stats(self, actor: Actor) -> MembershipStats:
+    """
+    会员卡统计
+    
+    权限：管理员
+    
+    返回：MembershipStats
+      - as_of: 统计时刻（当前时刻）
+      - active_members: 启用会员数
+      - inactive_members: 停用会员数
+      - valid_cards: 有效产品数
+      - expired_cards: 已过期产品数
+      - future_cards: 未生效产品数
+      - void_cards: 已作废产品数
+      - exhausted_cards: 已用尽次卡数
+    
+    业务规则：
+    1. 会员统计：
+       - active_members: is_active=True 的会员数
+       - inactive_members: is_active=False 的会员数
+    
+    2. 产品统计（按门禁状态分类）：
+       - void_cards: status="void" 的产品数
+       - 其余按以下顺序分类：
+         - future_cards: valid_from > 门店今天
+         - expired_cards: 
+           - 私教课产品：valid_until <= 门店今天
+           - 不含次卡（次卡无到期日）
+         - exhausted_cards: 
+           - 次卡：remaining_accesses = 0
+         - valid_cards: 
+           - 私教课产品：valid_from <= 门店今天 < valid_until
+           - 次卡：remaining_accesses > 0
+    
+    3. 五类互斥且合计等于所有已售产品数
+    
+    4. 私教课节余额不影响门禁分类
+    
+    注意：
+    - 只反映当前状态，不支持历史回放
+    - as_of 由服务生成，不接受用户输入
+    - 门店今天必须由同一个 as_of 按配置时区转换，不能分别读取当前时刻和日期
+    - 在一个读取事务中完成所有统计
+    """
+```
+
+#### 4. 课程统计
+
+**课次统计**：
+```python
+def session_stats(
+    self, 
+    actor: Actor, 
+    query: SessionQuery
+) -> Page[SessionStatsView]:
+    """
+    课次统计
+    
+    权限：管理员
+    
+    参数：
+    - query: SessionQuery（复用课次查询条件）
+      - window: 时间范围（按 starts_at 筛选）
+      - kind: 课程类型（当前只有 "private"）
+      - coach_id: 教练编号
+      - room_id: 场地编号
+      - status: 课次状态
+      - paging: 分页参数
+    
+    返回：Page[SessionStatsView]
+      - session_id: 课次编号
+      - starts_at: 开始时间
+      - reserved_count: 已预约人数（当前状态）
+      - checked_in_count: 已签到人数（当前状态）
+      - completed_count: 已完成人数（当前状态）
+      - no_show_count: 缺席人数（当前状态）
+      - cancelled_count: 已取消人数（当前状态）
+      - attendance_rate: 到课率（保留 4 位小数）
+    
+    业务规则：
+    1. 五项数量按预约当前状态计数：
+       - reserved_count: status="reserved"
+       - checked_in_count: status="checked_in"
+       - completed_count: status="completed"
+       - no_show_count: status="no_show"
+       - cancelled_count: status="cancelled"
+    
+    2. 到课率计算：
+       - 只有课次已到 ends_at 且没有 reserved/checked_in 预约时计算
+       - 已结束并处理完成的课次，分子 = completed，分母 = completed + no_show
+       - 到课率 = completed / (completed + no_show)，ROUND_HALF_UP，保留 4 位小数
+       - 课次未结束、仍有未处理预约或分母为 0 时，到课率为 None
+       - 五项预约状态人数仍按当前状态返回，未来或未结算预约不计作缺席
+       - 显示为"暂无数据"
+    
+    排序：按 starts_at 降序、session_id 降序
+    """
+```
+
+**教练统计**：
+```python
+def coach_stats(
+    self, 
+    actor: Actor, 
+    window: DateWindow, 
+    paging: PageRequest
+) -> Page[CoachStatsView]:
+    """
+    教练统计
+    
+    权限：管理员
+    
+    参数：
+    - window: 时间范围（按课次 starts_at 筛选）
+    - paging: 分页参数
+    
+    返回：Page[CoachStatsView]
+      - coach_id: 教练编号
+      - coach_name: 教练姓名
+      - completed_sessions: 已完成课次数
+      - attended_members: 到课人次
+    
+    业务规则：
+    1. 只统计已完成的课次（session.status="completed"）
+    2. 按课次 starts_at 归属时间范围
+    3. 到课人次：
+       - 统计这些课次中有签到时间的预约数
+       - booking.checked_in_at IS NOT NULL
+       - 同一会员上两节课计两人次
+    4. 无已完成课次的教练也返回，数量为 0
+    
+    排序：按 coach_id 升序
+    """
+```
+
+**报表数据访问接口**：
+```python
+# src/db/report_repo.py
+class ReportRepository:
+    def __init__(self, session: Session) -> None: ...
+
+    def revenue(self, window: DateWindow) -> RevenueView:
+        """在当前读取事务内按 paid_at 汇总实收，空数据返回零值。"""
+
+    def membership_stats(
+        self, as_of: datetime, *, business_date: date,
+    ) -> MembershipStats:
+        """as_of 和门店日期由服务从同一时刻生成，在同一读取快照内分类计数。"""
+
+    def session_stats(self, query: SessionQuery) -> Page[SessionStatsView]:
+        """SessionQuery 的 window、kind、coach_id、room_id、status 都参与筛选，再稳定分页。"""
+
+    def coach_stats(
+        self, window: DateWindow, paging: PageRequest,
+    ) -> Page[CoachStatsView]:
+        """按 coach_id 升序稳定分页，包含范围内零已完成课次的教练。"""
+```
+
+服务层在单个 MySQL REPEATABLE READ 读取事务内调用上述方法。仓储只构造查询和返回
+View/Page，不提交事务。导出分批读取时复用同一事务快照和相同筛选口径。
+
+#### 5. CSV 导出
+
+**导出收款记录**：
+```python
+def export_payments(
+    self, 
+    actor: Actor, 
+    query: PaymentQuery
+) -> CsvExport:
+    """
+    导出收款记录
+    
+    权限：管理员
+    
+    参数：
+    - query: PaymentQuery（筛选字段与 list_payments 相同，paging 被忽略）
+    
+    返回：CsvExport
+      - filename: 建议文件名（如 "payments_20260920.csv"）
+      - content: UTF-8 BOM CSV 字节内容
+      - row_count: 数据行数（不含表头）
+    
+    CSV 格式：
+    表头：id,membership_id,member_id,amount,method,paid_at,operator_id
+    
+    业务规则：
+    1. 导出全部符合条件的记录，忽略 query.paging
+    2. 单次导出最多 10,000 行；超过上限抛 InvalidInputError，要求缩小筛选范围
+    3. 按 paid_at 降序、id 降序稳定排序
+    4. 内部可以分批读取，所有批次复用同一读取事务和 MySQL REPEATABLE READ 一致性快照
+    5. 金额保留两位小数
+    6. 时间使用 ISO 格式（带时区）
+    7. 缺值为空字段
+    8. 处理 CSV 注入：
+       - 用户文本开头的 =、+、-、@ 转义为 ' 开头
+       - 防止表格软件执行公式
+    9. UTF-8 BOM（兼容 Excel）
+    
+    注意：
+    - 服务返回 CsvExport，界面选择保存路径
+    - 用户取消保存不影响业务数据
+    """
+```
+
+**导出其他报表**：
+```python
+def export_revenue(
+    self, 
+    actor: Actor, 
+    window: DateWindow
+) -> CsvExport:
+    """
+    导出营收报表
+
+    权限：管理员
+    
+    CSV 格式：
+    表头：start,end,payment_count,total_amount
+    数据：一行汇总数据
+    """
+    
+def export_memberships(self, actor: Actor) -> CsvExport:
+    """
+    导出会员卡统计
+
+    权限：管理员
+    
+    CSV 格式：
+    表头：as_of,active_members,inactive_members,valid_cards,expired_cards,future_cards,void_cards,exhausted_cards
+    数据：一行快照数据
+    """
+    
+def export_sessions(
+    self, 
+    actor: Actor, 
+    query: SessionQuery
+) -> CsvExport:
+    """
+    导出课次统计
+
+    权限：管理员；query 使用 window、kind、coach_id、room_id、status，
+          忽略 paging，导出全部符合条件的课次。
+    
+    CSV 格式：
+    表头：session_id,starts_at,reserved_count,checked_in_count,completed_count,no_show_count,cancelled_count,attendance_rate
+    数据：多行课次统计
+    """
+    
+def export_coaches(
+    self, 
+    actor: Actor, 
+    window: DateWindow
+) -> CsvExport:
+    """
+    导出教练统计
+
+    权限：管理员
+    
+    CSV 格式：
+    表头：coach_id,coach_name,completed_sessions,attended_members
+    数据：多行教练统计
+    """
+```
+
+`export_payments`、`export_sessions` 和 `export_coaches` 的共同规则：忽略分页参数并按各自稳定排序导出，
+最多 10,000 行；超过上限抛 `InvalidInputError`。分批读取时复用同一个 MySQL REPEATABLE READ
+读取事务，避免不同批次来自不同数据快照；所有用户文本都按 CSV 注入规则转义。
+
+#### 6. 收款数据访问（供产品销售调用）
+
+**这部分提供给 Xingzhou PENG 的产品销售模块调用**：
+
+```python
+# src/db/payment_repo.py
+class PaymentRepository:
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def create(
+        self,
+        *,
+        membership_id: int,
+        member_id: int,
+        amount: Decimal,
+        method: PaymentMethod,
+        paid_at: datetime,
+        operator_id: int
+    ) -> PaymentView:
+        """
+        创建收款记录
+        
+        用途：被产品销售模块调用，记录收款
+        
+        参数：
+        - membership_id: 已售会员卡编号
+        - member_id: 会员编号
+        - amount: 金额
+        - method: 收款方式
+        - paid_at: 收款时间
+        - operator_id: 操作人编号
+        
+        返回：PaymentView
+        
+        注意：
+        - 不提交事务，由调用方（ProductService）统一提交
+        - 使用调用方传入的 session
+        - 一个产品只能有一笔收款（唯一约束）
+        """
+
+    def get(self, payment_id: int) -> PaymentView | None:
+        """按编号读取收款；不存在返回 None。"""
+
+    def get_by_membership(self, membership_id: int) -> PaymentView | None:
+        """按已售会员卡编号读取唯一收款；不存在返回 None。"""
+
+    def list(self, query: PaymentQuery) -> Page[PaymentView]:
+        """按 paid_at 降序、id 降序稳定分页查询。"""
+```
+
+### 与其他模块的对接
+
+**产品销售模块调用你的方法**：
+```python
+# 在 ProductService 中
+from src.db.connection import transaction
+from src.db.payment_repo import PaymentRepository
+
+class ProductService:
+    def sell_product(self, actor, data, request_id):
+        with self._session_factory() as session:
+            with transaction(session, request_id=request_id):
+                # 1. 锁定会员、卡产品，并锁定当前读既有已售会员卡
+                now_utc = datetime.now(UTC)
+                # 2. 由 now_utc 转换门店日期并创建已售会员卡快照
+                card = membership_repo.create(...)
+                
+                # 3. 记录收款（调用你的方法）
+                payment_repo = PaymentRepository(session)
+                payment = payment_repo.create(
+                    membership_id=card.id,
+                    member_id=data.member_id,
+                    amount=card.terms.price,
+                    method=data.method,
+                    paid_at=now_utc,
+                    operator_id=actor.account_id
+                )
+                
+                # 4. 记录操作
+                ...
+                
+                # 5. 一起提交
+                return SaleView(card=card, payment=payment)
+```
+
+### 测试要点
+
+1. **收款查询**：
+   - 按时间范围筛选
+   - 按会员筛选
+   - 按收款方式筛选
+
+2. **营收报表**：
+   - 空数据返回 payment_count=0, total_amount=0.00
+   - 不返回 None
+
+3. **会员卡统计**：
+   - 五类互斥且合计正确
+   - 次卡用尽计入 exhausted_cards
+   - 次卡不计入 expired_cards
+   - 私教课节余额不影响门禁分类
+
+4. **课次统计**：
+   - 到课率计算正确
+   - 全部取消的课次到课率为 None
+   - 无预约的课次到课率为 None
+
+5. **教练统计**：
+   - 只统计已完成课次
+   - 同一会员上两节课计两人次
+   - 无已完成课次的教练返回 0
+
+6. **CSV 导出**：
+   - UTF-8 BOM（兼容 Excel）
+   - CSV 注入防护（=、+、-、@ 转义）
+   - 金额两位小数
+   - 时间 ISO 格式
+    - 空明细导出只有表头；汇总报表在无业务记录时输出一行零值快照
+
+---
+
+## 业务规则详解
+
+这部分是参考资料，遇到具体问题时查阅。
+
+### 产品规则
+
+#### 私教课产品
+
+**三种产品**：
+- 20 节课 + 30 天门禁
+- 64 节课 + 90 天门禁  
+- 256 节课 + 365 天门禁
+
+**随私教课购买的权益**：
+- 购买 20/64/256 节私教课时，分别获得 30/90/365 天门禁
+- 节数和门禁天数固定，数据库有约束检查
+
+**有效期计算**：
+- valid_from 是生效日（包含）
+- valid_from 算第 1 天
+- valid_until = valid_from + 天数（不包含）
+- 例子：
+  - 9 月 20 日生效的 20 节课产品
+  - valid_from = 2026-09-20
+  - valid_until = 2026-10-20
+  - 最后有效日是 10 月 19 日
+  - 10 月 19 日 23:59:59 仍有效
+  - 10 月 20 日 00:00:00 失效
+
+**续购接续规则**：
+- 查询会员所有未作废私教课产品的最晚 valid_until
+- 包括尚未生效的产品
+- `valid_from = max(门店今天, 最晚 valid_until)`；没有未作废期限卡时取门店今天
+- 例子：
+  - 旧产品：9/20 生效，valid_until = 10/20
+  - 9/25 购买新产品
+  - 新产品：valid_from = 10/20，valid_until = 11/19
+- 只有过期卡时不会从过去日期接续
+
+**课节初始化**：
+- 购买时：
+  - remaining_private_lessons = 购买的私教课节数（20/64/256）
+  - reserved_private_lessons = 0
+- 旧产品余额不转入新产品
+- 每个产品的课节独立计算
+
+**课节随产品到期失效**：
+- 产品到期后，剩余课节不能用于新预约
+- 已预约的到期前课程，可以在事后补签或结算
+- 例子：
+  - 产品到期日：9 月 30 日
+  - 9 月 29 日预约了 9 月 30 日 14:00 的课 → 可以
+  - 10 月 1 日去结算 9 月 30 日的课 → 可以（核对原上课日期）
+  - 10 月 1 日预约 10 月 5 日的课 → 不可以（产品已过期）
+
+#### 入场次卡
+
+**规格**：
+- 10 次入场
+- 无有效期
+- 不赠私教课
+
+**数据特征**：
+- valid_days = None
+- valid_until = None
+- access_uses = 10
+- remaining_accesses = 10（初始）
+- private_lesson_credits = 0
+- remaining_private_lessons = 0
+- reserved_private_lessons = 0
+
+**生效日期**：
+- 购买当天生效
+- 不参与续购接续
+
+**使用规则**：
+- 只能用于门禁入场
+- 不能预约私教课
+- 用尽后不能在新的门店日期首次入场；同日已有入场记录时沿用原记录，不再扣次
+
+### 门禁规则
+
+#### 每日首次入场
+
+**去重规则**：
+- 按 (member_id, business_date) 唯一
+- business_date 是门店时区的日期
+- 同一会员同一天只有一条入场记录
+
+**扣次规则**：
+- 首次用私教课产品入场：accesses_used = 0
+- 首次用次卡入场：accesses_used = 1，remaining_accesses -= 1
+- 同一天后续入场：沿用同一条记录，不再扣次
+
+**例子**：
+- 9 月 20 日上午 10:00：会员用剩余 1 次的次卡入场
+  - 创建入场记录，accesses_used = 1
+  - 次卡 remaining_accesses 从 1 变为 0
+- 9 月 20 日下午 15:00：会员再次入场（选任意卡）
+  - 返回上午的入场记录
+  - 不再扣次
+- 9 月 21 日：会员入场
+  - 这是新的门店日期首次入场，次卡已用尽 → InsufficientCredits
+
+**提前预约不提前入场**：
+- 会员 9 月 20 日购买了 10 月 1 日生效的产品
+- 可以提前预约 10 月 5 日的课
+- 但 9 月 25 日不能用这个产品入场（未生效）
+
+#### 门禁与私教课签到分离
+
+- 独自锻炼也要入场（刷门禁卡）
+- 约私教课也要入场
+- 约课、签到、消课**不自动扣门禁次数**
+- 有私教课产品的会员上私教按产品日期入场，不消耗次卡
+
+### 预约规则
+
+#### 预约资格检查
+
+**产品类型**：
+- 次卡不能预约私教课 → CardNotEligible
+- 私教课产品可以预约
+
+**产品日期资格**：
+- 课次开始时刻转为门店日期
+- 检查：valid_from <= 上课日期 < valid_until
+- 未来生效的产品可以提前预约其有效期内的课
+- 例子：
+  - 产品有效期：10/1 - 10/30
+  - 9/25 预约 10/5 的课 → 可以（提前预约）
+  - 9/25 预约 9/28 的课 → 不可以（产品未生效）
+  - 9/25 预约 11/1 的课 → 不可以（超出有效期）
+
+**课节余额**：
+- available_private_lessons = remaining_private_lessons - reserved_private_lessons
+- 必须 > 0
+- 余额不足 → InsufficientCredits
+
+**时间冲突**：
+- 查询会员在 [课次开始, 课次结束) 是否有其他非取消预约
+- 有冲突 → ScheduleConflict
+- 区间规则：
+  - [14:00, 15:00) 和 [15:00, 16:00) 不冲突
+  - [14:00, 15:00) 和 [14:30, 15:30) 冲突
+
+**重复预约**：
+- 同一会员已预约同一课次（任何状态）→ ConflictError
+- 包括已取消的预约也不能重新预约同一课次
+- 要重新预约，必须是新的课次
+
+**容量检查**：
+- 完成重复预约检查后再检查容量，保证已有历史预约固定返回 ConflictError
+- 私教课容量固定为 1
+- 查询该课次的非取消预约数
+- 已满员 → CapacityExceeded
+
+#### 预约占用课节
+
+- 预约成功：reserved_private_lessons += 1
+- 取消预约：reserved_private_lessons -= 1
+- 消课：remaining_private_lessons -= 1, reserved_private_lessons -= 1
+- 缺席：reserved_private_lessons -= 1, remaining_private_lessons 不变
+
+#### 预约取消规则
+
+**取消时机**：
+- 只能在课次开始前取消
+- 只能取消 reserved 状态的预约
+- 已签到/已完成/已取消/缺席 → InvalidState
+- 恰好到达 starts_at 后不能取消
+
+**谁能取消**：
+- 会员：只能取消自己的
+- 前台、管理员：可以代取消
+
+#### 取消课次的处理
+
+**业务规则**：
+1. 当前时刻早于 starts_at 才允许首次取消
+2. 在独立只读事务中收集 reserved/checked_in 预约的编号、会员、产品和状态快照
+3. 新写事务按会员 ID 升序锁定候选会员，再锁定课次
+4. 课次锁内的第一次普通一致性读重取快照；变化则回滚并从只读阶段重开
+5. 快照不变时按产品 ID、预约 ID 升序加锁
+6. 全部锁取得后重新取当前时刻，并重查课次状态、取消时限、预约关联和占用
+7. 释放课节占用，更新预约及课次状态为 cancelled，并在同一事务提交
+
+**并发问题**：
+- 取消课次和新预约可能同时发生
+- 写事务始终先锁候选会员再锁课次，不能持有课次锁后再等待新发现的会员
+- 新发现预约时立即回滚，不在原事务补锁；最多重开 3 次，之后抛 ConflictError
+- 新预约取得会员锁后会等待课次锁；取消提交后，它必须在课次锁内复核状态并拒绝写入
+- 只有提交前的快照变化可以重开事务；提交确认丢失只能按 request_id 核实
+
+### 签到与消课规则
+
+#### 签到时机
+
+**什么时候可以签到**：
+- 从课次 starts_at 起可以签到
+- 早于 starts_at → InvalidState
+- 没有签到截止时间（可以课后补签）
+
+**谁能签到**：
+- 会员：自己签到（扫码或手动）
+- 本课教练：代为签到
+- 前台、管理员：代签到
+- 教练、管理员：更正签到（补签或取消签到）
+
+**教练更正规则**：
+- 只能更正自己课次的预约
+- 只能更正 reserved 或 checked_in 状态
+- 已完成/已取消/缺席 → InvalidState（不能更正）
+- present=True：补签（reserved → checked_in）
+- present=False：取消签到（checked_in → reserved）
+- 重复更正返回当前状态
+
+#### 消课时机
+
+**什么时候消课**：
+- 当前时刻必须大于或等于课次 ends_at；否则抛 InvalidState
+- 必须已签到（checked_in）
+
+**扣课节逻辑**：
+- remaining_private_lessons -= 1
+- reserved_private_lessons -= 1
+- 写入唯一消课记录
+
+**重复消课**：
+- 已消课 → 返回原 ConsumptionView
+- 不重复扣课节
+
+#### 缺席处理
+
+**标记缺席**：
+- 必须是 reserved（未签到）
+- 重复标记已为 no_show 的预约，返回当前状态
+- 已签到应该消课，不应该标记缺席
+
+**释放占用**：
+- reserved_private_lessons -= 1
+- remaining_private_lessons 不变（不扣课节）
+
+**会员影响**：
+- 课节归还，可以预约其他课次
+- 不影响会员信用（首版不做信用系统）
+
+#### 已结算预约不能更正
+
+**首版规则**：
+- 消课或标记缺席后，状态变为 completed 或 no_show
+- 这是终态，不能再更正
+- 如果结算错误，首版没有冲正入口
+- 管理员冲正功能留待 P2
+
+**界面提示**：
+- 消课和标记缺席前明确提示
+- 要求操作人确认
+- 一旦确认，不能撤销
+
+### 体测权限规则
+
+#### 历史查看权永久保留
+
+**获得条件**：
+- 会员成功预约过该教练的私教课
+- 包括后来取消的预约
+
+**保留规则**：
+- 即使预约取消，查看权仍保留
+- 即使教练账号停用，历史数据仍可见（当账号恢复时）
+
+#### 数据更新权限随预约变化
+
+**有有效预约期间**：
+- 教练可以查看该会员的最新体测数据
+- "有效预约"：预约成功起至课次结束时刻
+
+**预约结束后**：
+- 教练停止看到新增的体测数据
+- 已看到的历史数据仍可见
+
+**再次预约恢复**：
+- 会员再次成功预约该教练
+- 教练恢复查看最新数据（包括暂停期间的）
+
+#### 授权截止时刻计算
+
+**单个预约的截止时刻**：
+- 已取消：min(取消时刻, 课次结束时刻)
+- 其他状态：课次结束时刻
+
+**会员对教练的授权截止**：
+- 查询该会员对该教练的所有历史预约
+- 计算每个预约的截止时刻
+- 取最大值
+- 再与当前查询时刻取 min
+
+**权限判断**：
+- 只返回 created_at <= 授权截止时刻的体测记录
+- created_at 是实际录入时刻（不可修改）
+- measured_at 是测量时刻（可以补录）
+- **必须按 created_at 判断，不能按 measured_at**
+
+**为什么按 created_at**：
+- 如果按 measured_at，可以通过补录绕过权限
+- 例子：
+  - 预约截止：9 月 15 日 15:00
+  - 9 月 20 日录入，measured_at 填 9 月 10 日
+  - 如果按 measured_at，这条记录会被错误地允许查看
+
+#### 例子：完整的权限演变
+
+**时间线**：
+- 9/1：会员预约张教练 9/15 14:00-15:00 的课
+  - 张教练授权截止：9/15 15:00
+  - 张教练可见：截至 9/15 15:00 录入的所有体测
+
+- 9/5：录入体测（created_at = 9/5 10:00）
+  - 张教练可见
+
+- 9/15 15:00：课程结束
+  - 张教练授权截止：仍是 9/15 15:00
+
+- 9/16：录入体测（created_at = 9/16 10:00）
+  - 张教练**不可见**（9/16 > 9/15 15:00）
+
+- 9/20：会员再次预约张教练 10/1 14:00-15:00 的课
+  - 张教练授权截止：10/1 15:00
+  - 张教练可见：截至 10/1 15:00 录入的所有体测（包括 9/16 的）
+
+- 9/25：录入体测（created_at = 9/25 10:00）
+  - 张教练可见
+
+- 9/28：取消 10/1 的预约（closed_at = 9/28 10:00）
+  - 张教练授权截止：min(9/28 10:00, 10/1 15:00) = 9/28 10:00
+  - 张教练可见：截至 9/28 10:00 录入的体测（包括 9/25 的）
+  - 张教练不可见：9/28 10:00 之后录入的
+
+#### 前台和管理员的权限
+
+- 前台和管理员不能通过体测接口查看个人体测明细
+- 体测明细只有会员本人和获授权教练可见
+
+### 并发控制规则
+
+#### 锁顺序（防止死锁）
+
+**固定顺序**：
+1. 账号
+2. 会员
+3. 教练
+4. 课程模板
+5. 场地
+6. 课次
+7. 卡产品（card_products）
+8. 已售会员卡（memberships）
+9. 预约
+
+**同类按 ID 升序**：
+- 多个账号：按 account_id 升序锁定
+- 多个会员：按 member_id 升序锁定
+- 多个卡产品：按 product_id 升序锁定
+- 多张已售会员卡：按 membership_id 升序锁定
+- 多个预约：按 booking_id 升序锁定
+
+**身份复核与账号变更**：
+- 普通业务在同一服务事务内先锁当前账号，再锁该账号关联的会员或教练档案；
+  `verify_actor` 返回后继续持有这些锁，直到业务提交或回滚
+- 账号停用把操作者和目标账号组成一个集合；停用管理员时再并入全部启用管理员，
+  使用一条按 account_id 升序的锁定当前读取得全部账号
+- 档案移交先只读收集旧账号，再把操作者、旧账号和目标账号去重，使用一条按
+  account_id 升序的锁定当前读取得全部账号，随后才锁档案
+- 锁后发现档案的旧账号已变化时，整个事务回滚并重新收集完整账号集合；
+  停用或移交提交后，旧身份的后续业务复核抛出 `AuthenticationError`
+
+**只锁需要的资源**：
+- 不要"为了保险"锁不需要的资源
+- 例如：查询会员列表不需要锁定会员
+- 取消课次需要扇出到多个会员时，先在独立只读事务取得候选集合；写事务发现集合变化就整体回滚，不能越过课次锁补锁新会员
+
+#### 办卡并发
+
+**场景**：两个前台同时给会员办卡
+
+**处理**：
+1. 两个请求都锁会员（FOR UPDATE）
+2. 先到的获得锁，后到的等待
+3. 先到的锁定当前读既有已售会员卡，读取最新期限、计算生效日、写入新卡、提交
+4. 后到的获得锁，锁定当前读最新期限（包含刚才的新卡）、计算新的生效日、写入新卡、提交
+5. 两张已售会员卡正确接续
+
+**关键**：
+- 必须在锁内读取最新期限
+- 不能在等锁前使用旧快照
+
+#### 预约并发
+
+**场景**：两人同时预约最后一个名额
+
+**处理**：
+1. 两个请求都锁课次（FOR UPDATE）
+2. 先到的获得锁，检查容量（available = 1）、创建预约、提交
+3. 后到的获得锁，检查容量（available = 0）、抛出 CapacityExceeded
+
+**关键**：
+- 必须在锁内重新读取容量
+- 不能在等锁前使用旧快照
+
+#### 消课并发
+
+**场景**：教练同时消同一会员的两个预约
+
+**处理**：
+1. 两个请求都需要锁已售会员卡（扣课节）
+2. 先到的获得锁，扣课节（remaining -= 1）、提交
+3. 后到的获得锁，读取最新余额、扣课节（remaining -= 1）、提交
+4. 两次正确扣除
+
+**关键**：
+- 必须锁定已售会员卡
+- 不能让两个消课同时读取余额、同时扣除（丢失更新）
+
+### 防重复提交规则
+
+#### 请求编号（request_id）
+
+**生成规则**：
+- 标准 UUID 字符串（小写带短横线）
+- 由界面在确认操作时生成
+
+**校验顺序**：
+- 普通业务每次调用都先执行 `verify_actor` 和本操作的角色、数据归属校验；账号停用或当前无权时不能靠旧 request_id 取得结果
+- 账号停用和档案移交把所需账号组成完整集合，通过一次锁定当前读取得全部账号，
+  再执行与 `verify_actor` 相同的身份复核
+- 权限通过后，在会改变业务状态的校验之前先核对 operation_records
+- 已有记录必须同时匹配 actor_id、operation 和 payload_hash 才返回原结果
+- 不同 request_id 再操作已经进入终态的记录，仍按状态规则抛 InvalidState
+- 重试时沿用原 request_id
+
+**适用操作**：
+- 销售产品：sell_product
+- 登记入场：register_entry
+- 排课：create_session
+- 取消课次：cancel_session
+- 预约：book
+- 取消预约：cancel_booking
+
+#### 操作记录（operation_records）
+
+**记录内容**：
+- request_id：请求编号
+- actor_id：操作人编号
+- operation：操作名称（固定枚举值）
+- payload_hash：输入数据的哈希
+- result_id：结果记录编号
+- created_at：操作时间
+
+**结果编号对应关系**：
+- sell_product → memberships.id；再按该会员卡编号查询唯一 payments 记录
+- register_entry → gym_entries.id
+- create_session、cancel_session → course_sessions.id
+- book、cancel_booking → bookings.id
+
+**操作记录仓储接口**：
+```python
+# src/db/operation_repo.py
+class OperationRepository:
+    def get_by_request(self, request_id: str) -> OperationRecord | None: ...
+    def lock_by_request(self, request_id: str) -> OperationRecord | None: ...
+    def create(
+        self,
+        *,
+        request_id: str,
+        actor_id: int,
+        operation: OperationName,
+        payload_hash: str,
+        result_id: int,
+    ) -> OperationRecord: ...
+```
+
+**payload_hash 计算**：
+1. 将输入数据序列化为 JSON：
+   - sort_keys=True
+   - separators=(",", ":")
+   - ensure_ascii=False
+2. 不含 request_id
+3. 不含密码或敏感信息
+4. Decimal 转两位小数字符串
+5. date 用 YYYY-MM-DD
+6. datetime 转 UTC 后用 ISO 格式（带 +00:00）
+7. 对 UTF-8 字节计算 SHA-256
+8. 小写十六进制
+
+**幂等性判断**：
+- 相同 request_id + actor_id + payload_hash：
+  - 返回原 result_id 对应的记录
+  - 不重复执行
+- 相同 request_id + 不同 payload_hash：
+  - ConflictError（请求编号冲突）
+- 首次查询未命中后，取得该操作的首个业务行锁，再用 `lock_by_request` 当前读复核一次
+- 两个不同业务对象并发使用同一 request_id 时，数据库唯一约束仍是最终防线：
+  - 第二个事务遇到 request_id 唯一冲突后，回滚全部业务变更
+  - 使用新事务读取胜者记录；actor_id、operation、payload_hash 全部相同则返回胜者结果
+  - 任一字段不同则抛 ConflictError；回滚后仍查不到记录则抛 StorageError
+- 只有唯一约束竞争可以按上述流程核实；提交确认丢失不得自动重试
+
+#### 提交结果未知处理
+
+**什么时候发生**：
+- 数据库提交时网络断开
+- 客户端不知道是否已提交成功
+
+**处理流程**：
+1. 带请求编号的服务用 `transaction(session, request_id=request_id)` 管理提交
+2. 事务辅助函数只在提交阶段失败时抛出 OutcomeUnknownError，并带原 request_id
+3. 界面显示"操作结果待核实"
+4. 提示用户按原 request_id 查询结果
+5. 提供 get_*_by_request 方法核实
+
+**不要自动重试**：
+- 可能已经成功，重试会重复收款/扣次
+- 必须先核实，再决定是否重试
+
+**查询结果方法**：
+- get_sale_by_request：查询办卡结果
+- get_entry_by_request：查询入场结果
+- get_session_by_request：查询排课结果
+- get_booking_by_request：查询预约结果
+
+#### 无请求编号的操作
+
+**例子**：
+- 签到：check_in（用 booking_id 核实）
+- 消课：complete（重复调用返回原 ConsumptionView）
+- 修改资料：update_member（资料更新不需要防重复）
+
+**处理**：
+- 已有记录编号的操作把 `record_id` 传给事务辅助函数，提交未知时按该记录核实
+- 幂等方法：核实后重复调用返回当前状态
+- 新建且没有请求编号的操作：提交未知时通过查询入口手工核实
+
+### 数据边界规则
+
+#### 数值范围
+
+**ID 和编号**：
+- 数据库 ID：1 到 2^63-1（BIGINT 有符号）
+- 不接受 bool 冒充整数
+- 不接受 0 或负数
+
+**金额**：
+- 单笔：0.01 到 99999999.99 元
+- 报表总和：可以超过单笔上限
+- 必须用 Decimal，不能用 float
+- 必须有限数，拒绝 NaN 和 Infinity
+- 最多两位小数；服务层拒绝三位及以上小数，不依赖数据库舍入
+
+**体测数值**：
+- 身高：100.00 到 250.00 cm
+- 体重：30.00 到 150.00 kg
+- 体脂率：0.00 到 100.00%（可选）
+- 两位小数，Decimal 类型
+
+**数量**：
+- 容量、课节数：1 到 2^31-1（INT 正数）
+- 余额、阈值：0 到 2^31-1（INT 非负）
+- 页码：>= 1
+- 每页条数：1 到 100
+- 评分：1 到 5
+- 不接受 bool
+
+#### 文字长度
+
+**去首尾空白后校验**：
+- 姓名/名称/位置：1-100 字
+- 资产编号：1-50 字
+- 电话：1-32 字（可空）
+- 专长：0-200 字（可空字符串）
+- 评价：0-1000 字（可空字符串）
+- 故障描述：1-1000 字
+
+**特殊规则**：
+- 专长和评价允许空字符串（非空字段）
+- 电话可空用 None，不用空字符串
+- 资产编号保留大小写且区分大小写
+
+#### 用户名规则
+
+- 去首尾空白并转为小写后校验和保存
+- 只允许 ASCII 字母、数字和下划线 `_`
+- 长度为 3-50 位
+- 规范化后的正则为：`^[a-z0-9_]{3,50}$`
+- 创建、修改账号时格式不合法抛 `InvalidInputError`
+- 登录时使用相同方式规范化用户名，再按规范化结果查询账号
+
+#### 密码规则
+
+**字符限制**：
+- 只允许 ASCII 字母、数字、短横线 `-`、下划线 `_`
+- 长度：6-32 位
+- 正则：`^[A-Za-z0-9_-]{6,32}$`
+
+**不允许**：
+- 空密码
+- 空格、中文、其他符号
+- 末尾换行
+
+**处理**：
+- 输入原样处理
+- 不去首尾空白
+- 不转小写
+- 用户名转小写，密码不转
+
+**哈希存储**：
+- 使用 argon2-cffi 提供的 Argon2id 哈希算法
+- 32 位限制针对输入密码
+- 哈希长度不限制，数据库用 VARCHAR(255)
+
+#### 日期和时间
+
+**日期范围**：
+- MySQL 支持 1000-9999 年
+- 日期加天数的结果也要检查溢出
+- 不接受超出范围的日期
+
+**时刻要求**：
+- 业务时刻必须带时区
+- 内部统一转 UTC 存储
+- MySQL DATETIME(6) 不带时区，需手工处理：
+  - 写入：转 UTC 后去掉时区信息
+  - 读取：补上 UTC 时区
+
+**时间窗口**：
+- DateWindow.start < DateWindow.end
+- 拒绝空区间、反向区间
+- 不接受无时区的时刻
+
+**写操作使用的当前时刻**：
+- 先取得该操作需要的全部业务行锁，再生成一次 UTC 当前时刻
+- 同一操作的状态边界、业务日期和写入时间都使用这一个时刻；门店日期由它转换得到
+- 锁等待跨过开课、下课或午夜边界时，按锁后时刻重新判断，不能沿用等待前的时间
+- 只有提交前的并发冲突可以重开事务；每次重开使用新的锁后时刻
+- 提交确认丢失时不得重开或重试，按原请求编号或记录编号核实
+
+### 特殊情况处理
+
+#### 最后一个启用管理员
+
+**问题**：如果停用最后一个管理员，系统无法管理
+
+**规则**：
+- 停用启用中的管理员前，使用 `AccountRepository.lock_active_admins((actor.account_id, account_id))`
+  在一条按账号编号升序的锁定当前读中取得操作者、目标账号与全部启用管理员
+- 在锁内重新检查目标账号仍为启用管理员，并按锁内结果计算人数
+- 如果锁内只剩一个启用管理员，拒绝停用 → InvalidState
+- 并发停用不同管理员时，后执行的事务必须看到前一事务提交后的启用人数
+- 提示：至少保留一个启用管理员
+
+#### 停用有业务的账号或档案
+
+**会员**：
+- 停用事务先锁会员，并在锁内检查 reserved/checked_in 预约；存在时 → InvalidState
+- 预约、办卡、入场和体测录入使用同一会员锁，并在锁内复核 `is_active`
+- 先处理完业务，再停用
+
+**教练**：
+- 有未结束的课次 → InvalidState
+- 先完成或取消课次，再停用
+
+**会员或教练档案**：
+- 档案停用后，关联账号不能登录或继续执行业务
+- 登录读取档案 `is_active`；每次业务操作在事务内锁定账号及关联档案后复核，停用时抛 AuthenticationError
+
+**账号**：
+- 账号停用后，关联会员或教练暂时不能登录或执行业务；不修改档案自身的 `is_active`
+- 账号恢复后，关联档案按其自身 `is_active` 状态恢复业务资格
+- 账号停用与业务复核锁定同一账号行；停用提交后，verify_actor 抛出 AuthenticationError
+
+#### 未来排课与开课前预约
+
+**未来排课**：
+- 可以排很远的课次（如明年的课）
+- 没有排课截止时间限制
+
+**开课前预约**：
+- 可以预约未来生效产品有效期内的课
+- 例子：
+  - 产品有效期：10/1 - 10/30
+  - 9/25 可以预约 10/5 的课
+  - 预约时产品尚未生效，但课次在有效期内
+
+**限制**：
+- 预约时必须检查上课日期在产品有效期内
+- 不能预约产品有效期外的课
+
+#### EOF 正常退出
+
+**Ctrl+C**：
+- 捕获 KeyboardInterrupt
+- 关闭资源，成功返回 0；关闭失败或再次中断返回 1
+
+**EOF**（输入结束）：
+- 捕获 EOFError
+- 关闭资源，成功返回 0；关闭失败或关闭中断返回 1
+
+**不是系统故障**：
+- 不记录 ERROR 级别日志
+- 可以记录 INFO 级别："用户退出"
+
+---
+
+
+## 数据库设计
+
+这部分是参考资料，实现数据访问层时查阅。
+
+### 设计原则
+
+1. **InnoDB 引擎**：提供事务支持
+2. **utf8mb4 字符集**：支持中文和 emoji
+3. **DATETIME(6)**：微秒精度时间戳
+4. **CHECK 约束**：数据库层校验（MySQL 8.0.16+）
+5. **外键约束**：保证引用完整性
+6. **唯一约束**：防止重复
+7. **索引**：加速查询
+8. **隔离级别**：所有池连接固定为 MySQL REPEATABLE READ；需要锁后最新状态的写流程仍显式使用锁定当前读
+
+### 核心表结构
+
+#### schema_versions（版本管理）
+
+```sql
+CREATE TABLE schema_versions (
+    version INT PRIMARY KEY,
+    applied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**用途**：按应用顺序记录数据库结构版本。版本 1 建立 18 张表，当前版本 2 增加查询索引和
+器械位置非空白约束；应用启动、演示数据命令和初始化数据库测试 fixture 均要求版本 2。
+
+#### accounts（账号表）
+
+```sql
+CREATE TABLE accounts (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(50) COLLATE utf8mb4_bin NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    KEY ix_account_role_active (role, is_active, id),
+    CHECK (username REGEXP '^[a-z0-9_]{3,50}$'),
+    CHECK (role IN ('member', 'coach', 'receptionist', 'admin')),
+    CHECK (is_active IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**说明**：
+- username 使用 utf8mb4_bin 排序规则，并只保存规范化后的小写值
+- password_hash 存储哈希后的密码，不存储明文
+- role 限定为四个固定值
+- is_active 用 BOOLEAN（实际是 TINYINT(1)）
+
+#### members（会员表）
+
+```sql
+CREATE TABLE members (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    account_id BIGINT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    phone VARCHAR(32) NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    FOREIGN KEY (account_id) REFERENCES accounts(id),
+    CHECK (CHAR_LENGTH(TRIM(name)) > 0),
+    CHECK (is_active IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**说明**：
+- account_id 可空且唯一（可以先建档后开账号）
+- name 去首尾空白后不能为空
+- phone 可空
+
+（完整最终结构由 [`sql/001_initial_schema.sql`](../sql/001_initial_schema.sql) 与
+[`sql/002_query_indexes_and_equipment_location.sql`](../sql/002_query_indexes_and_equipment_location.sql)
+按版本顺序形成。）
+
+### 索引策略
+
+**主键索引**：业务表使用 BIGINT AUTO_INCREMENT 主键；`schema_versions` 使用 INT 版本号主键
+
+**唯一索引**：
+- accounts.username
+- members.account_id
+- coaches.account_id
+- equipment.asset_code
+- payments.membership_id
+- gym_entries.(member_id, business_date)
+- bookings.(member_id, session_id)
+- operation_records.request_id
+
+`gym_entries` 使用 `(membership_id, member_id)` 复合外键引用
+`memberships.(id, member_id)`；会员卡记录再通过 `member_id` 引用 `members`，
+因此入场记录中的会员必须存在，且必须是该会员卡的持有人。
+
+**查询索引**：
+- accounts.(role, is_active, id) — 串行化最后一名启用管理员检查
+- memberships.(member_id, status, valid_until, id) — 续购最大到期日及会员持卡查询
+- memberships.(status, valid_until, id) — 全体到期提醒
+- payments.(paid_at, id) — 时间范围查询
+- payments.(member_id, paid_at, id) — 按会员查询收款并保持时间顺序
+- course_sessions.(starts_at, id) — 全部课表和课次报表的时间范围查询
+- course_sessions.(coach_id, starts_at, id) — 教练课表
+- course_sessions.(room_id, starts_at, id) — 场地安排
+- bookings.(member_id, status, session_id) — 会员开放预约及时间冲突候选
+- bookings.(session_id, status, id) — 课次学员名单
+- maintenance_records.(equipment_id, reported_at, id) — 器械维修历史
+- body_measurements.(member_id, created_at, id) — 体测权限判断
+
+其中 `accounts.(role, is_active, id)`、两个 `memberships` 查询索引、
+`payments.(member_id, paid_at, id)`、`course_sessions.(starts_at, id)`、
+`bookings.(member_id, status, session_id)` 与
+`maintenance_records.(equipment_id, reported_at, id)` 由版本 2 迁移增加。
+版本 2 同时为 `equipment.location` 增加去首尾空白后长度大于 0 的 CHECK。
+
+### 数据库初始化
+
+**初始化流程**：
+1. 检查数据库连接
+2. 取得 `cs2g3:schema:` 加数据库名摘要的结构命名锁，并检查目标为空库
+3. 按表执行 `sql/001_initial_schema.sql`，成功后记录版本 1
+4. 在同一结构锁内按顺序执行 `sql/002_query_indexes_and_equipment_location.sql`
+5. 八个迁移步骤均确认存在后记录版本 2，并返回 `InitResult(schema_version=2)`
+6. 失败时通过 `InitializationError` 报告已完成表、失败步骤和结果状态
+
+**版本 1 升级流程**：
+1. 在仓库根目录执行 `python -m src.cmd.db migrate --config CONFIG_PATH`
+2. 命令取得结构命名锁并确认最新版本为 1
+3. 对每个版本 2 索引或 CHECK 查询 `information_schema`，按脚本顺序应用缺少的结构
+4. 全部步骤确认后写入版本 2；再次执行已完成迁移时返回版本 2 和零个新步骤
+5. `MigrationError.completed_steps`、`failed_step` 和 `outcome_unknown` 用于定位失败并安全重试
+
+迁移前，现有 `equipment.location` 数据应满足 1～100 字且去首尾空白后非空；约束失败时
+修正对应数据，再运行同一迁移命令，已存在的同名结构会被跳过。
+
+**注意事项**：
+- MySQL 建表会隐式提交，不能回滚
+- 脚本检查空库，避免覆盖已有数据
+- 不使用 DROP TABLE IF EXISTS
+- `sql/001_initial_schema.sql` 固定版本 1；版本 2 结构只由 `sql/002_query_indexes_and_equipment_location.sql` 增加
+- 本文件中的 SQL 展示当前最终结构；命令以两个版本脚本为执行来源
+
+---
+
+## 公共类型定义
+
+这部分是参考资料，写代码时从 `src/models/contracts.py` 导入。
+
+### 基础类型
+
+```python
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Generic, Literal, TypeVar
+
+T = TypeVar("T")  # 泛型参数
+```
+
+### 角色和状态
+
+```python
+# 角色
 Role = Literal["member", "coach", "receptionist", "admin"]
+
+# 产品类型
+CardKind = Literal["monthly", "quarterly", "yearly", "count"]
+
+# 课程类型（当前只做私教）
 CourseKind = Literal["private"]
-MemberStatus = Literal["active", "archived"]
-GymCardStatus = Literal["active", "void"]
-LessonPackageStatus = Literal["active", "void"]
+
+# 产品状态
+CardStatus = Literal["active", "void"]
+
+# 课次状态
 SessionStatus = Literal["scheduled", "completed", "cancelled"]
-BookingStatus = Literal[
-    "reserved", "checked_in", "completed", "cancelled", "no_show"
-]
-PaymentMethod = Literal["cash", "card", "transfer"]
-GymCardStartPolicy = Literal["immediate", "append"]
-GiftActivationPolicy = Literal["immediate", "append"]
-GymCardKind = Literal["duration", "visit"]
-EntrySourceKind = Literal["duration_gym_card", "visit_gym_card", "booking"]
+
+# 预约状态
+BookingStatus = Literal["reserved", "cancelled", "checked_in", "completed", "no_show"]
+
+# 器械状态
 EquipmentStatus = Literal["available", "maintenance", "retired"]
-OperationName = Literal[
-    "create_member",
-    "sell_gym_card",
-    "sell_lesson_package",
-    "create_session",
-    "cancel_session",
-    "book",
-    "cancel_booking",
-    "register_entry",
-]
+
+# 收款方式
+PaymentMethod = Literal["cash", "card", "transfer"]
+
+# 操作名称（防重复）
+OperationName = Literal["sell_product", "create_session", "cancel_session", "book", "cancel_booking", "register_entry"]
+```
+
+### 分页和查询
+
+```python
+@dataclass(frozen=True, kw_only=True)
+class PageRequest:
+    """分页请求"""
+    page: int = 1  # 页码，从 1 开始
+    page_size: int = 20  # 每页条数，默认 20
+
+@dataclass(frozen=True, kw_only=True)
+class Page(Generic[T]):
+    """分页结果"""
+    items: list[T]  # 当前页的数据
+    total: int  # 总条数
+    page: int  # 当前页码
+    page_size: int  # 每页条数
+
+@dataclass(frozen=True, kw_only=True)
+class DateWindow:
+    """时间窗口"""
+    start: datetime  # 开始时间（包含）
+    end: datetime  # 结束时间（不包含）
+
+@dataclass(frozen=True, kw_only=True)
+class NamedQuery:
+    """通用名称查询"""
+    keyword: str = ""  # 关键词（模糊匹配）
+    is_active: bool | None = None  # 是否启用（None=不过滤）
+    paging: PageRequest = field(default_factory=PageRequest)
 
 @dataclass(frozen=True, kw_only=True)
 class Actor:
-    account_id: int
-    role: Role
-    member_id: int | None
-    coach_id: int | None
+    """当前操作人"""
+    account_id: int  # 账号编号
+    role: Role  # 角色
+    member_id: int | None  # member 角色必须有值，其他角色必须为 None
+    coach_id: int | None  # coach 角色必须有值，其他角色必须为 None
+```
 
+### 账号、会员与教练
+
+```python
 @dataclass(frozen=True, kw_only=True)
 class AccountInput:
-    username: str
-    password: str = field(repr=False)
+    username: str  # 去首尾空白并转小写后，只允许 3–50 位 ASCII 字母、数字和下划线
+    password: str = field(repr=False)  # 避免普通对象打印带出密码
     role: Role
 
 @dataclass(frozen=True, kw_only=True)
@@ -647,754 +5504,120 @@ class AccountView:
     coach_id: int | None
 
 @dataclass(frozen=True, kw_only=True)
-class MemberAccountLinkInput:
-    account_id: int
-    member_id: int
+class AccountLinkInput:
+    member_id: int | None
+    coach_id: int | None  # 恰好一项有值；将指定档案移交给空闲且角色匹配的目标账号
 
-@dataclass(frozen=True, kw_only=True)
-class CoachAccountLinkInput:
-    account_id: int
-    coach_id: int
-```
-
-身份不变量：
-
-- `member` 角色关联一个会员档案，`member_id` 有值，`coach_id` 为 `None`；`active` 和 `archived` 档案均可登录和查询本人历史。
-- `coach` 角色关联一个启用的教练档案，`coach_id` 有值，`member_id` 为 `None`。
-- `receptionist` 和 `admin` 不关联会员或教练档案，两个档案编号均为 `None`。
-- 账号停用、角色与档案不匹配或关联教练档案停用时，身份校验失败。会员档案归档由写服务拒绝新增业务，不使身份失效。
-
-用户名去除首尾空白并转换为小写，只允许 3～50 位 ASCII 字母、数字和下划线。密码按原值校验，长度为 8～128 个 Unicode 字符。
-
-### 9.2 `AuthService`
-
-```python
-class AuthService:
-    def __init__(
-        self,
-        session_factory: Callable[[], Session],
-        *,
-        log_config: LogConfig,
-    ) -> None: ...
-```
-
-构造输入为会话工厂和已校验日志配置，返回 `AuthService` 实例，不访问数据库或日志文件。服务保存依赖供后续账号、身份和日志查询方法使用。
-
-#### `login`
-
-```python
-def login(self, username: str, password: str) -> Actor: ...
-```
-
-- 输入：用户名和明文密码。
-- 返回：满足角色档案不变量的 `Actor`。
-- 权限：公开登录入口。
-- 异常：输入格式、凭据、账号状态、档案关联或档案状态任一校验失败时抛 `AuthenticationError`；密码工具不可用抛 `ResourceError`；存储故障抛 `StorageError`。
-- 数据变更：无业务数据变更；记录一次脱敏登录结果日志。
-
-服务规范化用户名后读取账号，使用 Argon2id 验证密码，并取得关联档案。终端提示对用户名不存在、密码错误和账号状态异常采用一致的认证失败消息。
-
-#### `create_account`
-
-```python
-def create_account(self, actor: Actor, data: AccountInput) -> AccountView: ...
-```
-
-- 输入：当前操作者和完整 `AccountInput`。
-- 返回：新账号的 `AccountView`。
-- 权限：管理员。
-- 异常：身份失效抛 `AuthenticationError`；非管理员抛 `PermissionDenied`；用户名或密码格式非法抛 `InvalidInputError`；用户名重复抛 `ConflictError`；哈希工具不可用抛 `ResourceError`；存储故障抛 `StorageError` 或 `OutcomeUnknownError`。
-- 数据变更：规范化用户名，使用 Argon2id 生成带随机盐的密码哈希，创建启用账号；不保存明文密码；记录脱敏操作日志。
-
-#### `get_account`
-
-```python
-def get_account(self, actor: Actor, account_id: int) -> AccountView: ...
-```
-
-- 输入：当前操作者和目标账号编号。
-- 返回：`AccountView`。
-- 权限：管理员。
-- 异常：身份失效抛 `AuthenticationError`；非管理员抛 `PermissionDenied`；账号不存在抛 `NotFoundError`；存储故障抛 `StorageError`。
-- 数据变更：无。
-
-#### `list_accounts`
-
-```python
-def list_accounts(self, actor: Actor, query: NamedQuery) -> Page[AccountView]: ...
-```
-
-- 输入：当前操作者，以及用户名关键字、启用状态和分页条件。
-- 返回：按账号 `id` 升序稳定分页的 `Page[AccountView]`。
-- 权限：管理员。
-- 异常：身份失效抛 `AuthenticationError`；非管理员抛 `PermissionDenied`；查询或分页条件非法抛 `InvalidInputError`；存储故障抛 `StorageError`。
-- 数据变更：无。
-
-#### `set_account_active`
-
-```python
-def set_account_active(
-    self,
-    actor: Actor,
-    account_id: int,
-    active: bool,
-) -> AccountView: ...
-```
-
-- 输入：当前操作者、目标账号编号和目标启用状态。
-- 返回：修改后的 `AccountView`。
-- 权限：管理员。
-- 异常：身份失效抛 `AuthenticationError`；非管理员抛 `PermissionDenied`；账号不存在抛 `NotFoundError`；停用最后一名启用管理员抛 `InvalidState`；存储故障抛 `StorageError` 或 `OutcomeUnknownError`。
-- 数据变更：更新目标账号 `is_active`，记录脱敏操作日志。
-
-并发规则：操作者和目标账号按 `account_id` 升序在一条锁定当前读中取得。停用管理员时，同一条查询还锁定全部启用管理员；获得完整锁集合后复核操作者、目标状态和启用管理员数量。
-
-#### `link_member`
-
-```python
-def link_member(
-    self,
-    actor: Actor,
-    data: MemberAccountLinkInput,
-) -> AccountView: ...
-```
-
-- 输入：当前操作者、会员账号编号和会员档案编号。
-- 返回：关联后的目标 `AccountView`；相同关联重复提交返回当前结果。
-- 权限：管理员。
-- 异常：身份失效抛 `AuthenticationError`；非管理员抛 `PermissionDenied`；账号或档案不存在抛 `NotFoundError`；账号角色不是 `member` 抛 `InvalidState`；账号或档案已存在其他关联抛 `ConflictError`；存储故障抛 `StorageError` 或 `OutcomeUnknownError`。
-- 数据变更：创建 `member_account_links` 记录并记录脱敏操作日志。
-
-并发规则：操作者账号和目标账号按编号升序锁定，再锁定会员档案；数据库双向唯一约束作为最终防重。
-
-#### `link_coach`
-
-```python
-def link_coach(
-    self,
-    actor: Actor,
-    data: CoachAccountLinkInput,
-) -> AccountView: ...
-```
-
-- 输入：当前操作者、教练账号编号和教练档案编号。
-- 返回：关联后的目标 `AccountView`；相同关联重复提交返回当前结果。
-- 权限：管理员。
-- 异常：与 `link_member` 相同；账号角色必须是 `coach`。
-- 数据变更：创建 `coach_account_links` 记录并记录脱敏操作日志。
-- 并发规则：操作者账号和目标账号按编号升序锁定，再锁定教练档案；数据库双向唯一约束作为最终防重。
-
-#### `relink_member` 与 `relink_coach`
-
-```python
-def relink_member(
-    self, actor: Actor, account_id: int, member_id: int,
-) -> AccountView: ...
-def relink_coach(
-    self, actor: Actor, account_id: int, coach_id: int,
-) -> AccountView: ...
-```
-
-- 输入：目标账号和新的同角色档案编号；账号当前可以没有关联或关联另一档案。
-- 返回：关联纠正后的 `AccountView`；目标关联已是当前关联时返回当前结果。
-- 权限：仅管理员。
-- 异常：账号或档案不存在抛 `NotFoundError`；角色不匹配或教练档案停用抛 `InvalidState`；新档案已被另一账号关联抛 `ConflictError`；身份或存储故障按账号服务统一异常处理。
-- 数据变更：在一个事务中删除目标账号的原关联并创建新关联，保留账号和档案，记录不含姓名、电话和体测信息的结构化审计日志。
-- 事务：先按 `account_id` 升序锁定操作者账号和目标账号，再按档案主键升序锁定旧档案与新档案；锁内复核角色、当前关系和双向唯一性。会员与教练接口使用对称流程。
-
-#### `verify_actor`
-
-```python
-def verify_actor(self, session: Session, actor: Actor) -> Actor: ...
-```
-
-- 输入：调用方当前事务的 Session 和进程内 Actor。
-- 返回：从数据库复核得到的最新 `Actor`。
-- 权限：供所有业务服务在事务内调用。
-- 异常：账号不存在、停用、角色变化、档案关联变化、教练档案停用或角色档案不变量不成立时抛 `AuthenticationError`；存储故障抛 `StorageError`。关联会员为 `archived` 时仍返回可信 `Actor`。
-- 数据变更：无；锁定账号和关联档案直至调用方事务结束。
-
-锁顺序固定为账号、会员档案、教练档案。`verify_actor` 使用调用方事务且不提交。
-
-#### `open_log_snapshot`
-
-```python
-def open_log_snapshot(self, actor: Actor) -> LogSnapshot: ...
-```
-
-- 输入：当前操作者。
-- 返回：一次日志浏览使用的固定 `LogSnapshot`。
-- 权限：管理员。
-- 异常：身份失效抛 `AuthenticationError`；非管理员抛 `PermissionDenied`；日志文件或跨进程锁不可用抛 `ResourceError`。
-- 数据变更：无；读取当前日志及配置允许数量的备份并复制为内存快照。
-
-#### `query_logs`
-
-```python
-def query_logs(
-    self,
-    actor: Actor,
-    query: LogQuery,
-    *,
-    snapshot: LogSnapshot,
-) -> Page[LogEntry]: ...
-```
-
-- 输入：当前操作者、筛选与分页条件，以及 `open_log_snapshot` 返回的固定快照。
-- 返回：按时间倒序、同时间按文件记录顺序倒序的 `Page[LogEntry]`。
-- 权限：管理员；每次筛选和翻页都重新验证身份。
-- 异常：身份失效抛 `AuthenticationError`；非管理员抛 `PermissionDenied`；条件非法抛 `InvalidInputError`；日志资源不可用抛 `ResourceError`。
-- 数据变更：无；同一次浏览的筛选和翻页沿用同一快照，刷新时创建新快照。
-
-### 9.3 密码接口
-
-```python
-def hash_password(password: str) -> str: ...
-def verify_password(password: str, password_hash: str) -> bool: ...
-```
-
-`hash_password` 校验密码格式并返回包含算法、参数和随机盐的 Argon2id 哈希；格式非法抛 `InvalidInputError`，依赖不可用抛 `ResourceError`。
-
-`verify_password` 对合法格式的明文密码进行验证，匹配返回 `True`，不匹配或输入格式非法返回 `False`；存储哈希损坏抛 `StorageError`，依赖不可用抛 `ResourceError`。
-
-## 10. 错误处理
-
-### 10.1 异常分类
-
-所有可安全展示的项目异常继承 `GymError`，其 `message` 为中文安全提示。
-
-| 异常 | 使用场景 |
-|---|---|
-| `InvalidInputError` | 类型、格式、长度、范围或组合条件非法 |
-| `AuthenticationError` | 登录失败或当前可信身份失效 |
-| `PermissionDenied` | 角色或数据归属没有操作权限 |
-| `NotFoundError` | 记录不存在或对操作者不可见 |
-| `InvalidState` | 当前状态不允许执行操作 |
-| `ConflictError` | 唯一值、重复请求或并发状态冲突 |
-| `GymCardNotEligible` | 已确认归属的健身房卡状态或日期不满足入场 |
-| `BookingEntryNotEligible` | 已确认归属的预约状态或业务日期不满足入场 |
-| `LessonPackageNotEligible` | 已确认归属的课包状态或课次日期不满足预约 |
-| `InsufficientLessonCredits` | 私教课包可用课节不足 |
-| `ScheduleConflict` | 会员、教练或场地时间冲突 |
-| `CapacityExceeded` | 课次名额不足 |
-| `ResourceError` | 文件、终端能力或外部工具不可用 |
-| `StorageError` | 数据库访问或资源释放失败 |
-| `OutcomeUnknownError` | 提交确认丢失，需要按编号核实 |
-| `InitializationError` | 初始化部分完成，携带已完成表与失败步骤 |
-| `MigrationError` | 迁移部分完成，携带已完成步骤与失败步骤 |
-
-`InputCancelled` 表示用户主动取消输入，由交互层返回上级菜单。
-
-### 10.2 处理结果
-
-```python
-ErrorAction = Literal["continue", "login", "exit", "verify"]
-
-@dataclass(frozen=True, kw_only=True)
-class ErrorResult:
-    message: str
-    action: ErrorAction
-    request_id: str | None = None
-    record_id: int | None = None
-```
-
-### 10.3 `handle_error`
-
-```python
-def handle_error(
-    error: Exception,
-    *,
-    operation: str,
-    actor_id: int | None = None,
-    request_id: str | None = None,
-    fatal: bool = False,
-) -> ErrorResult: ...
-```
-
-- 输入：异常、固定操作名、可选操作者编号、请求编号和致命标记。
-- 返回：安全中文提示、界面动作和可选核实编号。
-- 异常：处理函数吸收日志写入失败并返回原业务所需动作；EOF 和 KeyboardInterrupt 由调用边界直接传播。
-- 数据变更：记录一次脱敏日志；不操作业务事务或数据库会话。
-
-分类规则：业务拒绝使用 WARNING 和 `continue`；身份失效使用 WARNING 和 `login`；存储或未知系统错误使用 ERROR 和 `exit`；`OutcomeUnknownError` 使用 ERROR 和 `verify`。`fatal=True` 时动作固定为 `exit`。
-
-## 11. 日志系统
-
-### 11.1 日志记录
-
-```python
-def configure_logging(settings: AppSettings) -> None: ...
-
-def log_event(
-    level: int,
-    *,
-    operation: str,
-    outcome: str,
-    actor_id: int | None = None,
-    request_id: str | None = None,
-    result_id: int | None = None,
-    error: Exception | None = None,
-    attendance_change: AttendanceChange | None = None,
-) -> bool: ...
-
-def close_logging() -> None: ...
-```
-
-`configure_logging` 创建日志目录和轮转处理器，日志文件为 `settings.log.directory / "app.log"`。初始化失败抛 `ResourceError`，使启动流程停止。
-
-`log_event` 接收固定操作名、结果类别和非敏感编号，成功返回 `True`，运行期写入失败返回 `False` 并向标准错误输出固定提示。日志字段包括：
-
-- UTC 时间戳；
-- 日志级别；
-- `operation`；
-- `outcome`：`success`、`rejected`、`failed` 或 `unknown`；
-- `actor_id`、`request_id`、`result_id`；
-- 异常类型和安全错误消息；
-- 可选签到状态变化；
-- 文件名、行号和函数名组成的堆栈帧；
-- 截断标记。
-
-单条日志最大 16 KiB。密码、连接串、完整联系方式、SQL 参数、完整 SQL、体测明细和课包余额不进入日志。`GymError.message` 可作为安全消息；未知异常只记录类型和脱敏堆栈位置。
-
-`close_logging` 刷新并释放日志文件句柄，允许重复调用。关闭失败向标准错误输出固定安全提示。
-
-### 11.2 日志查询类型
-
-```python
-@dataclass(frozen=True, kw_only=True)
-class LogFrame:
-    filename: str
-    line_number: int
-    function_name: str
-
-@dataclass(frozen=True, kw_only=True)
-class LogEntry:
-    timestamp: datetime
-    level: str
-    operation: str
-    outcome: str
-    actor_id: int | None
-    request_id: str | None
-    result_id: int | None
-    error_type: str | None
-    error_message: str | None
-    attendance_change: AttendanceChange | None = None
-    frames: tuple[LogFrame, ...] = ()
-    truncated: bool = False
-
-@dataclass(frozen=True, kw_only=True)
-class LogSnapshot:
-    captured_at: datetime
-    entries: tuple[LogEntry, ...]
-    skipped_lines: int
-
-@dataclass(frozen=True, kw_only=True)
-class LogQuery:
-    window: DateWindow | None = None
-    level: str | None = None
-    operation: str | None = None
-    actor_id: int | None = None
-    request_id: str | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
-```
-
-```python
-def read_log_snapshot(directory: Path, *, backup_count: int) -> LogSnapshot: ...
-def query_log_snapshot(snapshot: LogSnapshot, query: LogQuery) -> Page[LogEntry]: ...
-```
-
-`read_log_snapshot` 在跨进程文件锁内复制当前日志与 `app.log.1` 至 `app.log.<backup_count>`，释放锁后解析。无日志时返回空快照，格式损坏的行计入 `skipped_lines`，文件或锁不可用时抛 `ResourceError`。
-
-`query_log_snapshot` 校验查询条件，在固定快照中筛选、稳定排序并分页，返回 `Page[LogEntry]`；非法条件抛 `InvalidInputError`，数据变更为无。
-
-### 11.3 本机日志命令
-
-```python
-def main(argv: list[str] | None = None) -> int: ...
-```
-
-`python -m src.cmd.logs --config PATH` 按本机文件权限读取配置对应的日志目录并进入查询交互。正常退出返回 0，读取失败返回 1，参数错误返回 2。
-
-
-## 12. 会员、产品、销售与权益领域
-
-> **本章负责人快速导航**
-> 
-> - **Xingzhou PENG**（会员、健身房卡、私教课包）：
->   - 会员建档 → [3.1 MemberService.create_member](#create_member)
->   - 健身房卡销售 → [3.5 SalesService.sell_gym_card](#sell_gym_card)
->   - 私教课包销售 → [3.5 SalesService.sell_lesson_package](#sell_lesson_package)
->   - 门禁入场 → [3.7 AccessService.register_entry](#37-accessservice)
->   - 数据库表结构 → [6. SQL 表、字段、约束和索引](#6-sql-表字段约束和索引)
-> 
-> - **Mingjin LI**（收款、报表）：
->   - 销售订单查询 → [3.5 SalesService](#35-salesservice)
->   - 收入报表 → 第 13 章 [8. 报表与导出](#8-报表与导出)
-
-### 1. 核心业务关系
-
-系统使用以下关系表达业务：
-
-1. 会员档案 Member 永久保留，用于关联购买、预约、入场和历史记录
-2. 登录账号 Account 负责认证和角色，会员账号通过 MemberAccountLink 关联档案
-3. 健身房卡 GymCard 提供普通健身房会员资格和门禁资格
-4. 私教课包 LessonPackage 提供可预约、可占用和可消耗的私教课节
-5. 购买私教课包可依据 LessonPackageGiftRule 生成赠送健身房卡
-6. 私教预约可在课次当天提供入场资格
-7. 一次销售创建 SaleOrder、SaleItem、Payment 以及对应权益
-
-**举例：前台为会员购买 20 节私教课**
-
-系统在一个事务中完成：
-- 创建销售订单和私教课销售项目
-- 创建 20 节私教课包
-- 创建一笔收款
-- 命中赠卡规则时创建赠送记录和健身房卡
-- 创建防重复操作记录
-
-任一步失败时，办课、收款和赠卡都不落库，避免”钱收了但课包没发”。
-
-**为什么要用一个事务？** 因为销售涉及多张表（订单、付款、权益），如果分开提交，中间出错会导致数据不一致。用一个事务保证要么全部成功，要么全部回滚。
-
-### 2. 领域边界
-
-| 领域 | 负责内容 |
-|---|---|
-| 身份与档案 | 账号认证、会员档案、账号与档案关联 |
-| 健身房卡 | 卡产品、已发放卡、有效期、卡来源 |
-| 私教课包 | 课包产品、已售课包、余额、预约占用 |
-| 销售与付款 | 订单、销售项目、收款、赠送来源 |
-| 预约与消课 | 预约、占用、取消、签到、消课 |
-| 入场授权 | 按卡或预约核定一次入场来源 |
-
-模块之间通过编号和 View 类型对接。业务列表返回 `Page[T]`，详情返回固定 View，失败抛业务异常。
-
-### 3. 派生状态（从数据实时计算）
-
-这些状态从数据计算出来，不存在数据库里：
-
-- **普通会员资格**：指定日期有可用健身房卡
-  - 期限卡：`status=”active”` 且 `valid_from <= 日期 < valid_until`
-  - 次卡：`status=”active”` 且 `remaining_entries > 0`
-- **期限卡展示状态**：按 `valid_from/valid_until` 推导 `not_started/active/expired`
-- **次卡展示状态**：按 `remaining_entries` 推导 `active/exhausted`
-- **私教课包可用课节**：`remaining_lessons - reserved_lessons`
-- **私教课包日期资格**：`status=”active”`，且上课日期在有效期内
-
-数据库只保存 `active` 或 `void`，其他展示状态查询时计算。
-
-### 4. 公共类型与接口合同
-
-#### 4.1 枚举和类型别名
-
-本领域复用第 9.1 节定义的 `MemberStatus`、`GymCardStatus`、`LessonPackageStatus`、`PaymentMethod` 等。本节补充销售与权益来源类型：
-
-```python
-EntitlementOriginKind = Literal[“purchase”, “gift”]
-SaleKind = Literal[“gym_card”, “lesson_package”]
-SaleItemKind = Literal[“gym_card”, “lesson_package”]
-OperationResultKind = Literal[
-    “member”, “sale_order”, “course_session”, “booking”, “gym_entry”
-]
-```
-
-`MemberStatus` 表示档案是否接受新业务，不表示账号能否登录，也不表示是否有健身房会员资格。
-
-#### 4.2 会员档案类型
-
-```python
 @dataclass(frozen=True, kw_only=True)
 class MemberInput:
     name: str
-    phone: str | None
+    phone: str | None  # 电话号码必须传入；None 表示明确留空或清空
 
 @dataclass(frozen=True, kw_only=True)
 class MemberView:
     id: int
+    account_id: int | None
     name: str
     phone: str | None
-    status: MemberStatus
-    archived_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
+    is_active: bool
 
 @dataclass(frozen=True, kw_only=True)
 class MemberQuery:
     member_id: int | None = None
-    keyword: str = ""
-    status: MemberStatus | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
-
-@dataclass(frozen=True, kw_only=True)
-class MemberAccountLinkView:
-    account_id: int
-    member_id: int
-    linked_at: datetime
-    linked_by: int
-```
-
-可空约定：
-
-- phone=None 表示没有联系方式，空字符串不合法。
-- archived_at 只有 status="archived" 时有值。
-- MemberView 不含 account_id；账号关联通过独立查询返回 MemberAccountLinkView。
-
-#### 2.3 健身房卡产品与实例类型
-
-```python
-@dataclass(frozen=True, kw_only=True)
-class DurationGymCardProductTerms:
-    kind: Literal["duration"]
-    name: str
-    price: Decimal
-    valid_days: int
-    start_policy: GymCardStartPolicy
-
-@dataclass(frozen=True, kw_only=True)
-class VisitGymCardProductTerms:
-    kind: Literal["visit"]
-    name: str
-    price: Decimal
-    total_entries: int
-
-GymCardProductTerms = (
-    DurationGymCardProductTerms | VisitGymCardProductTerms
-)
-
-@dataclass(frozen=True, kw_only=True)
-class DurationGymCardProductView:
-    kind: Literal["duration"]
-    id: int
-    terms: DurationGymCardProductTerms
-    is_sale_enabled: bool
-    is_gift_enabled: bool
-    created_at: datetime
-    updated_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class VisitGymCardProductView:
-    kind: Literal["visit"]
-    id: int
-    terms: VisitGymCardProductTerms
-    is_sale_enabled: bool
-    created_at: datetime
-    updated_at: datetime
-
-GymCardProductView = (
-    DurationGymCardProductView | VisitGymCardProductView
-)
-
-@dataclass(frozen=True, kw_only=True)
-class PurchasedGymCardOriginView:
-    sale_order_id: int
-    sale_item_id: int
-
-@dataclass(frozen=True, kw_only=True)
-class GiftedGymCardOriginView:
-    gift_grant_id: int
-    trigger_sale_order_id: int
-    trigger_sale_item_id: int
-    gift_rule_id: int
-
-GymCardOriginView = PurchasedGymCardOriginView | GiftedGymCardOriginView
-
-@dataclass(frozen=True, kw_only=True)
-class DurationGymCardView:
-    kind: Literal["duration"]
-    id: int
-    member_id: int
-    product_id: int
-    name: str
-    valid_days: int
-    start_policy: GymCardStartPolicy
-    valid_from: date
-    valid_until: date
-    status: GymCardStatus
-    origin: GymCardOriginView
-    created_at: datetime
-    updated_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class VisitGymCardView:
-    kind: Literal["visit"]
-    id: int
-    member_id: int
-    product_id: int
-    name: str
-    total_entries: int
-    remaining_entries: int
-    status: GymCardStatus
-    origin: PurchasedGymCardOriginView
-    created_at: datetime
-    updated_at: datetime
-
-GymCardView = DurationGymCardView | VisitGymCardView
-
-@dataclass(frozen=True, kw_only=True)
-class GymCardQuery:
-    member_id: int | None = None
-    kind: GymCardKind | None = None
-    status: GymCardStatus | None = None
-    origin_kind: EntitlementOriginKind | None = None
-    valid_on: date | None = None
-    expires_before: date | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
-
-@dataclass(frozen=True, kw_only=True)
-class GymMembershipView:
-    member_id: int
-    business_date: date
-    is_member: bool
-    eligible_card_ids: tuple[int, ...]
-```
-
-`GymCardProductTerms` 和 `GymCardView` 是以 `kind` 判别的封闭联合。期限卡按日期提供资格，次卡按剩余入场次数提供资格；两者都属于健身房卡域，不提供私教课节。
-
-期限卡的 `valid_until` 不含该日期，`valid_from` 算第一天。例如 `valid_from=2026-09-25`、`valid_days=30` 时，`valid_until=2026-10-25`，最后有效日为 2026-10-24。
-
-start_policy 的含义：
-
-- immediate：从销售或赠送事务生成的门店当天开始。
-- append：从 max(门店当天，该会员所有未作废期限卡的最大 valid_until) 开始。
-
-次卡要求 `total_entries > 0`，实例初始 `remaining_entries=total_entries`，没有生效日或到期日。产品修改只影响后续发放。期限卡保存名称、有效天数、起止日期和策略快照；次卡保存名称和总次数快照。
-
-#### 2.4 私教课包产品、赠卡规则与实例类型
-
-```python
-@dataclass(frozen=True, kw_only=True)
-class LessonPackageProductTerms:
-    name: str
-    price: Decimal
-    lesson_credits: int
-    valid_days: int | None
-
-@dataclass(frozen=True, kw_only=True)
-class LessonPackageProductView:
-    id: int
-    terms: LessonPackageProductTerms
-    is_sale_enabled: bool
-    created_at: datetime
-    updated_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class LessonPackageGiftRuleInput:
-    trigger_product_id: int
-    reward_gym_card_product_id: int
-    reward_quantity: int
-    activation_policy: GiftActivationPolicy
-
-@dataclass(frozen=True, kw_only=True)
-class GiftRuleRevisionInput:
-    reward_gym_card_product_id: int
-    reward_quantity: int
-    activation_policy: GiftActivationPolicy
-
-@dataclass(frozen=True, kw_only=True)
-class LessonPackageGiftRuleView:
-    id: int
-    trigger_product_id: int
-    reward_gym_card_product_id: int
-    reward_quantity: int
-    activation_policy: GiftActivationPolicy
-    version: int
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class LessonPackageGiftRuleQuery:
-    trigger_product_id: int | None = None
-    reward_gym_card_product_id: int | None = None
+    keyword: str = ""  # 姓名包含匹配，同名用 ID 区分
     is_active: bool | None = None
     paging: PageRequest = field(default_factory=PageRequest)
 
 @dataclass(frozen=True, kw_only=True)
-class LessonPackageView:
-    id: int
-    member_id: int
-    product_id: int
-    sale_order_id: int
-    sale_item_id: int
+class CoachInput:
+    account_id: int
     name: str
-    total_lessons: int
-    remaining_lessons: int
-    reserved_lessons: int
-    valid_from: date
-    valid_until: date | None
-    status: LessonPackageStatus
-    created_at: datetime
-    updated_at: datetime
-
-    @property
-    def available_lessons(self) -> int:
-        return self.remaining_lessons - self.reserved_lessons
+    specialty: str
 
 @dataclass(frozen=True, kw_only=True)
-class LessonPackageQuery:
-    member_id: int | None = None
-    status: LessonPackageStatus | None = None
-    valid_on: date | None = None
-    expires_before: date | None = None
-    available_lessons_at_most: int | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
+class CoachUpdateInput:
+    name: str
+    specialty: str  # 资料编辑不改变账号关联
+
+@dataclass(frozen=True, kw_only=True)
+class CoachView:
+    id: int
+    account_id: int
+    name: str
+    specialty: str
+    is_active: bool
 ```
 
-可空约定：
-
-- LessonPackageProductTerms.valid_days=None 表示课包无日期截止；课节仍受余额和作废状态约束。
-- LessonPackageView.valid_until=None 只对应无截止产品。
-- 有截止产品使用 valid_until = valid_from + valid_days，且 valid_until 不含该日期。
-
-一个启用的 `LessonPackageGiftRule` 表示每购买一份 `trigger_product_id` 指定的私教课包产品，就触发一次赠送，生成 `reward_quantity` 张期限型健身房卡。奖励产品必须是 `DurationGymCardProductView` 且 `is_gift_enabled=True`，次卡不能作为赠品。规则只对单次购买的一份课包生效，不跨订单累计购买数量。`activation_policy="immediate"` 时 `reward_quantity` 必须为 1；`activation_policy="append"` 时允许多张卡按顺序接续。赠卡名称和有效天数取销售事务内锁定的期限卡产品并保存快照，生效策略保存规则快照。
-
-#### 2.5 销售、付款和赠送类型
+### 产品、已售权益与入场
 
 ```python
 @dataclass(frozen=True, kw_only=True)
-class GymCardSaleInput:
-    member_id: int
-    gym_card_product_id: int
-    method: PaymentMethod
+class CardTerms:
+    name: str
+    kind: CardKind
+    price: Decimal
+    private_lesson_credits: int  # 购买 20/64/256 节私教课时附赠门禁卡；独立次卡为 0 节
+    access_uses: int | None  # 次卡为总入场次数；期限卡为 None
+    valid_days: int | None  # 月/季/年固定为 30/90/365；次卡无期限，为 None
 
 @dataclass(frozen=True, kw_only=True)
-class LessonPackageSaleInput:
-    member_id: int
-    lesson_package_product_id: int
-    method: PaymentMethod
+class CardProductView:
+    id: int
+    terms: CardTerms
+    is_active: bool
 
 @dataclass(frozen=True, kw_only=True)
-class SaleOrderView:
+class CardView:
     id: int
     member_id: int
-    kind: SaleKind
-    total_amount: Decimal
-    sold_at: datetime
-    operator_id: int
+    product_id: int
+    terms: CardTerms  # 售出快照，不实时读取产品
+    valid_from: date
+    valid_until: date | None  # 不含此日期；次卡无期限，为 None
+    remaining_accesses: int | None
+    remaining_private_lessons: int
+    reserved_private_lessons: int
+    status: CardStatus
+
+    @property
+    def available_private_lessons(self) -> int:
+        """返回账面剩余减占用；卡过期时该余额不可新预约，日期资格另由服务检查。"""
+        raise NotImplementedError("CardView.available_private_lessons 尚未实现")
 
 @dataclass(frozen=True, kw_only=True)
-class SaleOrderQuery:
+class CardQuery:
     member_id: int | None = None
-    kind: SaleKind | None = None
-    operator_id: int | None = None
-    window: DateWindow | None = None
+    status: CardStatus | None = None
+    valid_on: date | None = None  # 仅筛在该门店日期有效且未作废的卡
+    expires_before: date | None = None  # valid_until 严格早于此日期
+    private_lessons_at_most: int | None = None  # 只筛私教课产品，按剩余减占用筛选，包含阈值
     paging: PageRequest = field(default_factory=PageRequest)
 
 @dataclass(frozen=True, kw_only=True)
-class SaleItemView:
-    id: int
-    sale_order_id: int
-    kind: SaleItemKind
+class SaleInput:
+    member_id: int
     product_id: int
-    product_name: str
-    quantity: int
-    unit_price: Decimal
-    line_amount: Decimal
+    method: PaymentMethod
+
+@dataclass(frozen=True, kw_only=True)
+class EntryInput:
+    member_id: int
+    membership_id: int  # 当日首次入场选择的卡；再次入场沿用当日记录
+
+@dataclass(frozen=True, kw_only=True)
+class EntryView:
+    id: int
+    member_id: int
+    membership_id: int
+    business_date: date  # 服务按门店时区生成，不由界面指定
+    entered_at: datetime  # 当日首次登记的 UTC 时刻
+    accesses_used: int  # 首次用次卡为 1，用期限卡为 0；重复调用仍返回原值
+    operator_id: int
 
 @dataclass(frozen=True, kw_only=True)
 class PaymentView:
     id: int
-    sale_order_id: int
+    membership_id: int
     member_id: int
     amount: Decimal
     method: PaymentMethod
@@ -1402,2334 +5625,53 @@ class PaymentView:
     operator_id: int
 
 @dataclass(frozen=True, kw_only=True)
-class GiftGrantView:
-    id: int
-    member_id: int
-    trigger_sale_order_id: int
-    trigger_sale_item_id: int
-    gift_rule_id: int
-    sequence: int
-    gym_card_id: int
-    granted_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class SaleOrderDetailView:
-    order: SaleOrderView
-    items: tuple[SaleItemView, ...]
+class SaleView:
+    card: CardView
     payment: PaymentView
-    gym_cards: tuple[GymCardView, ...]
-    lesson_packages: tuple[LessonPackageView, ...]
-    gift_grants: tuple[GiftGrantView, ...]
 
 @dataclass(frozen=True, kw_only=True)
-class LegacyOperationResultView:
-    request_id: str
-    legacy_operation: str
-    target_operation: OperationName
-    result_kind: OperationResultKind
-    result_id: int
-    legacy_payload_hash: str
-    migrated_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class GymCardSaleResultView:
-    order: SaleOrderView
-    item: SaleItemView
-    payment: PaymentView
-    card: GymCardView
-
-@dataclass(frozen=True, kw_only=True)
-class LessonPackageSaleResultView:
-    order: SaleOrderView
-    item: SaleItemView
-    payment: PaymentView
-    package: LessonPackageView
-    gift_grants: tuple[GiftGrantView, ...]
-    gifted_cards: tuple[GymCardView, ...]
+class PaymentQuery:
+    window: DateWindow | None = None  # 按 paid_at 筛选
+    member_id: int | None = None
+    method: PaymentMethod | None = None
+    paging: PageRequest = field(default_factory=PageRequest)
 ```
 
-每个当前销售接口创建一个 `quantity=1` 的付费项目。未触发赠送时，`gift_grants`、`gifted_cards` 以及详情中的对应集合均返回空元组，不返回 `None`。赠送卡不生成第二笔付款，也不生成金额为零的付款。
-
-#### 2.6 预约、消课和入场授权类型
+### 课程、预约、签到与评价
 
 ```python
-@dataclass(frozen=True, kw_only=True)
-class BookingInput:
-    member_id: int
-    session_id: int
-    lesson_package_id: int
-
-@dataclass(frozen=True, kw_only=True)
-class BookingView:
-    id: int
-    member_id: int
-    member_name: str
-    lesson_package_id: int
-    session: SessionView
-    status: BookingStatus
-    booked_at: datetime
-    checked_in_at: datetime | None
-    closed_at: datetime | None
-
-@dataclass(frozen=True, kw_only=True)
-class ConsumptionView:
-    id: int
-    booking_id: int
-    lesson_package_id: int
-    lessons_used: int
-    completed_at: datetime
-    operator_id: int
-
-@dataclass(frozen=True, kw_only=True)
-class DurationGymCardEntrySourceInput:
-    kind: Literal["duration_gym_card"]
-    gym_card_id: int
-
-@dataclass(frozen=True, kw_only=True)
-class VisitGymCardEntrySourceInput:
-    kind: Literal["visit_gym_card"]
-    gym_card_id: int
-
-@dataclass(frozen=True, kw_only=True)
-class BookingEntrySourceInput:
-    kind: Literal["booking"]
-    booking_id: int
-
-EntrySourceInput = (
-    DurationGymCardEntrySourceInput
-    | VisitGymCardEntrySourceInput
-    | BookingEntrySourceInput
-)
-
-@dataclass(frozen=True, kw_only=True)
-class EntryInput:
-    member_id: int
-    source: EntrySourceInput
-
-@dataclass(frozen=True, kw_only=True)
-class DurationGymCardEntryAuthorization:
-    kind: Literal["duration_gym_card"]
-    entry_id: int
-    member_id: int
-    business_date: date
-    gym_card_id: int
-    authorized_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class VisitGymCardEntryAuthorization:
-    kind: Literal["visit_gym_card"]
-    entry_id: int
-    member_id: int
-    business_date: date
-    gym_card_id: int
-    remaining_entries: int
-    authorized_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class BookingEntryAuthorization:
-    kind: Literal["booking"]
-    entry_id: int
-    member_id: int
-    business_date: date
-    booking_id: int
-    authorized_at: datetime
-
-EntryAuthorization = (
-    DurationGymCardEntryAuthorization
-    | VisitGymCardEntryAuthorization
-    | BookingEntryAuthorization
-)
-
-@dataclass(frozen=True, kw_only=True)
-class EntryView:
-    id: int
-    member_id: int
-    authorization: EntryAuthorization
-    business_date: date
-    entered_at: datetime
-    operator_id: int
-```
-
-`EntryInput` 使用三个有名称的来源类型，调用方必须明确选择期限卡、次卡或预约。输出始终是 `EntryView`，`authorization` 是带 `kind` 判别字段的封闭联合。
-
-预约只引用 LessonPackage。消课只修改 LessonPackage 的课节余额，不读取或修改 GymCard。
-
-### 3. 服务接口与行为
-
-#### 3.1 MemberService
-
-```python
-class MemberService:
-    def create_member(
-        self, actor: Actor, data: MemberInput, request_id: str
-    ) -> MemberView: ...
-
-    def get_member_by_request(
-        self, actor: Actor, request_id: str
-    ) -> MemberView: ...
-
-    def get_member(
-        self, actor: Actor, member_id: int
-    ) -> MemberView: ...
-
-    def list_members(
-        self, actor: Actor, query: MemberQuery
-    ) -> Page[MemberView]: ...
-
-    def update_member(
-        self,
-        actor: Actor,
-        member_id: int,
-        data: MemberInput,
-    ) -> MemberView: ...
-
-    def set_member_status(
-        self,
-        actor: Actor,
-        member_id: int,
-        status: MemberStatus,
-    ) -> MemberView: ...
-```
-
-#### create_member
-
-- 权限：前台、管理员。
-- 输入：姓名去首尾空白后 1 至 100 字；phone 为 None 或去首尾空白后 1 至 32 字；request_id 为规范 UUID。
-- 返回：新建的 active 档案；相同操作者、操作名和输入重试返回原 `MemberView`。
-- 异常：PermissionDenied、InvalidInputError、ConflictError、StorageError、OutcomeUnknownError。
-- 数据变更：创建 members 和 `operation_records(operation='create_member', result_id=members.id)`；不自动创建账号或会员资格。
-- 事务：身份复核、建档和操作记录同一事务；提交结果未知时用原 request_id 调用 `get_member_by_request` 核实。核实接口仅允许原操作者和管理员，不存在或不可见抛 `NotFoundError`，操作类型不符抛 `ConflictError`。
-
-#### get_member
-
-- 权限：会员只能查询与当前账号关联的档案；前台和管理员可查询全部。
-- 返回：固定 `MemberView`。
-- 异常：`NotFoundError` 用于不存在和越权，避免泄露档案存在性。
-- 数据变更：无。
-
-#### list_members
-
-- 权限：会员只能得到自己的档案；前台、管理员可按条件分页。
-- 返回：按 id 升序稳定分页；空结果返回空 Page。
-- 数据变更：无。
-
-#### update_member
-
-- 权限：前台、管理员。
-- 输入：完整提交姓名和 phone。
-- 异常：PermissionDenied、NotFoundError、InvalidInputError。
-- 数据变更：只修改会员档案字段，不修改账号、卡和课包。
-- 事务：锁定档案，写入后返回锁内最新值。
-
-#### set_member_status
-
-- 权限：管理员。
-- `archived` 档案保留全部历史和账号关联；允许登录后查询本人历史，拒绝新的销售和预约。卡来源的新入场登记被拒绝；归档前已经存在的 `reserved/checked_in` 预约在课次业务日期仍可作为入场来源。
-- 异常：NotFoundError、PermissionDenied、InvalidState。
-- 数据变更：修改 status 和 archived_at，不删除任何记录，不撤销既有卡或课包。
-- 事务：锁定档案并复核当前状态。
-- 归档不删除已有预约；已有预约仍可由会员本人、本课教练、前台或管理员按原权限签到，并可由教练或管理员结算、标记缺席或取消。
-
-#### 3.2 GymCardProductService
-
-```python
-class GymCardProductService:
-    def create_gym_card_product(
-        self, actor: Actor, terms: GymCardProductTerms
-    ) -> GymCardProductView: ...
-
-    def update_gym_card_product(
-        self,
-        actor: Actor,
-        product_id: int,
-        terms: GymCardProductTerms,
-    ) -> GymCardProductView: ...
-
-    def get_gym_card_product(
-        self, actor: Actor, product_id: int
-    ) -> GymCardProductView: ...
-
-    def list_gym_card_products(
-        self, actor: Actor, query: NamedQuery
-    ) -> Page[GymCardProductView]: ...
-
-    def set_gym_card_product_sale_enabled(
-        self, actor: Actor, product_id: int, enabled: bool
-    ) -> GymCardProductView: ...
-
-    def set_gym_card_product_gift_enabled(
-        self, actor: Actor, product_id: int, enabled: bool
-    ) -> GymCardProductView: ...
-```
-
-规则：
-
-- 创建、修改、销售启停和赠送启停仅管理员。
-- 名称 1 至 100 字；价格 0.01 至 99999999.99，最多两位小数；期限卡 `valid_days` 为正整数，次卡 `total_entries` 为正整数。
-- `update` 只影响后续销售和赠送；已发卡使用发放时快照。
-- 前台只能查看 `is_sale_enabled=True` 的产品；管理员可查询全部产品及两个启用状态。
-- `is_sale_enabled=False` 只阻止直接销售。`is_gift_enabled` 只属于期限卡并控制赠送；次卡不能作为赠品。启停不作废已发卡。
-- 将 `is_gift_enabled` 改为 `False` 前，服务锁定并检查引用该产品的启用赠卡规则；存在时抛 `InvalidState`，不修改产品。
-- 异常：PermissionDenied、InvalidInputError、NotFoundError、ConflictError。
-
-上述六个方法都先复核身份。创建和修改返回写入后的固定 `GymCardProductView`；详情不存在抛 `NotFoundError`；列表按 `name ASC, id ASC` 返回 `Page[GymCardProductView]`；布尔参数或产品条款非法抛 `InvalidInputError`。创建、修改和销售启停各自使用一个事务并锁定目标产品。赠送停用先以普通查询解析引用规则及其触发课包产品，再在写事务中按 `lesson_package_product -> gift_rule -> gym_card_product` 加锁和复核，避免逆序补锁。查询不修改数据。
-
-#### 3.3 LessonPackageProductService 与赠卡规则
-
-```python
-class LessonPackageProductService:
-    def create_lesson_package_product(
-        self, actor: Actor, terms: LessonPackageProductTerms
-    ) -> LessonPackageProductView: ...
-
-    def update_lesson_package_product(
-        self,
-        actor: Actor,
-        product_id: int,
-        terms: LessonPackageProductTerms,
-    ) -> LessonPackageProductView: ...
-
-    def get_lesson_package_product(
-        self, actor: Actor, product_id: int
-    ) -> LessonPackageProductView: ...
-
-    def list_lesson_package_products(
-        self, actor: Actor, query: NamedQuery
-    ) -> Page[LessonPackageProductView]: ...
-
-    def set_lesson_package_product_sale_enabled(
-        self, actor: Actor, product_id: int, enabled: bool
-    ) -> LessonPackageProductView: ...
-
-    def get_gift_rule(
-        self, actor: Actor, rule_id: int
-    ) -> LessonPackageGiftRuleView: ...
-
-    def list_gift_rules(
-        self, actor: Actor, query: LessonPackageGiftRuleQuery
-    ) -> Page[LessonPackageGiftRuleView]: ...
-
-    def create_gift_rule(
-        self, actor: Actor, data: LessonPackageGiftRuleInput
-    ) -> LessonPackageGiftRuleView: ...
-
-    def replace_gift_rule(
-        self,
-        actor: Actor,
-        rule_id: int,
-        data: GiftRuleRevisionInput,
-    ) -> LessonPackageGiftRuleView: ...
-
-    def set_gift_rule_active(
-        self, actor: Actor, rule_id: int, active: bool
-    ) -> LessonPackageGiftRuleView: ...
-```
-
-规则：
-
-- 产品和赠卡规则管理仅管理员。
-- lesson_credits 为正整数；valid_days 为 None 或正整数。
-- 课包产品的 `is_sale_enabled` 只控制后续销售，不改变已售课包。
-- 赠卡规则引用的两个产品必须存在；启用规则时课包产品必须可销售，奖励产品必须为允许赠送的期限卡产品。
-- `create_gift_rule` 为输入的触发产品创建版本 1。`replace_gift_rule` 的输入不含触发产品，始终沿原规则的 `trigger_product_id` 创建 `version=原版本+1` 并停用原版本；历史版本不可原地修改。
-- 同一 `trigger_product_id` 同时最多一个启用版本。`set_gift_rule_active(True)` 会锁定该触发产品全部规则，并拒绝与另一启用版本并存。
-- `activation_policy="immediate"` 要求 `reward_quantity=1`；`append` 要求 `reward_quantity>=1`，同一销售内按 `sequence=1..reward_quantity` 顺序接续。
-- 停售产品不改变已售课包、已发卡和历史 GiftGrant。
-- 销售时只读取启用的赠卡规则；规则与销售并发修改时，以销售事务锁内看到的规则为准。
-- `get` 返回固定 View，`list` 返回 `Page[LessonPackageGiftRuleView]`；不存在或越权抛项目异常，不返回 `None`。
-
-课包产品的创建、修改、详情、列表和销售启停与健身房卡产品保持相同返回类型、分页和异常合同。规则详情输入正整数编号；规则列表按 `trigger_product_id ASC, version DESC, id DESC` 稳定分页。`replace_gift_rule` 返回新版本 View，`set_gift_rule_active` 返回目标版本的最新 View。规则写操作在一个事务内按 `lesson_package_product -> gift_rule -> gym_card_product` 加锁，创建新版本、停用旧版本和写审计日志一起提交；任何校验失败均无数据变更。
-
-#### 3.4 EntitlementQueryService
-
-```python
-class EntitlementQueryService:
-    def get_gym_card(
-        self, actor: Actor, gym_card_id: int
-    ) -> GymCardView: ...
-
-    def list_gym_cards(
-        self, actor: Actor, query: GymCardQuery
-    ) -> Page[GymCardView]: ...
-
-    def get_lesson_package(
-        self, actor: Actor, lesson_package_id: int
-    ) -> LessonPackageView: ...
-
-    def list_lesson_packages(
-        self, actor: Actor, query: LessonPackageQuery
-    ) -> Page[LessonPackageView]: ...
-
-    def get_gym_membership(
-        self,
-        actor: Actor,
-        member_id: int,
-        business_date: date | None = None,
-    ) -> GymMembershipView: ...
-
-    def void_gym_card(
-        self, actor: Actor, gym_card_id: int
-    ) -> GymCardView: ...
-
-    def void_lesson_package(
-        self, actor: Actor, lesson_package_id: int
-    ) -> LessonPackageView: ...
-```
-
-权限：
-
-- 会员只能查询自己的权益。
-- 前台和管理员可查询全部。
-- 教练不通过这些接口批量查看会员购买和付款信息；教练只经预约授权取得完成授课所需的数据。
-- business_date=None 时服务使用当前 UTC 时刻转换出的门店日期，不接受界面自行计算。
-
-查询不修改数据。会员越权和记录不存在统一抛 NotFoundError。
-
-作废接口仅管理员可调用，返回作废后的固定 View。作废不可恢复；已作废时返回当前 View。`void_gym_card` 锁卡并设置 `status="void"`，保留历史订单、付款和入场。`void_lesson_package` 按会员、课包、预约顺序锁定，要求 `reserved_lessons=0` 且不存在 `reserved/checked_in` 预约，否则抛 `InvalidState`；成功后设置 `status="void"`，保留历史订单、付款和消课。两个接口均记录结构化审计日志；不存在抛 `NotFoundError`，越权抛 `PermissionDenied`，存储故障抛项目存储异常。
-
-#### 3.5 SalesService
-
-```python
-class SalesService:
-    def get_sale_order(
-        self, actor: Actor, sale_order_id: int
-    ) -> SaleOrderDetailView: ...
-
-    def list_sale_orders(
-        self, actor: Actor, query: SaleOrderQuery
-    ) -> Page[SaleOrderView]: ...
-
-    def sell_gym_card(
-        self,
-        actor: Actor,
-        data: GymCardSaleInput,
-        request_id: str,
-    ) -> GymCardSaleResultView: ...
-
-    def sell_lesson_package(
-        self,
-        actor: Actor,
-        data: LessonPackageSaleInput,
-        request_id: str,
-    ) -> LessonPackageSaleResultView: ...
-
-    def get_gym_card_sale_by_request(
-        self, actor: Actor, request_id: str
-    ) -> GymCardSaleResultView: ...
-
-    def get_lesson_package_sale_by_request(
-        self, actor: Actor, request_id: str
-    ) -> LessonPackageSaleResultView: ...
-```
-
-前台和管理员可以按权限范围查询销售订单；会员只能查询本人订单；教练无权查询。详情一次返回订单、唯一付款、付费项目及产生的权益和赠送记录，空集合使用空元组。列表按 `sold_at DESC, id DESC` 稳定分页。不存在或越权抛 `NotFoundError`，查询不修改数据。
-
-#### sell_gym_card
-
-权限：前台、管理员。
-
-锁内流程：
-
-1. 验证 request_id 和输入格式，复核当前账号。
-2. 检查角色和目标会员访问权限。
-3. 查询已有 operation_records；命中时核对 actor、operation 和 payload_hash 并返回原结果。
-4. 锁定会员档案，复核档案操作状态。
-5. 锁定健身房卡产品根记录及其唯一子类型，复核 `is_sale_enabled=True` 和价格。
-6. 期限卡且 `start_policy="append"` 时，按 gym_card.id 升序锁定该会员所有未作废期限卡并读取最大 `valid_until`；次卡不执行日期接续查询。
-7. 锁定复核 operation_records；未命中后生成唯一 now_utc 和门店 business_date。
-8. 期限卡计算 `valid_from/valid_until`；次卡取产品快照并设置 `remaining_entries=total_entries`。
-9. 创建 SaleOrder 和健身房卡 SaleItem。
-10. 按产品判别类型创建 purchased `DurationGymCard` 或 `VisitGymCard`。
-11. 创建 Payment，金额等于订单总额。
-12. 创建 operation_records，result_id 指向 SaleOrder，并在同一事务提交。
-
-返回：GymCardSaleResultView。
-
-异常：
-
-- InvalidInputError：ID、request_id、金额或付款方式格式不合法。
-- PermissionDenied：角色无权销售。
-- NotFoundError：会员或产品不存在。
-- InvalidState：档案不可办理新业务或产品停用。
-- ConflictError：request_id 与其他输入冲突。
-- OutcomeUnknownError：提交确认丢失，携带 request_id。
-- StorageError：结果确定未提交的存储故障。
-
-#### sell_lesson_package
-
-权限：前台、管理员。
-
-锁内流程：
-
-1. 完成身份、角色、输入和 request_id 复核。
-2. 锁定会员档案。
-3. 锁定私教课包产品。
-4. 按 gift_rule.id 升序锁定该产品当前启用的赠卡规则；每个触发产品最多命中一个版本。
-5. 锁定规则引用的期限卡产品根记录和期限子表，复核 `is_gift_enabled=True`。
-6. 规则使用 `append` 时，按 gym_card.id 升序锁定该会员相关健身房卡并读取最新最大 valid_until。
-7. 全部锁取得后生成唯一 now_utc 和门店 business_date。
-8. 创建 SaleOrder、私教课 SaleItem 和 LessonPackage。
-9. 创建 Payment。
-10. 保存规则版本、激活策略和期限卡产品快照；按 sequence 顺序创建 GiftGrant，再创建对应 `DurationGymCard`。
-11. append 赠卡逐张接续；后一张从前一张 valid_until 开始，避免同一订单内互相重叠。
-12. 创建 operation_records，result_id 指向 SaleOrder。
-13. 同一事务提交。
-
-返回：LessonPackageSaleResultView。赠送集合按 gift_rule.id、sequence 稳定排序。
-
-异常除 sell_gym_card 所列类型外，还包括：
-
-- InvalidState：课包产品不可销售，或启用的赠卡规则引用了不允许赠送的健身房卡产品。
-- ConflictError：赠卡规则重复或 request_id 冲突。
-
-#### 按请求核实结果
-
-- 只允许查询当前操作者创建的请求结果。
-- operation 类型不符抛 ConflictError。
-- 不存在或不可见抛 NotFoundError；查不到不证明原提交一定失败。
-- 查询不写数据，不再次收款、发卡或发课包。
-
-#### 3.6 BookingService 和 AttendanceService 对接
-
-```python
-class BookingService:
-    def book(
-        self, actor: Actor, data: BookingInput, request_id: str
-    ) -> BookingView: ...
-
-    def get_booking(
-        self, actor: Actor, booking_id: int
-    ) -> BookingView: ...
-
-    def get_booking_by_request(
-        self, actor: Actor, request_id: str
-    ) -> BookingView: ...
-
-    def cancel(
-        self, actor: Actor, booking_id: int, request_id: str
-    ) -> BookingView: ...
-
-    def list_bookings(
-        self, actor: Actor, query: BookingQuery
-    ) -> Page[BookingView]: ...
-
-
-class AttendanceService:
-    def check_in(
-        self, actor: Actor, booking_id: int
-    ) -> BookingView: ...
-
-    def correct_attendance(
-        self, actor: Actor, booking_id: int, present: bool
-    ) -> BookingView: ...
-
-    def complete(
-        self, actor: Actor, booking_id: int
-    ) -> ConsumptionView: ...
-
-    def mark_no_show(
-        self, actor: Actor, booking_id: int
-    ) -> BookingView: ...
-```
-
-BookingService.book 接收 BookingInput.lesson_package_id，并执行：
-
-1. 锁定会员、课次、私教课包和预约候选记录。
-2. 校验课包属于该会员、status="active"。
-3. 将课次开始时刻转为门店日期，检查课包日期资格。
-4. 检查 available_lessons > 0。
-5. 创建预约并执行 reserved_lessons += 1。
-6. 预约和课节占用在同一事务提交。
-
-BookingService.cancel 执行：
-
-- reserved 预约在允许的取消时间内可取消；
-- reserved_lessons -= 1；
-- 检查是否已有 `gym_entries.booking_id` 指向该预约；
-- 已经凭该预约入场后不能取消，抛 `InvalidState`；
-- 预约状态、占用释放和防重记录同一事务提交。
-
-AttendanceService.complete 执行：
-
-- 锁定预约及其 LessonPackage；
-- remaining_lessons -= 1；
-- reserved_lessons -= 1；
-- Consumption.lesson_package_id 记录扣减来源；
-- 消课记录、预约 completed 状态和余额修改同一事务提交。
-
-AttendanceService.mark_no_show 执行：
-
-- reserved_lessons -= 1；
-- remaining_lessons 不变；
-- 不创建消费记录。
-
-课包日期资格按课次发生日期判断。合法预约事后消课时，即使课包在结算当天已到期，也可以完成原预约的扣课。
-
-#### 3.7 AccessService
-
-```python
-class AccessService:
-    def get_today_entry(
-        self, actor: Actor, member_id: int
-    ) -> EntryView: ...
-
-    def register_entry(
-        self,
-        actor: Actor,
-        data: EntryInput,
-        request_id: str,
-    ) -> EntryView: ...
-
-    def get_entry_by_request(
-        self, actor: Actor, request_id: str
-    ) -> EntryView: ...
-```
-
-权限：只有前台和管理员可以登记入场。会员只能查询本人入场，前台和管理员可查询全部；教练无权登记或查询门禁记录。
-
-通用流程：
-
-1. 复核当前账号、角色和目标会员归属。
-2. 普通查询 operation_records；命中时核对操作、操作者和载荷并返回原结果，未命中时不加操作记录锁。
-3. 锁定会员档案，并按 source 类型锁定期限卡、次卡，或课次与预约；复核来源存在性和会员归属。
-4. 生成唯一 `now_utc` 和 `business_date`，锁定当天 `(member_id, business_date)` 的 `gym_entries` 当前记录或唯一键范围；此时只复核来源存在性和归属，不先用可能已被并发胜者改变的余额判定失败。
-5. 取得全部业务锁后，最后以锁定当前读复核 operation_records；命中时直接重建原结果并结束事务。
-6. 当天已有入场时，为本次新 `request_id` 建立到原 `gym_entries.id` 的操作记录并返回原 `EntryView`，不改变首次来源，也不再次扣减次卡。若原记录与本次均为同一张次卡，即使余额已由首次入场扣至 0，也直接沿用原记录；其他来源在锁内完成状态和资格校验后返回原记录。
-7. 当天无记录时，在锁内完成来源状态和日期资格校验；次卡再执行带条件的 `remaining_entries -= 1`。随后创建 `GymEntry`，在同一行写入 `source_kind` 以及恰好一个 `duration_gym_card_id`、`visit_gym_card_id` 或 `booking_id`。
-8. 创建 operation_records 并一起提交；任一步失败时扣次和入场记录一起回滚。
-
-期限卡来源校验：
-
-- 会员档案必须为 `active`；锁定卡根记录和期限子表；
-- 卡必须属于目标会员、`status="active"`，且 `valid_from <= business_date < valid_until`；
-- 在 `gym_entries.duration_gym_card_id` 保存来源。
-
-次卡来源校验：
-
-- 会员档案必须为 `active`；锁定卡根记录和次卡子表；
-- 卡必须属于目标会员、`status="active"` 且 `remaining_entries > 0`；
-- 当日尚无入场时原子扣减一次并在 `gym_entries.visit_gym_card_id` 保存来源；同日重复登记沿用首次记录，不再次扣减。
-
-预约来源校验：
-
-- 读取预约的 session_id 后，按固定顺序锁定课次和预约；
-- 预约必须属于目标会员；会员为 `archived` 时，预约必须在归档前已经存在且当前状态为 `reserved/checked_in`；
-- 课次的门店日期必须等于 business_date；
-- 预约状态必须属于允许入场的集合；
-- 当前门店业务日期必须等于课次 `starts_at` 所在门店业务日期；该业务日期全天均可登记，不再设置小时级窗口；
-- active 会员的预约状态必须属于 `reserved/checked_in/completed`；archived 会员只允许 `reserved/checked_in`。课次状态必须属于 `scheduled/completed`；
-- 在预约锁内重新检查状态，避免取消与入场并发穿透；
-- 在 `gym_entries.booking_id` 保存来源，不扣课节。
-
-并发取消处理：
-
-- register_entry 和 cancel_booking 都按会员、课次、预约的相同顺序加锁。
-- `register_entry` 先获得预约锁并提交后，取消操作看到已存在的 `gym_entries.booking_id` 并拒绝取消。
-- cancel_booking 先提交后，register_entry 重新读取 cancelled 状态并拒绝授权。
-
-同日同时有卡和预约资格时，调用方明确提供 source。首次成功来源写入 EntryView，后续同日入场沿用，不更换来源。
-
-异常：
-
-- GymCardNotEligible：卡归属、状态或日期不满足。
-- BookingEntryNotEligible：预约归属、状态、日期或窗口不满足。
-- PermissionDenied、NotFoundError、InvalidState、ConflictError。
-- OutcomeUnknownError 携带 request_id。
-
-健身房卡资格失败使用 `GymCardNotEligible`，预约入场资格失败使用 `BookingEntryNotEligible`。课包不适用预约时使用 `LessonPackageNotEligible`，课节不足使用 `InsufficientLessonCredits`。
-
-### 4. 事务、并发和锁顺序
-
-#### 4.1 事务边界
-
-以下操作必须由服务层各自使用一个数据库事务：
-
-- 建立、修改或归档会员档案；
-- 创建、修改或启停产品与赠卡规则；
-- 购买健身房卡；
-- 购买私教课包并执行赠卡；
-- 预约和占用课节；
-- 取消预约和释放占用；
-- 消课和扣减课节；
-- 入场授权和入场记录；
-- 创建幂等操作记录。
-
-Repository 不提交、不回滚，不自行开启独立事务。只读列表和详情使用短会话，不使用 FOR UPDATE。
-
-#### 4.2 全局锁顺序
-
-身份校验所需的 `accounts`、`member_account_links`、`coach_account_links` 和教练档案锁是每个写事务的固定前缀。进入业务锁阶段后，所有服务使用以下全局顺序；同表多行按主键升序：
-
-1. members；
-2. course_sessions；
-3. lesson_package_products；
-4. lesson_package_gift_rules；
-5. gym_card_products 根表及其 duration/visit 子表；
-6. lesson_packages；
-7. gym_cards 根表及其 duration/visit 子表；
-8. bookings；
-9. gym_entries；
-10. operation_records。
-
-`courses`、`coaches`、`rooms` 只在排课事务中使用，作为身份前缀之后、`course_sessions` 之前的固定资源组，同组按表名和主键升序。`sale_orders`、`sale_items`、`payments` 和 `gift_grants` 都是在所需业务锁取得后创建的新行，不作为其他事务补锁的先决资源。
-
-说明：
-
-- 销售不需要锁课次和预约。
-- 预约按会员、课次、课包、预约加锁。
-- 消课按会员、课次、课包、预约加锁。
-- 预约入场按会员、课次、预约、入场记录加锁。
-- 购买课包赠卡按会员、课包产品、赠卡规则、健身房卡产品、既有健身房卡加锁。
-- 首次读取 operation_records 只能是普通查询；未命中时先取得本次操作需要的全部业务行锁，再以锁定当前读复核 operation_records。任何路径都不得先锁 operation_records 再继续取得业务锁；锁定复核命中后只重建结果并结束事务，不再获取其他业务锁。
-
-#### 4.3 并发场景
-
-#### 两个前台同时为同一会员购买可接续健身房卡
-
-两个事务先竞争同一 members 行。后获得会员锁的事务在锁内重新读取最新期限卡 `valid_until`，因此新期限卡按已经提交的期限卡继续接续。
-
-#### 两次私教课销售同时触发赠卡
-
-会员锁串行化同一会员的赠卡起止日计算。规则和产品在锁内复核；每次课包销售按命中的启用规则产生独立 `GiftGrant`。
-
-#### 最后一节课并发预约
-
-两个事务竞争同一 LessonPackage。先提交的事务增加 reserved_lessons；后获得锁的事务读取最新 available_lessons 并抛 InsufficientLessonCredits。
-
-#### 预约入场与取消预约并发
-
-两者采用同一会员、课次、预约锁顺序。锁内复查预约状态及授权是否存在，确保只有一个结果生效。
-
-#### 健身房卡入场与同日预约入场并发
-
-`gym_entries` 的 `UNIQUE(member_id, business_date)` 是最终防线。一个事务成功后，另一个事务回滚本次插入并在新事务读取胜者结果；单表判别结构不会留下孤立来源行。
-
-#### 4.4 REPEATABLE READ 要求
-
-等待业务锁后需要作决定的查询必须使用 SELECT ... FOR UPDATE 或等价锁定当前读，不能沿用等待前建立的一致性读快照。包括：
-
-- 会员档案状态；
-- 产品和赠卡规则启用状态；
-- 最大期限卡 `valid_until`；
-- LessonPackage 余额和占用；
-- Booking 状态；
-- 当日 GymEntry；
-- operation_records 的并发命中结果。
-
-### 5. Repository 职责
-
-所有 Repository 接收当前 Session，只负责参数绑定、查询构造、行锁和持久化，不做权限判断、业务提示、事务提交或门店时区换算。
-
-以下存储输入类型只表达一次持久化所需的已校验值。服务层仍负责权限、状态、金额、余额、日期、赠卡版本和事务边界的判断。
-
-```python
-@dataclass(frozen=True, kw_only=True)
-class PurchasedDurationGymCardCreate:
-    member_id: int
-    product_id: int
-    purchase_sale_item_id: int
-    name: str
-    valid_days: int
-    start_policy: GymCardStartPolicy
-    valid_from: date
-    valid_until: date
-    status: GymCardStatus
-
-
-@dataclass(frozen=True, kw_only=True)
-class PurchasedVisitGymCardCreate:
-    member_id: int
-    product_id: int
-    purchase_sale_item_id: int
-    name: str
-    total_entries: int
-    remaining_entries: int
-    status: GymCardStatus
-
-
-@dataclass(frozen=True, kw_only=True)
-class GiftedDurationGymCardCreate:
-    member_id: int
-    product_id: int
-    gift_grant_id: int
-    name: str
-    valid_days: int
-    start_policy: GymCardStartPolicy
-    valid_from: date
-    valid_until: date
-    status: GymCardStatus
-
-
-@dataclass(frozen=True, kw_only=True)
-class LessonPackageCreate:
-    member_id: int
-    product_id: int
-    purchase_sale_item_id: int
-    name: str
-    total_lessons: int
-    remaining_lessons: int
-    reserved_lessons: int
-    valid_from: date
-    valid_until: date | None
-    status: LessonPackageStatus
-
-
-@dataclass(frozen=True, kw_only=True)
-class GymCardSaleItemProductSnapshot:
-    product_name: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class LessonPackageSaleItemProductSnapshot:
-    product_name: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class GiftRuleSnapshot:
-    gift_rule_id: int
-    reward_gym_card_product_id: int
-    version: int
-    activation_policy: GiftActivationPolicy
-
-
-@dataclass(frozen=True, kw_only=True)
-class RewardGymCardProductSnapshot:
-    product_name: str
-    valid_days: int
-```
-
-#### 5.1 MemberRepository
-
-```python
-class MemberRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create(self, data: MemberInput) -> Member: ...
-
-    def get(self, member_id: int) -> Member | None: ...
-
-    def lock(self, member_id: int) -> Member | None: ...
-
-    def list(self, query: MemberQuery) -> tuple[list[Member], int]: ...
-
-    def update_profile(
-        self,
-        member_id: int,
-        name: str,
-        phone: str | None,
-    ) -> Member: ...
-
-    def set_status(
-        self,
-        member_id: int,
-        status: MemberStatus,
-        archived_at: datetime | None,
-    ) -> Member: ...
-```
-
-#### 5.2 MemberAccountLinkRepository
-
-```python
-class MemberAccountLinkRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def get_by_account(
-        self, account_id: int
-    ) -> MemberAccountLink | None: ...
-
-    def get_by_member(
-        self, member_id: int
-    ) -> MemberAccountLink | None: ...
-
-    def lock_by_account(
-        self, account_id: int
-    ) -> MemberAccountLink | None: ...
-
-    def create(
-        self,
-        account_id: int,
-        member_id: int,
-        linked_by: int,
-        linked_at: datetime,
-    ) -> MemberAccountLink: ...
-
-    def delete(self, account_id: int) -> None: ...
-```
-
-删除关联不删除账号或档案。服务层验证账号 `role="member"`，且账号和档案均没有其他关联。
-
-#### 5.3 GymCardProductRepository
-
-```python
-class GymCardProductRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create_duration(
-        self, terms: DurationGymCardProductTerms
-    ) -> DurationGymCardProduct: ...
-
-    def create_visit(
-        self, terms: VisitGymCardProductTerms
-    ) -> VisitGymCardProduct: ...
-
-    def get(self, product_id: int) -> GymCardProduct | None: ...
-
-    def lock(self, product_id: int) -> GymCardProduct | None: ...
-
-    def lock_duration(
-        self, product_id: int
-    ) -> DurationGymCardProduct | None: ...
-
-    def lock_visit(
-        self, product_id: int
-    ) -> VisitGymCardProduct | None: ...
-
-    def list(
-        self, query: NamedQuery
-    ) -> tuple[list[GymCardProduct], int]: ...
-
-    def update_duration_terms(
-        self,
-        product_id: int,
-        terms: DurationGymCardProductTerms,
-    ) -> DurationGymCardProduct: ...
-
-    def update_visit_terms(
-        self,
-        product_id: int,
-        terms: VisitGymCardProductTerms,
-    ) -> VisitGymCardProduct: ...
-
-    def set_sale_enabled(
-        self, product_id: int, enabled: bool
-    ) -> GymCardProduct: ...
-
-    def set_duration_gift_enabled(
-        self, product_id: int, enabled: bool
-    ) -> DurationGymCardProduct: ...
-```
-
-Repository 在一次调用中装载根表和与 `kind` 匹配的子表；缺少子表或同时存在两个子表视为持久化完整性错误。修改产品不得改变 `kind`；需要更换种类时创建新产品并停用旧产品。
-
-#### 5.4 GymCardRepository
-
-```python
-class GymCardRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create_purchased_duration(
-        self, data: PurchasedDurationGymCardCreate
-    ) -> DurationGymCard: ...
-
-    def create_purchased_visit(
-        self, data: PurchasedVisitGymCardCreate
-    ) -> VisitGymCard: ...
-
-    def create_gifted_duration(
-        self, data: GiftedDurationGymCardCreate
-    ) -> DurationGymCard: ...
-
-    def get(self, gym_card_id: int) -> GymCard | None: ...
-
-    def lock(self, gym_card_id: int) -> GymCard | None: ...
-
-    def lock_duration(
-        self, gym_card_id: int
-    ) -> DurationGymCard | None: ...
-
-    def lock_visit(
-        self, gym_card_id: int
-    ) -> VisitGymCard | None: ...
-
-    def lock_member_duration_cards_affecting_start(
-        self, member_id: int
-    ) -> list[DurationGymCard]: ...
-
-    def latest_term_end_locked(self, member_id: int) -> date | None: ...
-
-    def decrement_visit_entry(
-        self, gym_card_id: int
-    ) -> VisitGymCard: ...
-
-    def list(
-        self, query: GymCardQuery
-    ) -> tuple[list[GymCard], int]: ...
-
-    def list_eligible_ids(
-        self, member_id: int, business_date: date
-    ) -> tuple[int, ...]: ...
-
-    def set_status(
-        self, gym_card_id: int, status: GymCardStatus
-    ) -> GymCard: ...
-```
-
-`latest_term_end_locked` 只扫描未作废期限卡，包括尚未生效的期限卡，以锁定当前读返回最大 `valid_until`。`decrement_visit_entry` 要求已持有次卡行锁，并以 `remaining_entries > 0` 为条件原子减一；未命中时映射为 `GymCardNotEligible`。
-
-#### 5.5 LessonPackageProductRepository
-
-```python
-class LessonPackageProductRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create(
-        self, terms: LessonPackageProductTerms
-    ) -> LessonPackageProduct: ...
-
-    def get(
-        self, product_id: int
-    ) -> LessonPackageProduct | None: ...
-
-    def lock(
-        self, product_id: int
-    ) -> LessonPackageProduct | None: ...
-
-    def list(
-        self, query: NamedQuery
-    ) -> tuple[list[LessonPackageProduct], int]: ...
-
-    def update_terms(
-        self,
-        product_id: int,
-        terms: LessonPackageProductTerms,
-    ) -> LessonPackageProduct: ...
-
-    def set_sale_enabled(
-        self, product_id: int, enabled: bool
-    ) -> LessonPackageProduct: ...
-```
-
-#### 5.6 LessonPackageGiftRuleRepository
-
-```python
-class LessonPackageGiftRuleRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def get(
-        self, rule_id: int
-    ) -> LessonPackageGiftRule | None: ...
-
-    def lock(
-        self, rule_id: int
-    ) -> LessonPackageGiftRule | None: ...
-
-    def list(
-        self, query: LessonPackageGiftRuleQuery
-    ) -> tuple[list[LessonPackageGiftRule], int]: ...
-
-    def lock_versions_for_trigger(
-        self, trigger_product_id: int
-    ) -> list[LessonPackageGiftRule]: ...
-
-    def lock_active_for_trigger(
-        self, trigger_product_id: int
-    ) -> LessonPackageGiftRule | None: ...
-
-    def lock_active_for_reward(
-        self, reward_gym_card_product_id: int
-    ) -> list[LessonPackageGiftRule]: ...
-
-    def create_version(
-        self,
-        data: LessonPackageGiftRuleInput,
-        version: int,
-        is_active: bool,
-    ) -> LessonPackageGiftRule: ...
-
-    def set_active(
-        self, rule_id: int, active: bool
-    ) -> LessonPackageGiftRule: ...
-```
-
-规则锁定结果按 `id` 升序返回。服务层先锁触发课包产品，再锁规则，最后锁奖励期限卡产品的根记录和子表；替换规则通过新增版本和停用旧版本完成。
-
-#### 5.7 LessonPackageRepository
-
-```python
-class LessonPackageRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create(self, data: LessonPackageCreate) -> LessonPackage: ...
-
-    def get(
-        self, lesson_package_id: int
-    ) -> LessonPackage | None: ...
-
-    def lock(
-        self, lesson_package_id: int
-    ) -> LessonPackage | None: ...
-
-    def list(
-        self, query: LessonPackageQuery
-    ) -> tuple[list[LessonPackage], int]: ...
-
-    def reserve_one(self, lesson_package_id: int) -> LessonPackage: ...
-
-    def release_one(self, lesson_package_id: int) -> LessonPackage: ...
-
-    def consume_reserved_one(
-        self, lesson_package_id: int
-    ) -> LessonPackage: ...
-
-    def set_status(
-        self,
-        lesson_package_id: int,
-        status: LessonPackageStatus,
-    ) -> LessonPackage: ...
-```
-
-余额方法只发出带条件的更新或在已锁行上更新，不提交。服务层负责先检查状态、归属、日期和异常映射。
-
-#### 5.8 SaleOrderRepository 与 SaleItemRepository
-
-```python
-class SaleOrderRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create(
-        self,
-        member_id: int,
-        kind: SaleKind,
-        total_amount: Decimal,
-        sold_at: datetime,
-        operator_id: int,
-    ) -> SaleOrder: ...
-
-    def get(self, order_id: int) -> SaleOrder | None: ...
-
-    def get_detail(
-        self, order_id: int
-    ) -> SaleOrderAggregate | None: ...
-
-    def list(
-        self, query: SaleOrderQuery
-    ) -> tuple[list[SaleOrder], int]: ...
-
-
-class SaleItemRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create_gym_card_item(
-        self,
-        sale_order_id: int,
-        member_id: int,
-        product_id: int,
-        product_snapshot: GymCardSaleItemProductSnapshot,
-        price: Decimal,
-    ) -> SaleItem: ...
-
-    def create_lesson_package_item(
-        self,
-        sale_order_id: int,
-        member_id: int,
-        product_id: int,
-        product_snapshot: LessonPackageSaleItemProductSnapshot,
-        price: Decimal,
-    ) -> SaleItem: ...
-
-    def list_for_order(self, order_id: int) -> list[SaleItem]: ...
-```
-
-`get_detail` 使用固定 JOIN 和有界批量查询装载，不在循环中逐项查询。
-
-#### 5.9 PaymentRepository
-
-```python
-class PaymentRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create(
-        self,
-        sale_order_id: int,
-        member_id: int,
-        amount: Decimal,
-        method: PaymentMethod,
-        paid_at: datetime,
-        operator_id: int,
-    ) -> Payment: ...
-
-    def get_by_order(self, sale_order_id: int) -> Payment | None: ...
-
-    def list(
-        self, query: PaymentQuery
-    ) -> tuple[list[Payment], int]: ...
-
-    def aggregate(
-        self,
-        window: DateWindow,
-        method: PaymentMethod | None,
-    ) -> PaymentTotals: ...
-```
-
-`Payment` 只引用 `SaleOrder`。Repository 不接受 `gym_card_id` 或 `lesson_package_id`。
-
-#### 5.10 GiftGrantRepository
-
-```python
-class GiftGrantRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def create(
-        self,
-        trigger_sale_item_id: int,
-        member_id: int,
-        trigger_product_id: int,
-        gift_rule_snapshot: GiftRuleSnapshot,
-        reward_product_snapshot: RewardGymCardProductSnapshot,
-        sequence: int,
-        granted_at: datetime,
-    ) -> GiftGrant: ...
-
-    def list_for_sale_item(
-        self, sale_item_id: int
-    ) -> list[GiftGrant]: ...
-
-    def get_with_card(
-        self, grant_id: int
-    ) -> GiftGrantAggregate | None: ...
-```
-
-#### 5.11 GymEntryRepository
-
-```python
-class GymEntryRepository(Protocol):
-    def __init__(self, session: Session) -> None: ...
-
-    def get_for_day(
-        self, member_id: int, business_date: date
-    ) -> GymEntry | None: ...
-
-    def lock_for_day(
-        self, member_id: int, business_date: date
-    ) -> GymEntry | None: ...
-
-    def create(
-        self,
-        member_id: int,
-        source_kind: EntrySourceKind,
-        duration_gym_card_id: int | None,
-        visit_gym_card_id: int | None,
-        booking_id: int | None,
-        business_date: date,
-        entered_at: datetime,
-        operator_id: int,
-    ) -> GymEntry: ...
-
-    def get(self, entry_id: int) -> GymEntry | None: ...
-
-    def get_view(self, entry_id: int) -> GymEntry | None: ...
-
-    def get_by_booking(
-        self, booking_id: int
-    ) -> EntryAggregate | None: ...
-
-    def lock_by_booking(
-        self, booking_id: int
-    ) -> EntryAggregate | None: ...
-```
-
-`create` 只接受与 `source_kind` 匹配的一个来源编号；Repository 使用参数绑定写入单表，数据库三路 XOR `CHECK` 和复合外键再次验证来源判别与会员归属。
-### 6. SQL 表、字段、约束和索引
-
-以下为 MySQL 8.4 目标结构。金额统一使用 `DECIMAL(10,2)`，业务时刻使用 UTC `DATETIME(6)`，门店业务日期使用 `DATE`。表和约束按外键依赖顺序建立；v3 影子迁移使用相同列、约束和索引定义，并让影子子表只引用影子父表。
-
-#### 6.1 会员档案
-
-```sql
-CREATE TABLE members (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
-    phone VARCHAR(32) NULL,
-    status VARCHAR(16) NOT NULL DEFAULT 'active',
-    archived_at DATETIME(6) NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT ck_members_name
-        CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_members_phone
-        CHECK (phone IS NULL OR CHAR_LENGTH(TRIM(phone)) BETWEEN 1 AND 32),
-    CONSTRAINT ck_members_status
-        CHECK (status IN ('active', 'archived')),
-    CONSTRAINT ck_members_archive_state
-        CHECK (
-            (status = 'active' AND archived_at IS NULL)
-            OR
-            (status = 'archived' AND archived_at IS NOT NULL)
-        ),
-    KEY ix_member_profile_status_id (status, id),
-    KEY ix_member_profile_name_id (name, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-```
-
-#### 6.2 教练、课程和场地基础表
-
-```sql
-CREATE TABLE coaches (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
-    phone VARCHAR(32) NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT ck_coaches_name
-        CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_coaches_phone
-        CHECK (phone IS NULL OR CHAR_LENGTH(TRIM(phone)) BETWEEN 1 AND 32),
-    CONSTRAINT ck_coaches_active
-        CHECK (is_active IN (0, 1)),
-    KEY ix_coach_active_name_id (is_active, name, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE courses (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
-    description VARCHAR(1000) NULL,
-    kind VARCHAR(16) NOT NULL DEFAULT 'private',
-    duration_minutes INT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT ck_courses_name
-        CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_courses_description
-        CHECK (
-            description IS NULL
-            OR CHAR_LENGTH(description) BETWEEN 1 AND 1000
-        ),
-    CONSTRAINT ck_courses_kind
-        CHECK (kind = 'private'),
-    CONSTRAINT ck_courses_duration
-        CHECK (duration_minutes BETWEEN 1 AND 150),
-    CONSTRAINT ck_courses_active
-        CHECK (is_active IN (0, 1)),
-    KEY ix_course_active_kind_name_id (is_active, kind, name, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE rooms (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
-    location VARCHAR(200) NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT ck_rooms_name
-        CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_rooms_location
-        CHECK (
-            location IS NULL
-            OR CHAR_LENGTH(location) BETWEEN 1 AND 200
-        ),
-    CONSTRAINT ck_rooms_active
-        CHECK (is_active IN (0, 1)),
-    KEY ix_room_active_name_id (is_active, name, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-```
-
-#### 6.3 会员与教练账号关联
-
-```sql
-CREATE TABLE member_account_links (
-    account_id BIGINT PRIMARY KEY,
-    member_id BIGINT NOT NULL,
-    linked_at DATETIME(6) NOT NULL,
-    linked_by BIGINT NOT NULL,
-    CONSTRAINT uq_member_account_links_member UNIQUE (member_id),
-    CONSTRAINT fk_member_account_links_account
-        FOREIGN KEY (account_id) REFERENCES accounts(id),
-    CONSTRAINT fk_member_account_links_member
-        FOREIGN KEY (member_id) REFERENCES members(id),
-    CONSTRAINT fk_member_account_links_linked_by
-        FOREIGN KEY (linked_by) REFERENCES accounts(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE coach_account_links (
-    account_id BIGINT PRIMARY KEY,
-    coach_id BIGINT NOT NULL,
-    linked_at DATETIME(6) NOT NULL,
-    linked_by BIGINT NOT NULL,
-    CONSTRAINT uq_coach_account_links_coach UNIQUE (coach_id),
-    CONSTRAINT fk_coach_account_links_account
-        FOREIGN KEY (account_id) REFERENCES accounts(id),
-    CONSTRAINT fk_coach_account_links_coach
-        FOREIGN KEY (coach_id) REFERENCES coaches(id),
-    CONSTRAINT fk_coach_account_links_linked_by
-        FOREIGN KEY (linked_by) REFERENCES accounts(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-账号角色与关联表类型的一致性需要读取 `accounts.role`，不能由单表 `CHECK` 表达；由 `AuthService` 在同一事务校验，并由迁移校验确认 member 账号只关联会员、coach 账号只关联教练。
-
-#### 6.4 健身房卡产品
-
-```sql
-CREATE TABLE gym_card_products (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    kind VARCHAR(16) NOT NULL,
-    name VARCHAR(100) NOT NULL,
-    price DECIMAL(10,2) NOT NULL,
-    is_sale_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT uq_gym_card_product_kind UNIQUE (id, kind),
-    CONSTRAINT ck_gym_card_products_kind
-        CHECK (kind IN ('duration', 'visit')),
-    CONSTRAINT ck_gym_card_products_name
-        CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_gym_card_products_price
-        CHECK (price BETWEEN 0.01 AND 99999999.99),
-    CONSTRAINT ck_gym_card_products_sale_enabled
-        CHECK (is_sale_enabled IN (0, 1)),
-    KEY ix_gym_card_product_sale_kind_name_id
-        (is_sale_enabled, kind, name, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE duration_gym_card_products (
-    product_id BIGINT PRIMARY KEY,
-    kind VARCHAR(16) NOT NULL DEFAULT 'duration',
-    valid_days INT NOT NULL,
-    start_policy VARCHAR(16) NOT NULL,
-    is_gift_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    CONSTRAINT uq_duration_product_identity UNIQUE (product_id, kind),
-    CONSTRAINT fk_duration_product_root
-        FOREIGN KEY (product_id, kind)
-        REFERENCES gym_card_products(id, kind),
-    CONSTRAINT ck_duration_product_kind
-        CHECK (kind = 'duration'),
-    CONSTRAINT ck_duration_product_valid_days
-        CHECK (valid_days > 0),
-    CONSTRAINT ck_duration_product_start_policy
-        CHECK (start_policy IN ('immediate', 'append')),
-    CONSTRAINT ck_duration_product_gift_enabled
-        CHECK (is_gift_enabled IN (0, 1)),
-    KEY ix_duration_product_gift (is_gift_enabled, product_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE visit_gym_card_products (
-    product_id BIGINT PRIMARY KEY,
-    kind VARCHAR(16) NOT NULL DEFAULT 'visit',
-    total_entries INT NOT NULL,
-    CONSTRAINT uq_visit_product_identity UNIQUE (product_id, kind),
-    CONSTRAINT fk_visit_product_root
-        FOREIGN KEY (product_id, kind)
-        REFERENCES gym_card_products(id, kind),
-    CONSTRAINT ck_visit_product_kind
-        CHECK (kind = 'visit'),
-    CONSTRAINT ck_visit_product_total_entries
-        CHECK (total_entries > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-```
-
-#### 6.5 私教课包产品和赠卡规则
-
-```sql
-CREATE TABLE lesson_package_products (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
-    price DECIMAL(10,2) NOT NULL,
-    lesson_credits INT NOT NULL,
-    valid_days INT NULL,
-    is_sale_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT ck_lesson_package_products_name
-        CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_lesson_package_products_price
-        CHECK (price BETWEEN 0.01 AND 99999999.99),
-    CONSTRAINT ck_lesson_package_products_credits
-        CHECK (lesson_credits > 0),
-    CONSTRAINT ck_lesson_package_products_valid_days
-        CHECK (valid_days IS NULL OR valid_days > 0),
-    CONSTRAINT ck_lesson_package_products_sale_enabled
-        CHECK (is_sale_enabled IN (0, 1)),
-    KEY ix_lesson_product_sale_name_id (is_sale_enabled, name, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE lesson_package_gift_rules (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    trigger_product_id BIGINT NOT NULL,
-    reward_gym_card_product_id BIGINT NOT NULL,
-    reward_quantity INT NOT NULL DEFAULT 1,
-    activation_policy VARCHAR(16) NOT NULL,
-    version INT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    active_trigger_product_id BIGINT
-        GENERATED ALWAYS AS (
-            CASE WHEN is_active = TRUE THEN trigger_product_id ELSE NULL END
-        ) STORED,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT uq_gift_rule_trigger_version
-        UNIQUE (trigger_product_id, version),
-    CONSTRAINT uq_gift_rule_active_trigger
-        UNIQUE (active_trigger_product_id),
-    CONSTRAINT uq_gift_rule_identity
-        UNIQUE (
-            id,
-            trigger_product_id,
-            reward_gym_card_product_id,
-            version
-        ),
-    CONSTRAINT fk_gift_rule_trigger_product
-        FOREIGN KEY (trigger_product_id)
-        REFERENCES lesson_package_products(id),
-    CONSTRAINT fk_gift_rule_reward_duration_product
-        FOREIGN KEY (reward_gym_card_product_id)
-        REFERENCES duration_gym_card_products(product_id),
-    CONSTRAINT ck_gift_rule_quantity
-        CHECK (reward_quantity > 0),
-    CONSTRAINT ck_gift_rule_activation_policy
-        CHECK (activation_policy IN ('immediate', 'append')),
-    CONSTRAINT ck_gift_rule_immediate_quantity
-        CHECK (activation_policy <> 'immediate' OR reward_quantity = 1),
-    CONSTRAINT ck_gift_rule_version
-        CHECK (version > 0),
-    CONSTRAINT ck_gift_rule_active
-        CHECK (is_active IN (0, 1)),
-    KEY ix_gift_rule_trigger_active_id
-        (trigger_product_id, is_active, id),
-    KEY ix_gift_rule_reward_product
-        (reward_gym_card_product_id, is_active, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-`gym_card_products` 根记录“恰有一个且仅有一个与 kind 匹配的子类型行”是跨表存在性约束，MySQL 单表 `CHECK` 无法表达。产品创建服务必须在同一事务写入根表和唯一子表；迁移校验和结构契约测试必须检查缺失子表及双子表记录。
-
-#### 6.6 销售订单和销售项目
-
-```sql
-CREATE TABLE sale_orders (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    member_id BIGINT NOT NULL,
-    kind VARCHAR(24) NOT NULL,
-    total_amount DECIMAL(10,2) NOT NULL,
-    sold_at DATETIME(6) NOT NULL,
-    operator_id BIGINT NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    CONSTRAINT uq_sale_order_owner UNIQUE (id, member_id),
-    CONSTRAINT uq_sale_order_owner_kind UNIQUE (id, member_id, kind),
-    CONSTRAINT fk_sale_orders_member
-        FOREIGN KEY (member_id) REFERENCES members(id),
-    CONSTRAINT fk_sale_orders_operator
-        FOREIGN KEY (operator_id) REFERENCES accounts(id),
-    CONSTRAINT ck_sale_orders_kind
-        CHECK (kind IN ('gym_card', 'lesson_package')),
-    CONSTRAINT ck_sale_orders_total_amount
-        CHECK (total_amount BETWEEN 0.01 AND 99999999.99),
-    KEY ix_sale_order_member_time_id (member_id, sold_at, id),
-    KEY ix_sale_order_time_id (sold_at, id),
-    KEY ix_sale_order_operator_time (operator_id, sold_at, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE sale_items (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    sale_order_id BIGINT NOT NULL,
-    member_id BIGINT NOT NULL,
-    kind VARCHAR(24) NOT NULL,
-    product_name VARCHAR(100) NOT NULL,
-    quantity INT NOT NULL,
-    unit_price DECIMAL(10,2) NOT NULL,
-    line_amount DECIMAL(10,2) NOT NULL,
-    CONSTRAINT uq_sale_item_order_kind UNIQUE (sale_order_id, kind),
-    CONSTRAINT uq_sale_item_order_owner
-        UNIQUE (id, sale_order_id, member_id),
-    CONSTRAINT uq_sale_item_owner_kind UNIQUE (id, member_id, kind),
-    CONSTRAINT fk_sale_items_order_owner_kind
-        FOREIGN KEY (sale_order_id, member_id, kind)
-        REFERENCES sale_orders(id, member_id, kind),
-    CONSTRAINT ck_sale_items_kind
-        CHECK (kind IN ('gym_card', 'lesson_package')),
-    CONSTRAINT ck_sale_items_product_name
-        CHECK (CHAR_LENGTH(TRIM(product_name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_sale_items_quantity
-        CHECK (quantity = 1),
-    CONSTRAINT ck_sale_items_unit_price
-        CHECK (unit_price BETWEEN 0.01 AND 99999999.99),
-    CONSTRAINT ck_sale_items_line_amount
-        CHECK (line_amount = unit_price),
-    KEY ix_sale_item_order_id (sale_order_id, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE gym_card_sale_items (
-    sale_item_id BIGINT PRIMARY KEY,
-    member_id BIGINT NOT NULL,
-    kind VARCHAR(24) NOT NULL DEFAULT 'gym_card',
-    gym_card_product_id BIGINT NOT NULL,
-    CONSTRAINT uq_gym_card_sale_origin
-        UNIQUE (sale_item_id, member_id, gym_card_product_id),
-    CONSTRAINT fk_gym_card_sale_item
-        FOREIGN KEY (sale_item_id, member_id, kind)
-        REFERENCES sale_items(id, member_id, kind),
-    CONSTRAINT fk_gym_card_sale_product
-        FOREIGN KEY (gym_card_product_id)
-        REFERENCES gym_card_products(id),
-    CONSTRAINT ck_gym_card_sale_item_kind
-        CHECK (kind = 'gym_card'),
-    KEY ix_gym_card_sale_product
-        (gym_card_product_id, sale_item_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE lesson_package_sale_items (
-    sale_item_id BIGINT PRIMARY KEY,
-    member_id BIGINT NOT NULL,
-    kind VARCHAR(24) NOT NULL DEFAULT 'lesson_package',
-    lesson_package_product_id BIGINT NOT NULL,
-    CONSTRAINT uq_lesson_sale_origin
-        UNIQUE (sale_item_id, member_id, lesson_package_product_id),
-    CONSTRAINT fk_lesson_package_sale_item
-        FOREIGN KEY (sale_item_id, member_id, kind)
-        REFERENCES sale_items(id, member_id, kind),
-    CONSTRAINT fk_lesson_package_sale_product
-        FOREIGN KEY (lesson_package_product_id)
-        REFERENCES lesson_package_products(id),
-    CONSTRAINT ck_lesson_package_sale_item_kind
-        CHECK (kind = 'lesson_package'),
-    KEY ix_lesson_sale_product
-        (lesson_package_product_id, sale_item_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-```
-
-#### 6.7 付款和赠送记录
-
-```sql
-CREATE TABLE payments (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    sale_order_id BIGINT NOT NULL,
-    member_id BIGINT NOT NULL,
-    amount DECIMAL(10,2) NOT NULL,
-    method VARCHAR(16) NOT NULL,
-    paid_at DATETIME(6) NOT NULL,
-    operator_id BIGINT NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    CONSTRAINT uq_payments_sale_order UNIQUE (sale_order_id),
-    CONSTRAINT fk_payments_order_owner
-        FOREIGN KEY (sale_order_id, member_id)
-        REFERENCES sale_orders(id, member_id),
-    CONSTRAINT fk_payments_operator
-        FOREIGN KEY (operator_id) REFERENCES accounts(id),
-    CONSTRAINT ck_payments_amount
-        CHECK (amount BETWEEN 0.01 AND 99999999.99),
-    CONSTRAINT ck_payments_method
-        CHECK (method IN ('cash', 'card', 'transfer')),
-    KEY ix_payment_time_id (paid_at, id),
-    KEY ix_payment_method_time_id (method, paid_at, id),
-    KEY ix_payment_operator_time (operator_id, paid_at, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE gift_grants (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    trigger_sale_item_id BIGINT NOT NULL,
-    trigger_product_id BIGINT NOT NULL,
-    gift_rule_id BIGINT NOT NULL,
-    member_id BIGINT NOT NULL,
-    reward_gym_card_product_id BIGINT NOT NULL,
-    gift_rule_version INT NOT NULL,
-    activation_policy VARCHAR(16) NOT NULL,
-    reward_product_name VARCHAR(100) NOT NULL,
-    reward_valid_days INT NOT NULL,
-    sequence INT NOT NULL,
-    granted_at DATETIME(6) NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    CONSTRAINT uq_gift_grant_sequence
-        UNIQUE (trigger_sale_item_id, gift_rule_id, sequence),
-    CONSTRAINT uq_gift_grant_card_origin
-        UNIQUE (id, member_id, reward_gym_card_product_id),
-    CONSTRAINT fk_gift_grant_trigger_sale_item
-        FOREIGN KEY (
-            trigger_sale_item_id,
-            member_id,
-            trigger_product_id
-        )
-        REFERENCES lesson_package_sale_items(
-            sale_item_id,
-            member_id,
-            lesson_package_product_id
-        ),
-    CONSTRAINT fk_gift_grant_rule_version
-        FOREIGN KEY (
-            gift_rule_id,
-            trigger_product_id,
-            reward_gym_card_product_id,
-            gift_rule_version
-        )
-        REFERENCES lesson_package_gift_rules(
-            id,
-            trigger_product_id,
-            reward_gym_card_product_id,
-            version
-        ),
-    CONSTRAINT fk_gift_grant_member
-        FOREIGN KEY (member_id) REFERENCES members(id),
-    CONSTRAINT ck_gift_grant_version
-        CHECK (gift_rule_version > 0),
-    CONSTRAINT ck_gift_grant_activation_policy
-        CHECK (activation_policy IN ('immediate', 'append')),
-    CONSTRAINT ck_gift_grant_product_name
-        CHECK (CHAR_LENGTH(TRIM(reward_product_name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_gift_grant_valid_days
-        CHECK (reward_valid_days > 0),
-    CONSTRAINT ck_gift_grant_sequence
-        CHECK (sequence > 0),
-    KEY ix_gift_grant_member_time (member_id, granted_at, id),
-    KEY ix_gift_grant_rule (gift_rule_id, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-`payments.amount = sale_orders.total_amount` 需要跨表比较，MySQL `CHECK` 不能引用其他表；由销售服务在同一事务写入相同金额，并由迁移校验和集成测试复核。
-
-#### 6.8 健身房卡根记录
-
-```sql
-CREATE TABLE gym_cards (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    member_id BIGINT NOT NULL,
-    product_id BIGINT NOT NULL,
-    kind VARCHAR(16) NOT NULL,
-    purchase_sale_item_id BIGINT NULL,
-    gift_grant_id BIGINT NULL,
-    name VARCHAR(100) NOT NULL,
-    status VARCHAR(16) NOT NULL DEFAULT 'active',
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT uq_gym_cards_purchase_sale_item UNIQUE (purchase_sale_item_id),
-    CONSTRAINT uq_gym_cards_gift_grant UNIQUE (gift_grant_id),
-    CONSTRAINT uq_gym_card_owner UNIQUE (id, member_id),
-    CONSTRAINT uq_gym_card_owner_kind UNIQUE (id, member_id, kind),
-    CONSTRAINT fk_gym_cards_member
-        FOREIGN KEY (member_id) REFERENCES members(id),
-    CONSTRAINT fk_gym_cards_product_kind
-        FOREIGN KEY (product_id, kind)
-        REFERENCES gym_card_products(id, kind),
-    CONSTRAINT fk_gym_cards_purchase_origin
-        FOREIGN KEY (purchase_sale_item_id, member_id, product_id)
-        REFERENCES gym_card_sale_items(
-            sale_item_id,
-            member_id,
-            gym_card_product_id
-        ),
-    CONSTRAINT fk_gym_cards_gift_origin
-        FOREIGN KEY (gift_grant_id, member_id, product_id)
-        REFERENCES gift_grants(
-            id,
-            member_id,
-            reward_gym_card_product_id
-        ),
-    CONSTRAINT ck_gym_cards_kind
-        CHECK (kind IN ('duration', 'visit')),
-    CONSTRAINT ck_gym_cards_name
-        CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_gym_cards_status
-        CHECK (status IN ('active', 'void')),
-    CONSTRAINT ck_gym_cards_origin_xor
-        CHECK (
-            (purchase_sale_item_id IS NOT NULL)
-            <> (gift_grant_id IS NOT NULL)
-        ),
-    CONSTRAINT ck_gym_cards_visit_purchase_only
-        CHECK (kind = 'duration' OR gift_grant_id IS NULL),
-    KEY ix_gym_card_member_kind_status
-        (member_id, kind, status, id),
-    KEY ix_gym_card_product (product_id, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-```
-
-#### 6.9 期限卡和次卡实例
-
-```sql
-CREATE TABLE duration_gym_cards (
-    gym_card_id BIGINT PRIMARY KEY,
-    member_id BIGINT NOT NULL,
-    kind VARCHAR(16) NOT NULL DEFAULT 'duration',
-    valid_days INT NOT NULL,
-    start_policy VARCHAR(16) NOT NULL,
-    valid_from DATE NOT NULL,
-    valid_until DATE NOT NULL,
-    CONSTRAINT uq_duration_card_owner UNIQUE (gym_card_id, member_id),
-    CONSTRAINT fk_duration_card_root
-        FOREIGN KEY (gym_card_id, member_id, kind)
-        REFERENCES gym_cards(id, member_id, kind),
-    CONSTRAINT ck_duration_card_kind
-        CHECK (kind = 'duration'),
-    CONSTRAINT ck_duration_card_valid_days
-        CHECK (valid_days > 0),
-    CONSTRAINT ck_duration_card_start_policy
-        CHECK (start_policy IN ('immediate', 'append')),
-    CONSTRAINT ck_duration_card_dates
-        CHECK (
-            valid_from < valid_until
-            AND DATEDIFF(valid_until, valid_from) = valid_days
-        ),
-    KEY ix_duration_card_member_end
-        (member_id, valid_until, gym_card_id),
-    KEY ix_duration_card_member_range
-        (member_id, valid_from, valid_until, gym_card_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE visit_gym_cards (
-    gym_card_id BIGINT PRIMARY KEY,
-    member_id BIGINT NOT NULL,
-    kind VARCHAR(16) NOT NULL DEFAULT 'visit',
-    total_entries INT NOT NULL,
-    remaining_entries INT NOT NULL,
-    CONSTRAINT uq_visit_card_owner UNIQUE (gym_card_id, member_id),
-    CONSTRAINT fk_visit_card_root
-        FOREIGN KEY (gym_card_id, member_id, kind)
-        REFERENCES gym_cards(id, member_id, kind),
-    CONSTRAINT ck_visit_card_kind
-        CHECK (kind = 'visit'),
-    CONSTRAINT ck_visit_card_total_entries
-        CHECK (total_entries > 0),
-    CONSTRAINT ck_visit_card_remaining_entries
-        CHECK (remaining_entries BETWEEN 0 AND total_entries),
-    KEY ix_visit_card_member_remaining
-        (member_id, remaining_entries, gym_card_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-```
-
-#### 6.10 私教课包实例
-
-```sql
-CREATE TABLE lesson_packages (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    member_id BIGINT NOT NULL,
-    product_id BIGINT NOT NULL,
-    purchase_sale_item_id BIGINT NOT NULL,
-    name VARCHAR(100) NOT NULL,
-    total_lessons INT NOT NULL,
-    remaining_lessons INT NOT NULL,
-    reserved_lessons INT NOT NULL,
-    available_lessons INT
-        GENERATED ALWAYS AS (remaining_lessons - reserved_lessons) STORED,
-    valid_from DATE NOT NULL,
-    valid_until DATE NULL,
-    status VARCHAR(16) NOT NULL DEFAULT 'active',
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    CONSTRAINT uq_lesson_packages_purchase_sale_item
-        UNIQUE (purchase_sale_item_id),
-    CONSTRAINT uq_lesson_package_owner UNIQUE (id, member_id),
-    CONSTRAINT fk_lesson_packages_member
-        FOREIGN KEY (member_id) REFERENCES members(id),
-    CONSTRAINT fk_lesson_packages_product
-        FOREIGN KEY (product_id) REFERENCES lesson_package_products(id),
-    CONSTRAINT fk_lesson_packages_purchase_origin
-        FOREIGN KEY (purchase_sale_item_id, member_id, product_id)
-        REFERENCES lesson_package_sale_items(
-            sale_item_id,
-            member_id,
-            lesson_package_product_id
-        ),
-    CONSTRAINT ck_lesson_packages_name
-        CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
-    CONSTRAINT ck_lesson_packages_total
-        CHECK (total_lessons > 0),
-    CONSTRAINT ck_lesson_packages_balances
-        CHECK (
-            reserved_lessons >= 0
-            AND reserved_lessons <= remaining_lessons
-            AND remaining_lessons <= total_lessons
-        ),
-    CONSTRAINT ck_lesson_packages_dates
-        CHECK (valid_until IS NULL OR valid_from < valid_until),
-    CONSTRAINT ck_lesson_packages_status
-        CHECK (status IN ('active', 'void')),
-    KEY ix_lesson_package_member_status_end_id
-        (member_id, status, valid_until, id),
-    KEY ix_lesson_package_member_available
-        (member_id, status, available_lessons, id),
-    KEY ix_lesson_package_product (product_id, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-每张 `gym_cards` 根记录“恰有一个与 kind 匹配的实例子表行”是跨表存在性约束，由发卡事务、迁移校验和结构契约测试保证。数据库已经通过 `kind` 复合外键阻止子表种类错配，并通过根表 `CHECK` 阻止次卡使用赠送来源。
-
-#### 6.11 `course_sessions` 增量变更
-
-以下语句适用于已经顺序执行 `001_initial_schema.sql` 和 `002_query_indexes_and_equipment_location.sql` 的 v2 数据库。执行 DDL 前必须处于停机维护状态，并已创建、回填 `lesson_packages` 和 `v3_entitlement_map`。MySQL DDL 会隐式提交，每条语句执行后以 `information_schema` 核实实际结构。
-
-先验证现有课次时长能够表示为 1～150 的精确整数分钟。查询返回任何记录时停止迁移：
-
-```sql
-SELECT id, starts_at, ends_at
-FROM course_sessions
-WHERE TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at) <= 0
-   OR MOD(
-        TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at),
-        60 * 1000000
-   ) <> 0
-   OR TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at)
-        DIV (60 * 1000000) NOT BETWEEN 1 AND 150;
-```
-
-验证通过后增加并收紧时长快照：
-
-```sql
-ALTER TABLE course_sessions
-    ADD COLUMN duration_minutes INT NULL AFTER kind;
-
-UPDATE course_sessions
-SET duration_minutes =
-    TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at)
-    DIV (60 * 1000000);
-
-SELECT cs.id, cs.course_id, cs.duration_minutes, c.duration_minutes
-FROM course_sessions AS cs
-JOIN courses AS c ON c.id = cs.course_id
-WHERE cs.duration_minutes <> c.duration_minutes;
-
-ALTER TABLE course_sessions
-    MODIFY COLUMN duration_minutes INT NOT NULL,
-    ADD CONSTRAINT ck_course_sessions_duration_minutes
-        CHECK (duration_minutes BETWEEN 1 AND 150),
-    ADD CONSTRAINT ck_course_sessions_duration_exact
-        CHECK (
-            TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at)
-            = duration_minutes * 60 * 1000000
-        );
-```
-
-时长交叉核对查询返回任何记录时停止迁移。课次保存排课时快照，目标结构允许课程模板之后被修改，因此该相等性只在 v3 回填时校验，不建立持续性的跨表约束。
-
-#### 6.12 `bookings` 和 `consumptions` 增量变更
-
-预约与消课先增加可空课包编号，再通过持久映射表回填：
-
-```sql
-ALTER TABLE bookings
-    ADD COLUMN lesson_package_id BIGINT NULL AFTER session_id;
-
-UPDATE bookings AS b
-JOIN v3_entitlement_map AS m
-  ON m.old_membership_id = b.membership_id
-SET b.lesson_package_id = m.lesson_package_id
-WHERE m.lesson_package_id IS NOT NULL;
-
-SELECT b.id, b.member_id, b.membership_id
-FROM bookings AS b
-LEFT JOIN lesson_packages AS lp
-  ON lp.id = b.lesson_package_id
- AND lp.member_id = b.member_id
-WHERE b.lesson_package_id IS NULL
-   OR lp.id IS NULL;
-```
-
-上一个查询返回任何记录时停止迁移。验证通过后建立目标预约约束：
-
-```sql
-ALTER TABLE bookings
-    MODIFY COLUMN lesson_package_id BIGINT NOT NULL,
-    ADD CONSTRAINT uq_booking_owner UNIQUE (id, member_id),
-    ADD CONSTRAINT uq_booking_package UNIQUE (id, lesson_package_id),
-    ADD CONSTRAINT fk_bookings_lesson_package_owner
-        FOREIGN KEY (lesson_package_id, member_id)
-        REFERENCES lesson_packages(id, member_id),
-    RENAME INDEX ix_booking_member_status
-        TO ix_booking_member_status_session;
-
-ALTER TABLE consumptions
-    ADD COLUMN lesson_package_id BIGINT NULL AFTER booking_id;
-
-UPDATE consumptions AS c
-JOIN bookings AS b ON b.id = c.booking_id
-SET c.lesson_package_id = b.lesson_package_id;
-
-SELECT c.id, c.booking_id, c.membership_id
-FROM consumptions AS c
-LEFT JOIN bookings AS b
-  ON b.id = c.booking_id
- AND b.lesson_package_id = c.lesson_package_id
-WHERE c.lesson_package_id IS NULL
-   OR b.id IS NULL;
-```
-
-上一个查询返回任何记录时停止迁移。验证通过后切换消课外键，再删除 v2 关联列：
-
-```sql
-ALTER TABLE consumptions
-    MODIFY COLUMN lesson_package_id BIGINT NOT NULL,
-    ADD CONSTRAINT fk_consumptions_booking_package
-        FOREIGN KEY (booking_id, lesson_package_id)
-        REFERENCES bookings(id, lesson_package_id);
-
-ALTER TABLE consumptions
-    DROP FOREIGN KEY consumptions_ibfk_1,
-    DROP COLUMN membership_id;
-
-ALTER TABLE bookings
-    DROP FOREIGN KEY bookings_ibfk_3,
-    DROP INDEX uq_booking_card,
-    DROP COLUMN membership_id;
-```
-
-`bookings_ibfk_3`、`consumptions_ibfk_1` 和 `uq_booking_card` 是当前 v2 初始化脚本产生的名称。迁移执行器必须先从 `information_schema.TABLE_CONSTRAINTS` 和 `KEY_COLUMN_USAGE` 核实这些名称及列顺序；若实际名称不同，应使用结构指纹中核实出的名称，不得猜测后继续。
-
-#### 6.13 门禁入场记录
-
-```sql
-CREATE TABLE gym_entries (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    member_id BIGINT NOT NULL,
-    source_kind VARCHAR(24) NOT NULL,
-    duration_gym_card_id BIGINT NULL,
-    visit_gym_card_id BIGINT NULL,
-    booking_id BIGINT NULL,
-    business_date DATE NOT NULL,
-    entered_at DATETIME(6) NOT NULL,
-    operator_id BIGINT NOT NULL,
-    CONSTRAINT uq_entry_owner UNIQUE (id, member_id),
-    CONSTRAINT uq_entry_member_day UNIQUE (member_id, business_date),
-    CONSTRAINT uq_entry_booking UNIQUE (booking_id),
-    CONSTRAINT fk_gym_entries_member
-        FOREIGN KEY (member_id) REFERENCES members(id),
-    CONSTRAINT fk_gym_entries_operator
-        FOREIGN KEY (operator_id) REFERENCES accounts(id),
-    CONSTRAINT fk_gym_entries_duration_card_owner
-        FOREIGN KEY (duration_gym_card_id, member_id)
-        REFERENCES duration_gym_cards(gym_card_id, member_id),
-    CONSTRAINT fk_gym_entries_visit_card_owner
-        FOREIGN KEY (visit_gym_card_id, member_id)
-        REFERENCES visit_gym_cards(gym_card_id, member_id),
-    CONSTRAINT fk_gym_entries_booking_owner
-        FOREIGN KEY (booking_id, member_id)
-        REFERENCES bookings(id, member_id),
-    CONSTRAINT ck_gym_entries_source_kind
-        CHECK (
-            source_kind IN (
-                'duration_gym_card',
-                'visit_gym_card',
-                'booking'
-            )
-        ),
-    CONSTRAINT ck_gym_entries_source_xor
-        CHECK (
-            (
-                source_kind = 'duration_gym_card'
-                AND duration_gym_card_id IS NOT NULL
-                AND visit_gym_card_id IS NULL
-                AND booking_id IS NULL
-            )
-            OR
-            (
-                source_kind = 'visit_gym_card'
-                AND visit_gym_card_id IS NOT NULL
-                AND duration_gym_card_id IS NULL
-                AND booking_id IS NULL
-            )
-            OR
-            (
-                source_kind = 'booking'
-                AND booking_id IS NOT NULL
-                AND duration_gym_card_id IS NULL
-                AND visit_gym_card_id IS NULL
-            )
-        ),
-    KEY ix_entry_business_date_id (business_date, id),
-    KEY ix_entry_operator_time (operator_id, entered_at, id),
-    KEY ix_entry_duration_card (duration_gym_card_id, id),
-    KEY ix_entry_visit_card (visit_gym_card_id, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-`UNIQUE (member_id, business_date)` 是同一会员同一门店业务日期最多一条入场记录的最终防线。次卡扣减与 `gym_entries` 插入必须在同一服务事务完成；数据库外键和 `CHECK` 只验证来源类型及所有权，不能表达“仅当日首次成功入场扣一次”。
-
-#### 6.14 幂等操作记录
-
-```sql
-CREATE TABLE operation_records (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    request_id CHAR(36)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    actor_id BIGINT NOT NULL,
-    operation VARCHAR(50)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    payload_version VARCHAR(16)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'v3',
-    payload_hash CHAR(64)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    result_id BIGINT NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    CONSTRAINT uq_operation_request UNIQUE (request_id),
-    CONSTRAINT fk_operation_records_actor
-        FOREIGN KEY (actor_id) REFERENCES accounts(id),
-    CONSTRAINT ck_operation_records_operation
-        CHECK (
-            operation IN (
-                'create_member',
-                'sell_gym_card',
-                'sell_lesson_package',
-                'create_session',
-                'cancel_session',
-                'book',
-                'cancel_booking',
-                'register_entry'
-            )
-        ),
-    CONSTRAINT ck_operation_records_payload_version
-        CHECK (payload_version IN ('v3', 'legacy-v2')),
-    CONSTRAINT ck_operation_records_payload_hash
-        CHECK (payload_hash REGEXP '^[0-9a-f]{64}$'),
-    KEY ix_operation_actor_time (actor_id, created_at, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-`result_id` 是按 `operation` 判别的多态编号，MySQL 外键不能让同一列按行值引用不同目标表。服务写入时必须按固定映射保存结果编号；按请求核实接口和迁移校验必须验证每条记录的目标结果存在且类型匹配。
-
-#### 6.15 跨表最终校验
-
-以下查询均应返回空结果；它们应在影子结构进入 `validated` 阶段前执行：
-
-```sql
-SELECT p.id, p.kind
-FROM gym_card_products AS p
-LEFT JOIN duration_gym_card_products AS d
-  ON d.product_id = p.id
-LEFT JOIN visit_gym_card_products AS v
-  ON v.product_id = p.id
-WHERE (p.kind = 'duration' AND (d.product_id IS NULL OR v.product_id IS NOT NULL))
-   OR (p.kind = 'visit' AND (v.product_id IS NULL OR d.product_id IS NOT NULL));
-
-SELECT c.id, c.kind
-FROM gym_cards AS c
-LEFT JOIN duration_gym_cards AS d
-  ON d.gym_card_id = c.id
-LEFT JOIN visit_gym_cards AS v
-  ON v.gym_card_id = c.id
-WHERE (c.kind = 'duration' AND (d.gym_card_id IS NULL OR v.gym_card_id IS NOT NULL))
-   OR (c.kind = 'visit' AND (v.gym_card_id IS NULL OR d.gym_card_id IS NOT NULL));
-
-SELECT gc.id
-FROM gym_cards AS gc
-WHERE (gc.kind = 'visit' AND gc.gift_grant_id IS NOT NULL)
-   OR (
-        gc.kind = 'duration'
-        AND (gc.purchase_sale_item_id IS NULL)
-            = (gc.gift_grant_id IS NULL)
-   );
-
-SELECT p.id AS payment_id, p.sale_order_id
-FROM payments AS p
-JOIN sale_orders AS so ON so.id = p.sale_order_id
-WHERE p.member_id <> so.member_id
-   OR p.amount <> so.total_amount;
-
-SELECT ge.id
-FROM gym_entries AS ge
-WHERE NOT (
-    (
-        ge.source_kind = 'duration_gym_card'
-        AND ge.duration_gym_card_id IS NOT NULL
-        AND ge.visit_gym_card_id IS NULL
-        AND ge.booking_id IS NULL
-    )
-    OR
-    (
-        ge.source_kind = 'visit_gym_card'
-        AND ge.visit_gym_card_id IS NOT NULL
-        AND ge.duration_gym_card_id IS NULL
-        AND ge.booking_id IS NULL
-    )
-    OR
-    (
-        ge.source_kind = 'booking'
-        AND ge.booking_id IS NOT NULL
-        AND ge.duration_gym_card_id IS NULL
-        AND ge.visit_gym_card_id IS NULL
-    )
-);
-```
-
-最后一组校验与目标 `CHECK` 重复，保留它是为了在影子回填阶段尚未添加最终约束时也能验证数据。
-
-### 7. 幂等和提交结果未知
-
-#### 7.1 request_id
-
-- 接口接收小写、带短横线的标准 UUID。
-- request_id 不进入 payload_hash。
-- payload_hash 使用规范化后的业务输入，包括 member_id、产品编号、付款方式或入场来源类型及来源编号。
-- JSON 对象按第 6.14 节表格中的字段顺序写出，使用 `separators=(",", ":")`、`ensure_ascii=False`，不插入额外空白。
-- Decimal 转两位小数字符串，日期使用 ISO 格式，计算 UTF-8 字节的 SHA-256。
-
-#### 7.2 命中规则
-
-- 相同 request_id、actor_id、operation、payload_hash：返回原结果。
-- request_id 相同但任一字段不同：ConflictError。
-- 已有结果必须通过订单或入场聚合查询重建固定 View。
-- 每次重试都先重验账号和对象级权限；停用账号不能凭既有 `request_id` 读取结果。
-
-#### 7.3 并发唯一冲突
-
-首次查询未命中后，先取得本次操作所需的全部业务锁，最后锁定当前读复核 operation_records。锁定复核命中时直接重建胜者结果，不再按已经被胜者改变的余额或状态重新判定资格。若两个事务仍同时插入同一 request_id：
-
-1. 唯一约束失败的事务回滚全部业务变更。
-2. 使用新事务读取胜者 operation_records。
-3. 四项完全匹配则返回胜者结果。
-4. 不匹配抛 ConflictError。
-5. 回滚后仍查不到胜者记录时抛 StorageError。
-
-#### 7.4 OutcomeUnknownError
-
-事务只在 commit 阶段异常时抛 OutcomeUnknownError，并携带 request_id。界面按照上表调用相应核实接口；核实接口查不到记录时提示结果仍未知，不自动重复写操作。
-
-迁移的 `payload_version='legacy-v2'` 记录由只读接口 `get_legacy_operation_result(actor, request_id) -> LegacyOperationResultView` 核实。该 View 固定返回 `request_id`、旧操作名、目标操作名、目标结果类型、目标结果编号、旧载荷哈希和迁移时间，不重建已经无法证明完整输入的新写入 View。只有原操作者和管理员可查；不存在或越权抛 `NotFoundError`，载荷版本不匹配抛 `ConflictError`，查询不修改数据。
-
-### 8. 安全和权限
-
-#### 8.1 外部输入
-
-- 所有 ID 为 1 至 2^63-1 的 int，拒绝 bool、0 和负数。
-- Decimal 必须有限、正数、最多两位小数，拒绝 float、NaN 和 Infinity。
-- 数量为正 int，余额为非负 int。
-- 名称去首尾空白后 1 至 100 字。
-- phone 为 None 或 1 至 32 字，输出到普通日志和列表时脱敏。
-- request_id 严格校验 UUID 规范形式。
-- 枚举只接受固定英文值。
-
-#### 8.2 权限
-
-- AuthService.verify_actor 在每个公开服务方法内重新查询并锁定当前账号，不能只信任传入 Actor。
-- 会员账号通过 MemberAccountLink 获得 member_id；没有关联时不能执行会员业务。
-- 账号 is_active 只决定是否可认证，不撤销 GymCard、LessonPackage 或历史记录。
-- 健身房访问资格由有效期限卡或余额大于 0 的可用次卡推导；归档档案的门禁例外仅适用于归档前已有的开放预约。
-- 前台和管理员可办理销售和入场；产品、赠卡规则和档案归档仅管理员。
-- 会员只能查询本人档案、权益、订单、预约和入场。
-- 教练不能通过产品或付款列表接口枚举会员消费。
-
-#### 8.3 数据访问和日志
-
-- 所有 SQL 值使用参数绑定。
-- 动态排序字段使用固定白名单，不拼接外部字符串。
-- 错误提示不包含 SQL、连接串、密码哈希、完整电话或其他会员的记录。
-- 审计日志记录 actor_id、operation、业务记录 ID 和安全失败原因，不记录完整表单。
-- 产品和权益 View 不暴露内部 payload_hash。
-
-#### 8.4 状态和来源完整性
-
-- 在线销售只能按事务内锁定的启用规则创建 GiftGrant；迁移产生的历史 GiftGrant 引用停用的历史规则版本。
-- GymCard 必须恰好有一个 purchase 或 gift 来源。
-- LessonPackage 必须有一个私教课销售项目来源。
-- Payment 必须属于一个 SaleOrder，金额必须与订单一致。
-- GymEntry 必须由 `source_kind` 和恰好一个来源编号构成，并在登记事务中一次写入。
-- 服务层在写入前检查来源类型、归属和资格，数据库复合外键和 `CHECK` 作为最终防线。
-
-### 9. 性能设计
-
-#### 9.1 分页和稳定排序
-
-- 所有业务列表强制 PageRequest，page_size 1 至 100。
-- 默认按 id 升序稳定排序；时间列表按业务时间、id 排序。
-- 统计总数和当前页使用同一过滤条件。
-- 不提供一次性返回全部会员、卡、课包、订单或入场记录的公共服务。
-
-#### 9.2 避免 N+1
-
-- GymCardView 的来源使用固定 LEFT JOIN 购买来源和赠送来源一次装载。
-- LessonPackageSaleResultView 用 sale_order_id 批量查询订单、项目、付款、课包、赠送和卡。
-- 订单列表先分页订单 ID，再按该页 ID 批量查询项目和付款。
-- EntryView 使用 `source_kind` 选择一次批量 JOIN，不在每条记录循环调用 Repository。
-
-#### 9.3 热点和锁范围
-
-- 同一会员销售由会员行锁串行化，锁内只执行数据库读取、日期计算和写入，不进行网络或终端交互。
-- 产品列表可在服务外做短期只读缓存；余额、卡资格、赠卡规则和幂等结果不得使用可能过期的缓存作写入判断。
-- 最大期限卡到期日查询命中期限卡子表的 `(member_id, valid_until, gym_card_id)` 索引；次卡资格查询命中 `(member_id, remaining_entries, gym_card_id)`。
-- 最后一节课预约命中 LessonPackage 主键，不扫描历史预约计算余额。
-- 同日入场以 UNIQUE(member_id, business_date) 定位。
-
-#### 9.4 报表
-
-- 收入报表以 payments.paid_at 为时间口径，并 JOIN sale_orders 和 sale_items 区分健身房卡与私教课收入。
-- 赠卡不计收入，不在 payments 写零金额记录。
-- 健身房访问资格人数取指定日期有效期限卡与余额大于 0 的可用次卡的会员并集，按 member_id 去重；次卡不进入未来或到期统计。
-- 私教课余额报表读取 LessonPackage.available_lessons，不从销售产品推算。
-
-## 13. 课程、预约、到课与关联业务
-
-> **本章负责人快速导航**
-> 
-> - **Weijie ZHOU & Yuxi ZHU**（教练、课程、预约）：
->   - 教练建档 → [2.1 CoachService](#21-教练课程模板与场地管理)
->   - 课程模板创建 → [2.1 CourseService](#21-教练课程模板与场地管理)
->   - 排课 → [2.2 CourseService.create_session](#22-coursservicecreate_session)
->   - 取消课次 → [2.5 CourseService.cancel_session](#25-courseservicecancel_session)
->   - 预约 → [3.1 BookingService.book](#31-bookingservicebook)
->   - 取消预约 → [3.3 BookingService.cancel](#33-bookingservicecancel)
->   - 数据库表结构 → [6.3 coaches、courses 和 rooms](#63-coachescourses-和-rooms)
-> 
-> - **Yihao QIAN**（签到、评价）：
->   - 签到 → [4.2 AttendanceService.check_in](#42-attendanceservicecheck_in)
->   - 签到更正 → [4.3 AttendanceService.correct_attendance](#43-attendanceservicecorrect_attendance)
->   - 消课 → [4.4 AttendanceService.complete](#44-attendanceservicecomplete)
->   - 缺席处理 → [4.5 AttendanceService.mark_no_show](#45-attendanceservicemark_no_show)
->   - 创建评价 → [7.1 ReviewService.create_review](#71-创建评价)
->   - 评价查询 → [7.2 查询评价](#72-查询评价)
-> 
-> - **Tuao SONG & Mingjin LI**（体测）：
->   - 体测录入 → [6.1 MeasurementService.record](#61-写权限)
->   - 体测查询与对比 → [6.2 历史读取权限](#62-历史读取权限)
-
-### 1. 公共类型
-
-```python
-@dataclass(frozen=True, kw_only=True)
-class CoachInput:
-    name: str
-    phone: str | None
-
-@dataclass(frozen=True, kw_only=True)
-class CoachView:
-    id: int
-    name: str
-    phone: str | None
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
 @dataclass(frozen=True, kw_only=True)
 class CourseInput:
     name: str
-    description: str | None
     kind: CourseKind
-    duration_minutes: int
+    duration_minutes: int  # 整数分钟，1–150；最长 2.5 小时
 
 @dataclass(frozen=True, kw_only=True)
 class CourseView:
     id: int
     name: str
-    description: str | None
     kind: CourseKind
     duration_minutes: int
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
+
+@dataclass(frozen=True, kw_only=True)
+class CourseQuery:
+    keyword: str = ""
+    kind: CourseKind | None = None
+    is_active: bool | None = None
+    paging: PageRequest = field(default_factory=PageRequest)
 
 @dataclass(frozen=True, kw_only=True)
 class RoomInput:
     name: str
-    location: str | None
+    capacity: int
 
 @dataclass(frozen=True, kw_only=True)
 class RoomView:
     id: int
     name: str
-    location: str | None
+    capacity: int
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
 
 @dataclass(frozen=True, kw_only=True)
 class SessionInput:
@@ -3738,402 +5680,69 @@ class SessionInput:
     room_id: int
     starts_at: datetime
     ends_at: datetime
+    capacity: int
 
 @dataclass(frozen=True, kw_only=True)
 class SessionView:
     id: int
-    course: CourseView
-    coach: CoachView
-    room: RoomView
+    course_id: int
     course_name: str
     kind: CourseKind
-    duration_minutes: int
+    coach_id: int
+    coach_name: str
+    room_id: int
+    room_name: str
     starts_at: datetime
     ends_at: datetime
     capacity: int
     occupied_count: int
     available_count: int
     status: SessionStatus
-    created_at: datetime
-    updated_at: datetime
 
 @dataclass(frozen=True, kw_only=True)
 class SessionQuery:
+    window: DateWindow | None = None  # 按 starts_at 筛选
     kind: CourseKind | None = None
     coach_id: int | None = None
     room_id: int | None = None
-    window: DateWindow | None = None
     status: SessionStatus | None = None
     paging: PageRequest = field(default_factory=PageRequest)
+
+@dataclass(frozen=True, kw_only=True)
+class BookingInput:
+    member_id: int
+    session_id: int
+    membership_id: int  # 同一张卡提供日期资格及购买课节；旧课节不得搭配新卡
+
+@dataclass(frozen=True, kw_only=True)
+class BookingView:
+    id: int
+    member_id: int
+    member_name: str
+    membership_id: int
+    session: SessionView
+    status: BookingStatus
+    booked_at: datetime
+    checked_in_at: datetime | None
+    closed_at: datetime | None
 
 @dataclass(frozen=True, kw_only=True)
 class BookingQuery:
     member_id: int | None = None
     session_id: int | None = None
-    lesson_package_id: int | None = None
-    window: DateWindow | None = None
+    window: DateWindow | None = None  # 按关联课次 starts_at 筛选
     status: BookingStatus | None = None
     paging: PageRequest = field(default_factory=PageRequest)
-```
-
-课程模板当前只接受 `kind="private"`，`duration_minutes` 为 1～150 的整数。创建课次时服务从模板复制 `course_name`、`kind` 和 `duration_minutes` 快照，并校验 `ends_at - starts_at` 与时长一致。`SessionInput` 不含容量，私教课容量由服务固定为 1。`occupied_count` 统计 `reserved/checked_in`，`available_count=max(capacity-occupied_count, 0)` 且只在 `scheduled` 时可能大于 0。课程、场地、教练和课次详情返回对应 View，列表返回 `Page[View]`。可选说明和位置没有值时为 `None`。时间区间统一为 `[starts_at, ends_at)`。
-
-### 2. 课程模板、场地与排课
-
-#### 2.1 教练、课程模板与场地管理
-
-```python
-class CoachService:
-    def create_coach(self, actor: Actor, data: CoachInput) -> CoachView: ...
-    def update_coach(
-        self, actor: Actor, coach_id: int, data: CoachInput,
-    ) -> CoachView: ...
-    def get_coach(self, actor: Actor, coach_id: int) -> CoachView: ...
-    def list_coaches(
-        self, actor: Actor, query: NamedQuery,
-    ) -> Page[CoachView]: ...
-    def set_coach_active(
-        self, actor: Actor, coach_id: int, is_active: bool,
-    ) -> CoachView: ...
-
-class CourseService:
-    def create_course(self, actor: Actor, data: CourseInput) -> CourseView: ...
-    def update_course(
-        self, actor: Actor, course_id: int, data: CourseInput,
-    ) -> CourseView: ...
-    def get_course(self, actor: Actor, course_id: int) -> CourseView: ...
-    def list_courses(
-        self, actor: Actor, query: NamedQuery,
-    ) -> Page[CourseView]: ...
-    def set_course_active(
-        self, actor: Actor, course_id: int, is_active: bool,
-    ) -> CourseView: ...
-
-class RoomService:
-    def create_room(self, actor: Actor, data: RoomInput) -> RoomView: ...
-    def update_room(
-        self, actor: Actor, room_id: int, data: RoomInput,
-    ) -> RoomView: ...
-    def get_room(self, actor: Actor, room_id: int) -> RoomView: ...
-    def list_rooms(
-        self, actor: Actor, query: NamedQuery,
-    ) -> Page[RoomView]: ...
-    def set_room_active(
-        self, actor: Actor, room_id: int, is_active: bool,
-    ) -> RoomView: ...
-```
-
-创建、修改和启停仅管理员执行；管理员查询全部资源，其他允许浏览课次的角色只能查询启用资源。创建和修改返回写入后的固定 View，列表返回 `Page[View]`；不存在或对象级越权抛异常，不返回 `None`。同目标状态重复启停返回当前 View。停用只阻止新排课，既有课次和历史快照保持不变。
-
-教练名称为 1～100 字，电话为 `None` 或 1～32 字；课程名称为 1～100 字、说明为 `None` 或 1～1000 字、类型固定为 `private`、时长为 1～150 分钟；场地名称为 1～100 字、位置为 `None` 或 1～200 字。写方法由服务开启事务，修改和启停锁定目标行并记录脱敏审计。异常覆盖 `PermissionDenied`、`InvalidInputError` 和 `NotFoundError`。
-
-#### 2.2 `CourseService.create_session`
-
-```python
-def create_session(
-    self, actor: Actor, data: SessionInput, request_id: str,
-) -> SessionView: ...
-```
-
-- **输入**：启用的课程模板、教练和场地编号，带时区的起止时刻和标准 UUID 请求编号；容量由服务固定为 1。
-- **返回**：创建后的 `SessionView`；相同操作者、操作名和输入重试时返回原课次的当前 View。
-- **权限**：管理员。
-- **异常**：输入格式错误抛 `InvalidInputError`；资源不存在抛 `NotFoundError`；停用或开始时间已到抛 `InvalidState`；教练或场地撞期抛 `ScheduleConflict`；请求编号冲突抛 `ConflictError`；提交结果不明抛 `OutcomeUnknownError`。
-- **数据变更**：创建一条 `course_sessions`，保存课程名称、类型、时长和固定容量快照；创建一条 `operation_records`，`result_id=course_sessions.id`。
-- **事务**：验证身份后锁教练、课程模板、场地；同类资源按 ID 升序。全部锁取得后生成一次 UTC 当前时刻，重查启用状态、课程时长和冲突，再创建课次。
-
-#### 2.3 课次查询
-
-```python
-def get_session(self, actor: Actor, session_id: int) -> SessionView: ...
-def list_sessions(self, actor: Actor, query: SessionQuery) -> Page[SessionView]: ...
-def get_session_by_request(
-    self, actor: Actor, request_id: str,
-) -> SessionView: ...
-```
-
-- 会员只能直接浏览尚未开始的 `scheduled` 课次；已预约课次的后续状态从预约接口查询。
-- 教练只能查看自己的课次；前台和管理员可查看全部课次。
-- 越出数据范围与不存在均抛 `NotFoundError`；列表范围在 SQL 计数与分页前应用。
-- `SessionView.occupied_count` 统计 `reserved` 与 `checked_in`；`available_count` 仅对 `scheduled` 课次计算，否则为 0。
-- 列表按 `starts_at ASC, id ASC` 稳定分页。
-
-#### 2.4 `CourseService.complete_session`
-
-```python
-def complete_session(self, actor: Actor, session_id: int) -> SessionView: ...
-```
-
-- **权限**：本课教练或管理员。
-- **返回**：完成后的 `SessionView`；课次已经完成时返回当前 View。
-- **异常**：课次不存在或教练越权抛 `NotFoundError`；尚未到 `ends_at`、课次已取消或仍有 `reserved/checked_in` 预约抛 `InvalidState`。
-- **数据变更**：仅把 `course_sessions.status` 改为 `completed`。
-- **事务**：锁课次，锁后生成当前时刻，再以锁定当前读检查开放预约。仓储不提交事务。
-
-#### 2.5 `CourseService.cancel_session`
-
-```python
-def cancel_session(
-    self, actor: Actor, session_id: int, request_id: str,
-) -> SessionView: ...
-```
-
-- **权限**：管理员。
-- **返回**：取消后的 `SessionView`；同一请求重试返回当前 View。
-- **异常**：不存在抛 `NotFoundError`；课次已完成、由不同请求重复取消、当前时刻已经到达 `starts_at` 抛 `InvalidState`；候选集合连续变化三次抛 `ConflictError`；提交不明抛 `OutcomeUnknownError`。
-- **数据变更**：把开放预约改为 `cancelled`，设置 `closed_at`，按预约逐一释放对应课包的 `reserved_lessons`，把课次改为 `cancelled`，创建操作记录。
-- **入场对接**：课次取消不删除已经存在的 `gym_entries`；入场记录保存登记当时的合法事实。尚未入场的预约在取消后不再提供特殊入场资格。
-
-取消课次采用有界重开事务，不能在持有课次锁后临时补锁未预见的会员：
-
-1. 在短只读事务中核对已有 `request_id`；未命中时只读取该课次 `reserved` 预约候选，保存 `(booking_id, member_id, lesson_package_id, status)` 并关闭事务。
-2. 开启写事务，按 `member_id ASC` 锁定候选会员，再锁课次。
-3. 取得课次锁后，写事务第一次普通一致性读重新取得候选集合；集合变化时整体回滚，从步骤 1 重开，最多三次。
-4. 集合稳定后按 `lesson_package_id ASC` 锁课包，再按 `booking_id ASC` 锁预约。
-5. 全部锁取得后生成同一个 UTC 当前时刻，重查课次状态、开始边界、预约关联、状态和每个课包需要释放的占用数。
-6. 批量更新课包和预约，再更新课次、写操作记录并提交。
-
-候选为空时仍锁课次并完成取消。提交阶段结果未知不得自动重开，调用方使用原 `request_id` 调用 `get_session_by_request` 核实。
-
-### 3. 预约与取消预约
-
-#### 3.1 `BookingService.book`
-
-```python
-def book(
-    self, actor: Actor, data: BookingInput, request_id: str,
-) -> BookingView: ...
-```
-
-- **权限**：会员只能为自己预约；前台和管理员可以代预约；教练不能代会员预约。
-- **输入**：会员、课次、明确选择的课包编号和标准 UUID 请求编号。
-- **返回**：状态为 `reserved` 的 `BookingView`；相同请求重试返回原预约的当前 View。
-- **异常**：格式错误抛 `InvalidInputError`；越权抛 `PermissionDenied`；范围外或记录不存在抛 `NotFoundError`；课次或权益状态不允许抛 `InvalidState`；已有同课次预约或请求编号冲突抛 `ConflictError`；课包不可用于该课次抛 `LessonPackageNotEligible`；可用课节不足抛 `InsufficientLessonCredits`；会员时间冲突抛 `ScheduleConflict`；满员抛 `CapacityExceeded`。
-- **数据变更**：课包 `reserved_lessons += 1`，创建 `bookings`，创建 `operation_records`。
-
-事务步骤：
-
-1. 校验输入和角色，先按请求编号执行幂等核实。
-2. 以非锁定读取解析会员、课次和课包编号；进入写事务后按全局顺序锁 `member -> course_session -> lesson_package`。
-3. 锁后确认会员启用、课次为 `scheduled`、课包属于会员且为 `active`。
-4. 全部业务锁取得后生成一次 UTC 当前时刻；要求 `now < session.starts_at`。
-5. 将课次开始时刻转换成门店日期，检查 `valid_from <= session_date` 且 `valid_until is None or session_date < valid_until`。
-6. 以锁定当前读检查同会员同课次历史；任何状态已存在都抛 `ConflictError`。
-7. 以锁定当前读计算课次 `reserved/checked_in` 数量和会员在同时间段的开放预约；分别执行容量与时间冲突检查。
-8. 检查 `remaining_lessons - reserved_lessons >= 1`，更新占用并创建预约与操作记录。
-
-课包有效期只按课次开始日期判断，因此未来生效的课包可以提前预约其有效期内课次；健身房卡状态和有效期不参与预约资格判断。
-
-#### 3.2 预约查询
-
-```python
-def get_booking(self, actor: Actor, booking_id: int) -> BookingView: ...
-def get_booking_by_request(
-    self, actor: Actor, request_id: str,
-) -> BookingView: ...
-def list_bookings(
-    self, actor: Actor, query: BookingQuery,
-) -> Page[BookingView]: ...
-```
-
-- 会员只能查看本人预约；教练只能查看本人课次的预约；前台和管理员可按条件查询全部。
-- 详情越权统一抛 `NotFoundError`，不泄露预约、课包或会员是否存在。
-- `BookingQuery.lesson_package_id` 对会员仍受本人范围限制，不能用编号扩大范围。
-- 列表按关联课次 `starts_at DESC, booking.id DESC` 稳定分页；空结果返回 `Page(items=[], total=0, ...)`。
-
-#### 3.3 `BookingService.cancel`
-
-```python
-def cancel(
-    self, actor: Actor, booking_id: int, request_id: str,
-) -> BookingView: ...
-```
-
-- **权限**：会员只能取消本人预约；前台和管理员可以代取消。
-- **返回**：状态为 `cancelled` 的 `BookingView`；相同请求重试返回当前 View。
-- **异常**：不存在或越出范围抛 `NotFoundError`；状态不是 `reserved`、已经到达课次开始时刻或预约已经作为特殊入场资格使用抛 `InvalidState`；请求编号冲突抛 `ConflictError`。
-- **数据变更**：课包 `reserved_lessons -= 1`，预约改为 `cancelled` 并设置 `closed_at`，创建操作记录。
-- **事务**：先读取定位键，再按 `member -> course_session -> lesson_package -> booking` 加锁；同类按 ID 升序。锁后复核所有权、状态、课包关联和当前时刻，并以锁定当前读检查是否有 `gym_entries.booking_id=booking_id`。
-
-会员已经凭该预约登记入场后，不能再自行或由前台代为取消，以免先取得入场资格再释放课节占用。管理员执行的课次取消不受此限制，因为它处理的是场馆侧取消，且保留入场审计记录。
-
-### 4. 签到、消课与缺席
-
-#### 4.1 状态机
-
-```text
-reserved --check_in/correct_attendance(present=True)--> checked_in
-reserved --cancel/cancel_session---------------------> cancelled
-reserved --mark_no_show------------------------------> no_show
-checked_in --correct_attendance(present=False)--------> reserved
-checked_in --complete---------------------------------> completed
-```
-
-- `completed`、`cancelled`、`no_show` 为终态。
-- `checked_in_at` 仅在 `checked_in/completed` 非空。
-- `closed_at` 仅在终态非空。
-- `complete` 要求已签到并且课次已经结束；`mark_no_show` 要求未签到并且课次已经结束。
-
-#### 4.2 `AttendanceService.check_in`
-
-```python
-def check_in(self, actor: Actor, booking_id: int) -> BookingView: ...
-```
-
-- **权限**：会员本人、本课教练、前台、管理员。
-- **返回**：`checked_in` 的 `BookingView`；已经签到时返回当前 View。
-- **异常**：越权或不存在按角色范围抛 `NotFoundError`/`PermissionDenied`；仅 `starts_at <= now < ends_at` 允许普通签到，早于开始、到达 `ends_at` 或课后、以及处于终态均抛 `InvalidState`。
-- **数据变更**：把 `reserved` 改为 `checked_in`，设置 `checked_in_at=now`；不修改课包余额，不创建门禁记录。
-- **事务**：按 `member -> course_session -> booking` 加锁，锁后生成当前时刻并复核状态、归属和课次边界。
-
-#### 4.3 `AttendanceService.correct_attendance`
-
-```python
-def correct_attendance(
-    self, actor: Actor, booking_id: int, present: bool,
-) -> BookingView: ...
-```
-
-- **权限**：本课教练或管理员。
-- **返回**：更正后的 `BookingView`；目标状态与当前状态相同则返回当前 View。
-- **异常**：输入不是布尔目标状态抛 `InvalidInputError`；非本课教练抛 `PermissionDenied`；早于开课或预约已终结抛 `InvalidState`。
-- **数据变更**：`reserved -> checked_in` 时设置当前时刻，`checked_in -> reserved` 时清空 `checked_in_at`；课后补签只能由本课教练或管理员通过本方法执行。结构化审计记录操作者、预约、原状态、目标状态、更正时刻及原/新 `checked_in_at`，不记录联系方式或评价正文；不修改门禁或课包。
-- **事务**：按 `member -> course_session -> booking` 加锁；只允许在消课、缺席或取消之前更正。
-
-#### 4.4 `AttendanceService.complete`
-
-```python
-def complete(self, actor: Actor, booking_id: int) -> ConsumptionView: ...
-```
-
-- **权限**：本课教练或管理员。
-- **返回**：新建的 `ConsumptionView`；预约已完成时以锁定当前读取得并返回原消课记录。
-- **异常**：越权或不存在按范围处理；不是 `checked_in`、课次尚未结束、课包占用不一致抛 `InvalidState`；底层唯一约束异常核实后转换为重复结果或 `StorageError`。
-- **数据变更**：课包 `remaining_lessons -= 1` 且 `reserved_lessons -= 1`；创建固定 `lessons_used=1` 的消课记录；预约改为 `completed` 并设置 `closed_at=now`。
-- **事务**：按 `member -> course_session -> lesson_package -> booking` 加锁；全部锁取得后生成当前时刻；以锁定当前读查消课记录。结算已经占用的课节时不再次要求课包仍在有效期或 `active`，但必须复核余额和占用不变量。
-
-#### 4.5 `AttendanceService.mark_no_show`
-
-```python
-def mark_no_show(self, actor: Actor, booking_id: int) -> BookingView: ...
-```
-
-- **权限**：本课教练或管理员。
-- **返回**：`no_show` 的 `BookingView`；已经缺席时返回当前 View。
-- **异常**：首次处理状态不是 `reserved`、课次尚未结束或课包占用不一致抛 `InvalidState`。
-- **数据变更**：课包仅 `reserved_lessons -= 1`，`remaining_lessons` 不变；预约改为 `no_show` 并设置 `closed_at=now`。
-- **事务**：按 `member -> course_session -> lesson_package -> booking` 加锁，锁后生成当前时刻并复核。
-
-### 5. 门禁与预约特殊入场资格
-
-门禁由独立 `AccessService` 管理，公开方法为 `register_entry`、`get_today_entry` 和 `get_entry_by_request`。
-
-#### 5.1 `AccessService.register_entry`
-
-```python
-def register_entry(
-    self, actor: Actor, data: EntryInput, request_id: str,
-) -> EntryView: ...
-```
-
-- **权限**：前台和管理员；会员不能自行写门禁记录。
-- **输入**：会员编号和带类型的 `DurationGymCardEntrySourceInput`、`VisitGymCardEntrySourceInput` 或 `BookingEntrySourceInput`；持久化时转换为三值 `source_kind` 和恰好一个来源编号。
-- **返回**：首次登记的 `EntryView`；同一请求或同一会员同一业务日期重复登记返回原记录，资格来源不变。
-- **异常**：来源类型非法抛 `InvalidInputError`；会员或资格记录不存在、所有权不匹配抛 `NotFoundError`；卡资格失败抛 `GymCardNotEligible`；预约资格失败抛 `BookingEntryNotEligible`；请求编号与输入冲突抛 `ConflictError`。
-- **数据变更**：首次期限卡或预约入场只创建 `gym_entries`；首次次卡入场同时原子扣减一次余额。同日重复返回首次记录，不再次扣次。每个成功处理的新请求都创建一条指向该入场记录的操作记录。
-
-本节复用第 12.3.7 节的完整事务、资格和锁序合同：先锁会员，再锁期限卡根表与子表、次卡根表与子表，或课次与预约；随后锁当日 `gym_entries` 记录或唯一键范围；取得全部业务锁后最后复核 `operation_records`。期限卡按日期校验，次卡按余额校验并仅在当日首次成功入场时扣一次，预约按课次业务日期和状态校验。归档会员拒绝卡来源，只允许归档前已经存在且仍为 `reserved/checked_in` 的预约来源。
-
-#### 5.2 查询入场
-
-```python
-def get_today_entry(self, actor: Actor, member_id: int) -> EntryView: ...
-def get_entry_by_request(
-    self, actor: Actor, request_id: str,
-) -> EntryView: ...
-```
-
-- 前台和管理员可查；会员本人可以查询自己的当日入场结果，但不能取得其他会员信息。
-- 当日没有记录抛 `NotFoundError`，不返回 `None`。
-- `get_entry_by_request` 只允许原操作者核实；操作类型不匹配抛 `ConflictError`。
-
-### 6. 体测授权
-
-```python
-@dataclass(frozen=True, kw_only=True)
-class MeasurementInput:
-    member_id: int
-    measured_at: datetime
-    height_cm: Decimal
-    weight_kg: Decimal
-    body_fat_pct: Decimal | None
 
 @dataclass(frozen=True, kw_only=True)
-class MeasurementView:
+class ConsumptionView:
     id: int
-    member_id: int
-    coach_id: int
-    measured_at: datetime
-    created_at: datetime
-    height_cm: Decimal
-    weight_kg: Decimal
-    body_fat_pct: Decimal | None
+    booking_id: int
+    membership_id: int
+    lessons_used: int
+    completed_at: datetime
+    operator_id: int
 
-@dataclass(frozen=True, kw_only=True)
-class MeasurementQuery:
-    member_id: int
-    window: DateWindow | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
-
-@dataclass(frozen=True, kw_only=True)
-class MeasurementComparison:
-    before: MeasurementView
-    after: MeasurementView
-    height_delta_cm: Decimal
-    weight_delta_kg: Decimal
-    body_fat_delta_pct: Decimal | None
-```
-
-```python
-def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView: ...
-def get_measurement(
-    self, actor: Actor, measurement_id: int,
-) -> MeasurementView: ...
-def list_measurements(
-    self, actor: Actor, query: MeasurementQuery,
-) -> Page[MeasurementView]: ...
-def compare(
-    self, actor: Actor, before_id: int, after_id: int,
-) -> MeasurementComparison: ...
-```
-
-`body_fat_pct=None` 表示未测体脂；仅当两条记录体脂均非空时比较结果非空。身高范围 100.00～250.00 cm，体重范围 30.00～150.00 kg，体脂范围 0.00～100.00%。授权完全基于会员与当前教练之间的预约关系，课包和健身房卡不参与判断。输入、权限或时间顺序错误抛项目异常，体测记录创建后不可修改或删除。
-
-#### 6.1 写权限
-
-教练录入体测时：
-
-1. `MeasurementInput.member_id` 指定会员，`coach_id` 从可信 `Actor` 取得。
-2. 身份阶段持有当前教练档案锁，业务阶段再锁目标会员；两者完成后生成一次可信 `created_at`。
-3. 使用 `BookingRepository.has_current_coaching_booking(coach_id, member_id, at)` 检查存在关联课次为本教练、预约属于该会员，且满足 `booked_at <= at < min(session.ends_at, booking.closed_at or session.ends_at)`。
-4. 预约取消、课次取消、缺席或完成都会通过 `closed_at` 或 `session.ends_at` 结束当前写授权；终态只参与历史读取截止的计算，不提供新增权限。
-5. `measured_at` 必须带时区且不晚于 `created_at`；身高、体重、体脂按既有范围校验。
-
-没有当前授权抛 `PermissionDenied`；记录一旦创建不可编辑或删除。
-
-#### 6.2 历史读取权限
-
-- 会员只能读取本人全部体测。
-- 前台和管理员不能通过体测接口读取个人明细。
-- 教练的可见截止时刻由其与该会员的预约计算：每个预约取 `min(session.ends_at, booking.closed_at or session.ends_at)`，再取所有预约的最大值，并与查询 `as_of` 取较小值。
-- 体测用不可修改的 `created_at <= visible_until` 判断可见性，不使用可补录的 `measured_at`。
-- 详情、列表的 `total` 与数据、两条对比记录必须使用同一个 `as_of` 和相同 SQL 范围；任一记录不可见时抛 `NotFoundError`。
-
-课次取消、预约取消和缺席通过 `closed_at` 收紧截止时间；后续再次与同一教练建立有效预约时，新的较晚截止时间自动恢复更广历史范围。
-
-### 7. 评价
-
-```python
 @dataclass(frozen=True, kw_only=True)
 class ReviewInput:
     booking_id: int
@@ -4146,205 +5755,12 @@ class ReviewView:
     booking_id: int
     member_id: int
     session_id: int
-    coach_id: int
     rating: int
     comment: str
     created_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
-class ReviewQuery:
-    member_id: int | None = None
-    coach_id: int | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
 ```
 
-```python
-def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView: ...
-def get_review(self, actor: Actor, review_id: int) -> ReviewView: ...
-def list_reviews(
-    self, actor: Actor, query: ReviewQuery,
-) -> Page[ReviewView]: ...
-```
-
-#### 7.1 创建评价
-
-```python
-def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView: ...
-```
-
-- **权限**：仅会员本人。
-- **输入**：本人预约编号、1–5 的整数评分、去首尾空白后最多 1000 字的评论；空评论允许保存为空字符串。
-- **返回**：`ReviewView`。
-- **异常**：预约不在本人范围统一抛 `NotFoundError`；预约不是 `completed` 抛 `InvalidState`；重复评价抛 `ConflictError`；字段不合法抛 `InvalidInputError`。
-- **数据变更**：一条 `reviews`；不修改预约、课包或课次。
-- **事务**：锁预约后复核归属和状态，再以锁定当前读查已有评价；数据库 `UNIQUE(booking_id)` 处理并发最终防重。
-
-#### 7.2 查询评价
-
-- 会员只能查看本人评价；教练只能查看 `course_sessions.coach_id=Actor.coach_id` 的评分和留言；管理员可查看全部；前台调用详情或列表抛 `PermissionDenied`。
-- 会员或教练越出对象范围与记录不存在统一抛 `NotFoundError`。`ReviewQuery.member_id/coach_id` 只能缩小 Actor 已有范围，不能扩大范围。
-- 角色范围必须在 SQL 筛选、`COUNT(*)` 和分页前应用。`list_reviews` 返回 `Page[ReviewView]`，按 `created_at DESC, id DESC` 稳定分页。
-- 匿名经营报表只聚合评分；留言不进入报表、导出或普通日志。评价通过预约关联会员、课次和教练，不依赖课包字段解释课程归属。
-
-### 8. 报表与导出
-
-#### 8.1 类型
-
-保留 `ReportService.membership_stats` 方法名，把返回值明确拆成会员、健身房卡和课包三组指标：
-
-```python
-@dataclass(frozen=True, kw_only=True)
-class MembershipStats:
-    as_of: datetime
-    business_date: date
-    active_member_profiles: int
-    archived_member_profiles: int
-    valid_duration_gym_card_count: int
-    usable_visit_gym_card_count: int
-    members_with_gym_access: int
-    future_duration_gym_cards: int
-    expired_duration_gym_cards: int
-    exhausted_visit_gym_cards: int
-    void_gym_cards: int
-    remaining_visit_entries: int
-    active_lesson_package_count: int
-    future_lesson_packages: int
-    expired_lesson_packages: int
-    void_lesson_packages: int
-    exhausted_lesson_packages: int
-    remaining_lessons: int
-    available_lessons: int
-    reserved_lessons: int
-
-@dataclass(frozen=True, kw_only=True)
-class SessionStatsView:
-    session_id: int
-    starts_at: datetime
-    reserved_count: int
-    checked_in_count: int
-    completed_count: int
-    no_show_count: int
-    cancelled_count: int
-    attendance_rate: Decimal | None
-
-@dataclass(frozen=True, kw_only=True)
-class PaymentQuery:
-    window: DateWindow | None = None
-    member_id: int | None = None
-    method: PaymentMethod | None = None
-    paging: PageRequest = field(default_factory=PageRequest)
-
-@dataclass(frozen=True, kw_only=True)
-class RevenueBreakdownView:
-    sale_kind: SaleKind
-    payment_count: int
-    total_amount: Decimal
-
-@dataclass(frozen=True, kw_only=True)
-class RevenueView:
-    window: DateWindow
-    total_payment_count: int
-    total_amount: Decimal
-    breakdowns: tuple[RevenueBreakdownView, ...]
-
-@dataclass(frozen=True, kw_only=True)
-class CoachStatsView:
-    coach_id: int
-    coach_name: str
-    completed_sessions: int
-    attended_members: int
-
-@dataclass(frozen=True, kw_only=True)
-class CsvExport:
-    filename: str
-    content: bytes
-    row_count: int
-```
-
-`remaining_lessons` 汇总未作废课包的账面剩余，`reserved_lessons` 汇总其中的预约占用；`available_lessons` 只汇总在本业务日期已经生效、未过期且 `status=active` 的 `remaining_lessons - reserved_lessons`。课包状态分类顺序为 `void -> future -> expired -> exhausted -> active`，`exhausted` 要求 `remaining_lessons=0`，每个课包恰好进入一类；无到期日课包不进入 expired。
-
-期限卡按业务日期进入 valid、future 或 expired；次卡只按余额进入 usable 或 exhausted，不进入 future/expired。`members_with_gym_access` 是有效期限卡会员与可用次卡会员的去重并集。`remaining_visit_entries` 汇总未作废次卡余额。`RevenueView.breakdowns` 固定按 `gym_card`、`lesson_package` 顺序返回两项；无数据的分类返回计数 0 和 `Decimal("0.00")`，两类计数与金额之和分别等于总计数和总金额。
-
-#### 8.2 服务方法
-
-```python
-def get_payment(self, actor: Actor, payment_id: int) -> PaymentView: ...
-def list_payments(
-    self, actor: Actor, query: PaymentQuery,
-) -> Page[PaymentView]: ...
-def revenue(self, actor: Actor, window: DateWindow) -> RevenueView: ...
-def membership_stats(self, actor: Actor) -> MembershipStats: ...
-def session_stats(
-    self, actor: Actor, query: SessionQuery,
-) -> Page[SessionStatsView]: ...
-def coach_stats(
-    self, actor: Actor, window: DateWindow, paging: PageRequest,
-) -> Page[CoachStatsView]: ...
-def export_payments(
-    self, actor: Actor, query: PaymentQuery,
-) -> CsvExport: ...
-def export_revenue(
-    self, actor: Actor, window: DateWindow,
-) -> CsvExport: ...
-def export_memberships(
-    self, actor: Actor, as_of: datetime,
-) -> CsvExport: ...
-def export_sessions(
-    self, actor: Actor, query: SessionQuery,
-) -> CsvExport: ...
-def export_coaches(
-    self, actor: Actor, window: DateWindow,
-) -> CsvExport: ...
-```
-
-- 收款通过 `Payment.sale_order_id` 关联销售订单；`PaymentView` 返回 `sale_order_id` 和 `member_id`。
-- 收入统计按 `paid_at` 和 `[start, end)` 汇总每笔实际付款，并按 `Payment -> SaleOrder.kind` 分类；订单内同时产生课包与赠卡也只计一笔课包付款，赠卡不产生额外收入。
-- `membership_stats` 在同一个 REPEATABLE READ 只读事务内生成 `as_of` 和门店 `business_date`，分别聚合两个权益表。
-- 课次统计按预约当前状态分组；仅课次结束且没有开放预约时，按 `completed / (completed + no_show)` 计算到课率，分母为 0 时返回 `None`。
-- 教练统计按已完成课次和 `completed` 预约统计；私教预约使用哪个课包不改变教练业绩口径。
-- 报表详情和列表失败均抛统一业务异常，不返回临时字典、裸列表或 `None`。
-
-五个导出方法均仅管理员使用，全部返回 `CsvExport`。支付和课次导出复用对应列表筛选，但列表页大小不作为导出上限；每次导出在一个 REPEATABLE READ 只读事务内固定同一 `as_of` 或查询窗口，并按主键游标分批读取。超过 10,000 行抛 `InvalidInputError`，不得截断；无权限抛 `PermissionDenied`；编码、快照或输出资源失败抛 `ResourceError`。无数据时仍返回固定表头和 `row_count=0`。`export_memberships` 表头与 `MembershipStats` 字段一致；所有文本列对以 `= + - @` 开头的值加单引号防止 CSV 公式注入。
-
-### 9. 权限、安全与隐私
-
-#### 9.1 权限矩阵
-
-| 操作 | 会员 | 教练 | 前台 | 管理员 |
-|---|---|---|---|---|
-| 浏览可预约课次 | 允许 | 仅本人课次 | 允许 | 允许 |
-| 创建或取消本人预约 | 允许 | 不允许 | 可代办 | 可代办 |
-| 签到 | 仅本人 | 仅本人课次 | 可代办 | 可代办 |
-| 更正签到、消课、缺席 | 不允许 | 仅本人课次 | 不允许 | 允许 |
-| 登记入场 | 不允许 | 不允许 | 允许 | 允许 |
-| 查看体测明细 | 仅本人 | 按预约授权 | 不允许 | 不允许 |
-| 创建评价 | 仅本人已完成预约 | 不允许 | 不允许 | 不允许 |
-| 查看评价 | 仅本人 | 仅本人课次 | 不允许 | 全部 |
-| 收款与权益报表 | 不允许 | 不允许 | 仅收款明细 | 允许 |
-
-服务层在每个公开方法开始重新验证账号启用状态和角色。会员或教练访问不属于自己的详情时返回 `NotFoundError`，避免通过连续编号枚举预约、课包、体测或评价。
-
-#### 9.2 输入与日志
-
-- 所有 ID 为正整数；分页页码、页大小有上下限；`request_id` 必须为规范小写 UUID。
-- 时间必须带时区，窗口满足 `start < end`；内部立即转换 UTC。
-- 评分限定 1–5；评论按 Unicode 字符数限制 1000；名称和查询词先去首尾空白并限制长度。
-- 日志记录操作名、操作者编号、结果编号、请求编号、状态变化和脱敏异常类型，不记录密码、完整联系方式、体测数值、完整评价正文或完整购买表单。
-- 错误消息不包含原始 SQL、连接串、课包余额快照或他人记录是否存在。
-
-### 10. 性能设计
-
-1. 课次列表、预约列表、评价、体测和报表都在 SQL 层计数、筛选和分页，不先加载全部记录。
-2. `SessionView` 与 `BookingView` 通过有界 JOIN 或一次批量查询组装，禁止每条预约再查询会员、课次和课包的 N+1 模式。
-3. 取消课次一次读取候选集合，按课包分组计算释放量，使用批量读取和批量更新；循环中不做单条查询。
-4. 预约容量和时间冲突查询只覆盖开放状态，并使用现有复合索引；数据库仍用课次和会员行锁串行化最后名额与同会员撞期判断。
-5. 报表导出复用一个读取快照，以主键游标分批处理，最大 10,000 行；超过上限抛 `InvalidInputError`，不静默截断。
-6. 体测授权截止使用 `bookings(member_id, status, session_id)` 与 `course_sessions(coach_id, starts_at, id)` 连接计算；按 `body_measurements(member_id, created_at, id)` 应用可见截止和稳定分页。
-7. 门禁当日查询命中 `UNIQUE(member_id, business_date)`；预约来源反查命中 `UNIQUE(booking_id)`。
-
-## 14. 器械与维修
-
-### 14.1 公共类型
+### 器械与体测
 
 ```python
 @dataclass(frozen=True, kw_only=True)
@@ -4365,12 +5781,10 @@ class EquipmentView:
     name: str
     location: str
     status: EquipmentStatus
-    created_at: datetime
-    updated_at: datetime
 
 @dataclass(frozen=True, kw_only=True)
 class EquipmentQuery:
-    keyword: str = ""
+    keyword: str = ""  # 匹配资产编号、名称、位置
     status: EquipmentStatus | None = None
     paging: PageRequest = field(default_factory=PageRequest)
 
@@ -4383,1023 +5797,142 @@ class MaintenanceView:
     resolved_at: datetime | None
     operator_id: int
     resolved_by: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class MeasurementInput:
+    member_id: int
+    measured_at: datetime
+    height_cm: Decimal
+    weight_kg: Decimal
+    body_fat_pct: Decimal | None
+
+@dataclass(frozen=True, kw_only=True)
+class MeasurementView:
+    id: int
+    member_id: int
+    coach_id: int  # 从可信操作者取得，不由表单指定
+    measured_at: datetime
+    height_cm: Decimal
+    weight_kg: Decimal
+    body_fat_pct: Decimal | None
+
+@dataclass(frozen=True, kw_only=True)
+class MeasurementQuery:
+    member_id: int
+    window: DateWindow | None = None  # 按 measured_at 筛选
+    paging: PageRequest = field(default_factory=PageRequest)
+
+@dataclass(frozen=True, kw_only=True)
+class MeasurementComparison:
+    before: MeasurementView
+    after: MeasurementView
+    height_delta_cm: Decimal
+    weight_delta_kg: Decimal
+    body_fat_delta_pct: Decimal | None
 ```
 
-`resolved_at` 和 `resolved_by` 同时为空表示维修未完成，同时非空表示已经完成。
-
-### 14.2 EquipmentService
+### 报表与导出
 
 ```python
-def create_equipment(
-    self, actor: Actor, data: EquipmentInput,
-) -> EquipmentView: ...
-def get_equipment(
-    self, actor: Actor, equipment_id: int,
-) -> EquipmentView: ...
-def list_equipment(
-    self, actor: Actor, query: EquipmentQuery,
-) -> Page[EquipmentView]: ...
-def update_equipment(
-    self, actor: Actor, equipment_id: int, data: EquipmentUpdateInput,
-) -> EquipmentView: ...
-def report_fault(
-    self, actor: Actor, equipment_id: int, description: str,
-) -> MaintenanceView: ...
-def finish_maintenance(
-    self, actor: Actor, maintenance_id: int,
-) -> MaintenanceView: ...
-def retire_equipment(
-    self, actor: Actor, equipment_id: int,
-) -> EquipmentView: ...
-def list_maintenance(
-    self, actor: Actor, equipment_id: int, paging: PageRequest,
-) -> Page[MaintenanceView]: ...
+@dataclass(frozen=True, kw_only=True)
+class RevenueView:
+    window: DateWindow
+    payment_count: int
+    total_amount: Decimal
+
+@dataclass(frozen=True, kw_only=True)
+class MembershipStats:
+    as_of: datetime  # 本次快照的统计时刻，由服务生成；不支持历史状态回放
+    active_members: int
+    inactive_members: int
+    valid_cards: int
+    expired_cards: int
+    future_cards: int
+    void_cards: int
+    exhausted_cards: int  # 已生效但入场次数为 0 的次卡
+
+@dataclass(frozen=True, kw_only=True)
+class SessionStatsView:
+    session_id: int
+    starts_at: datetime
+    reserved_count: int
+    checked_in_count: int
+    completed_count: int
+    no_show_count: int
+    cancelled_count: int
+    attendance_rate: Decimal | None
+
+@dataclass(frozen=True, kw_only=True)
+class CoachStatsView:
+    coach_id: int
+    coach_name: str
+    completed_sessions: int
+    attended_members: int
+
+@dataclass(frozen=True, kw_only=True)
+class CsvExport:
+    filename: str  # 建议文件名，不含路径
+    content: bytes  # 已编码的 UTF-8 BOM CSV
+    row_count: int  # 不含表头在内的行数
 ```
 
-创建、修改、完成维修、报废和查看维修明细仅管理员执行。所有已登录角色可查询器械并提交报修。`asset_code` 为 1～50 字且区分大小写；名称和位置为 1～100 字；故障描述为 1～1000 字。
+### 日志查询
 
-报修锁定器械，要求状态为 `available` 且不存在未完成维修，然后在同一事务创建维修记录并改为 `maintenance`。完成维修先解析器械编号，再按器械、维修记录顺序锁定，同一事务填写完成字段并改为 `available`。报废要求没有未完成维修，将状态永久改为 `retired`。详情不存在抛 `NotFoundError`，重复资产编号或重复未完成维修抛 `ConflictError`，状态不允许时抛 `InvalidState`。
+```python
+@dataclass(frozen=True, kw_only=True)
+class LogFrame:
+    filename: str
+    line_number: int
+    function_name: str
 
-## 15. v3 迁移与实施同步
+@dataclass(frozen=True, kw_only=True)
+class AttendanceChange:
+    before: Literal["reserved", "checked_in"]
+    after: Literal["reserved", "checked_in"]
 
-### 15.1 结构版本
+@dataclass(frozen=True, kw_only=True)
+class LogEntry:
+    timestamp: datetime
+    level: str  # "INFO" | "WARNING" | "ERROR"
+    operation: str
+    outcome: str  # "success" | "rejected" | "failed" | "unknown"
+    actor_id: int | None
+    request_id: str | None
+    result_id: int | None
+    error_type: str | None
+    error_message: str | None
+    attendance_change: AttendanceChange | None = None
+    frames: tuple[LogFrame, ...] = ()
+    truncated: bool = False
 
-v3 由顺序迁移脚本 `sql/003_*.sql` 建立。`CURRENT_SCHEMA_VERSION`、`check_schema`、数据库维护命令和结构契约测试统一要求版本 3。空库初始化执行初始脚本后继续应用迁移到 v3。
+@dataclass(frozen=True, kw_only=True)
+class LogQuery:
+    window: DateWindow | None = None
+    level: str | None = None
+    operation: str | None = None
+    actor_id: int | None = None
+    request_id: str | None = None
+    paging: PageRequest = field(default_factory=PageRequest)
 
-`schema_versions` 保存已经完成的结构版本：
-
-```sql
-CREATE TABLE schema_versions (
-    version INT PRIMARY KEY,
-    applied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+@dataclass(frozen=True, kw_only=True)
+class LogSnapshot:
+    captured_at: datetime
+    entries: tuple[LogEntry, ...]
+    skipped_lines: int
 ```
 
-`schema_migration_runs` 独立于业务表切换的依赖闭包，保存可恢复阶段和目标结构指纹：
+### 使用说明
 
-```sql
-CREATE TABLE schema_migration_runs (
-    target_version INT PRIMARY KEY,
-    phase VARCHAR(16) NOT NULL,
-    structure_fingerprint CHAR(64)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    started_at DATETIME(6) NOT NULL,
-    updated_at DATETIME(6) NOT NULL,
-    CONSTRAINT ck_schema_migration_runs_target
-        CHECK (target_version > 0),
-    CONSTRAINT ck_schema_migration_runs_phase
-        CHECK (phase IN ('prepared', 'validated', 'renamed', 'versioned')),
-    CONSTRAINT ck_schema_migration_runs_fingerprint
-        CHECK (structure_fingerprint REGEXP '^[0-9a-f]{64}$')
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+**导入方式**：
+```python
+from src.models.contracts import Page, Role, Actor, PageRequest
 ```
 
-迁移阶段只允许 `prepared/validated/renamed/versioned`。每次执行 DDL 前先读取 `information_schema`：对象不存在时创建；对象存在且结构指纹一致时继续；同名对象定义不一致时停止迁移。MySQL DDL 可能隐式提交，因此恢复依据是迁移状态、结构指纹、持久映射和数据库实际结构，不依赖跨 DDL 的总事务回滚。
-
-### 15.2 数据迁移步骤
-
-v3 采用停机维护切换。执行顺序固定为：停止应用写入，取得项目固定的数据库命名锁，建立可重入影子结构，回填数据，执行完整校验，单条语句切换表名，写入结构版本 3，部署并启动新代码。影子表名和备份表名来自程序内固定白名单，不能由外部输入拼接；普通值继续使用参数绑定。
-
-迁移建立以下持久映射表。映射表在回填时不建立到影子目标表的外键，使 DDL 中断后仍可用于恢复和核对；目标编号通过唯一约束保持一对一：
-
-```sql
-CREATE TABLE v3_member_map (
-    old_member_id BIGINT PRIMARY KEY,
-    member_id BIGINT NOT NULL,
-    CONSTRAINT uq_v3_member_map_target UNIQUE (member_id),
-    CONSTRAINT ck_v3_member_map_old_id CHECK (old_member_id > 0),
-    CONSTRAINT ck_v3_member_map_target_id CHECK (member_id > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_product_map (
-    old_product_id BIGINT PRIMARY KEY,
-    gym_card_product_id BIGINT NULL,
-    lesson_package_product_id BIGINT NULL,
-    historical_gift_rule_id BIGINT NULL,
-    CONSTRAINT uq_v3_product_map_gym_product
-        UNIQUE (gym_card_product_id),
-    CONSTRAINT uq_v3_product_map_lesson_product
-        UNIQUE (lesson_package_product_id),
-    CONSTRAINT uq_v3_product_map_gift_rule
-        UNIQUE (historical_gift_rule_id),
-    CONSTRAINT ck_v3_product_map_old_id
-        CHECK (old_product_id > 0),
-    CONSTRAINT ck_v3_product_map_target_ids
-        CHECK (
-            (gym_card_product_id IS NULL OR gym_card_product_id > 0)
-            AND (
-                lesson_package_product_id IS NULL
-                OR lesson_package_product_id > 0
-            )
-            AND (
-                historical_gift_rule_id IS NULL
-                OR historical_gift_rule_id > 0
-            )
-        ),
-    CONSTRAINT ck_v3_product_map_shape
-        CHECK (
-            (
-                gym_card_product_id IS NOT NULL
-                AND lesson_package_product_id IS NULL
-                AND historical_gift_rule_id IS NULL
-            )
-            OR
-            (
-                gym_card_product_id IS NOT NULL
-                AND lesson_package_product_id IS NOT NULL
-                AND historical_gift_rule_id IS NOT NULL
-            )
-        )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_sale_map (
-    old_membership_id BIGINT PRIMARY KEY,
-    sale_order_id BIGINT NOT NULL,
-    sale_item_id BIGINT NOT NULL,
-    payment_id BIGINT NOT NULL,
-    CONSTRAINT uq_v3_sale_map_order UNIQUE (sale_order_id),
-    CONSTRAINT uq_v3_sale_map_item UNIQUE (sale_item_id),
-    CONSTRAINT uq_v3_sale_map_payment UNIQUE (payment_id),
-    CONSTRAINT ck_v3_sale_map_old_id CHECK (old_membership_id > 0),
-    CONSTRAINT ck_v3_sale_map_order_id CHECK (sale_order_id > 0),
-    CONSTRAINT ck_v3_sale_map_item_id CHECK (sale_item_id > 0),
-    CONSTRAINT ck_v3_sale_map_payment_id CHECK (payment_id > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_entitlement_map (
-    old_membership_id BIGINT PRIMARY KEY,
-    lesson_package_id BIGINT NULL,
-    gift_grant_id BIGINT NULL,
-    gym_card_id BIGINT NOT NULL,
-    CONSTRAINT uq_v3_entitlement_map_lesson_package
-        UNIQUE (lesson_package_id),
-    CONSTRAINT uq_v3_entitlement_map_gift_grant
-        UNIQUE (gift_grant_id),
-    CONSTRAINT uq_v3_entitlement_map_gym_card
-        UNIQUE (gym_card_id),
-    CONSTRAINT ck_v3_entitlement_map_old_id
-        CHECK (old_membership_id > 0),
-    CONSTRAINT ck_v3_entitlement_map_card_id
-        CHECK (gym_card_id > 0),
-    CONSTRAINT ck_v3_entitlement_map_optional_ids
-        CHECK (
-            (lesson_package_id IS NULL OR lesson_package_id > 0)
-            AND (gift_grant_id IS NULL OR gift_grant_id > 0)
-        ),
-    CONSTRAINT ck_v3_entitlement_map_shape
-        CHECK (
-            (
-                lesson_package_id IS NULL
-                AND gift_grant_id IS NULL
-            )
-            OR
-            (
-                lesson_package_id IS NOT NULL
-                AND gift_grant_id IS NOT NULL
-            )
-        )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_operation_map (
-    old_operation_record_id BIGINT PRIMARY KEY,
-    operation_record_id BIGINT NOT NULL,
-    legacy_operation VARCHAR(50) NOT NULL,
-    target_operation VARCHAR(50) NOT NULL,
-    target_result_type VARCHAR(50) NOT NULL,
-    target_result_id BIGINT NOT NULL,
-    legacy_payload_hash CHAR(64)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    payload_version VARCHAR(16) NOT NULL,
-    migrated_at DATETIME(6) NOT NULL,
-    CONSTRAINT uq_v3_operation_map_target
-        UNIQUE (operation_record_id),
-    CONSTRAINT ck_v3_operation_map_old_id
-        CHECK (old_operation_record_id > 0),
-    CONSTRAINT ck_v3_operation_map_target_id
-        CHECK (operation_record_id > 0),
-    CONSTRAINT ck_v3_operation_map_result_id
-        CHECK (target_result_id > 0),
-    CONSTRAINT ck_v3_operation_map_legacy_hash
-        CHECK (legacy_payload_hash REGEXP '^[0-9a-f]{64}$'),
-    CONSTRAINT ck_v3_operation_map_payload_version
-        CHECK (payload_version IN ('v3', 'legacy-v2'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_entry_map (
-    old_gym_entry_id BIGINT PRIMARY KEY,
-    gym_entry_id BIGINT NOT NULL,
-    CONSTRAINT uq_v3_entry_map_target UNIQUE (gym_entry_id),
-    CONSTRAINT ck_v3_entry_map_old_id CHECK (old_gym_entry_id > 0),
-    CONSTRAINT ck_v3_entry_map_target_id CHECK (gym_entry_id > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-映射表保留到 v3 数据验收结束；`v3_operation_map` 长期保留，用于 `get_legacy_operation_result` 核实历史操作。
-
-结构和数据步骤：
-
-1. 确认当前版本为 v2，确认应用写入已经停止，并取得数据库命名锁。预检旧数据的产品类型、次数余额、课节余额、付款和外键归属；任何空值、越界或无法唯一映射的数据都停止切换。
-
-2. 计算目标结构指纹，创建带 `_v3_shadow` 后缀的完整依赖闭包、持久映射表、索引和回填阶段所需的可空目标列。依赖闭包至少覆盖 members、账号关联、产品、规则、订单、项目、付款、赠送、权益、course_sessions、bookings、consumptions、gym_entries、reviews、body_measurements、operation_records 以及其他通过外键引用这些表的结构。影子子表的外键只能引用对应的影子父表。结构准备完成后记录 `prepared` 恢复点；重跑时锁定状态行并核对结构指纹：
-
-```sql
-INSERT INTO schema_migration_runs (
-    target_version,
-    phase,
-    structure_fingerprint,
-    started_at,
-    updated_at
-)
-SELECT
-    3,
-    'prepared',
-    :structure_fingerprint,
-    CURRENT_TIMESTAMP(6),
-    CURRENT_TIMESTAMP(6)
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM schema_migration_runs
-    WHERE target_version = 3
-);
-
-START TRANSACTION;
-
-SELECT
-    target_version,
-    phase,
-    structure_fingerprint,
-    started_at,
-    updated_at
-FROM schema_migration_runs
-WHERE target_version = 3
-FOR UPDATE;
-
-COMMIT;
-```
-
-3. 迁移会员和教练档案，生成 `member_account_links` 和 `coach_account_links`；账号角色、档案和既有一对一关系写入对应映射并进行数量核对。课程和场地保留原编号；旧结构没有 `description` 或 `location` 时回填 `NULL`。
-
-4. 按旧产品种类建立健身房卡判别子类型：旧期限产品写入 `kind='duration'` 的根产品和期限子表；旧 `kind='count'` 产品写入 `kind='visit'` 的根产品和次卡子表，逐值保存 `total_entries=access_uses`。含私教课节的产品同时建立课包产品、历史期限卡产品和停用的历史赠卡规则。count 产品的确定性回填如下：
-
-```sql
-INSERT INTO gym_card_products_v3_shadow (
-    id,
-    kind,
-    name,
-    price,
-    is_sale_enabled,
-    created_at,
-    updated_at
-)
-SELECT
-    p.id,
-    'visit',
-    p.name,
-    p.price,
-    p.is_active,
-    p.created_at,
-    p.updated_at
-FROM card_products AS p
-WHERE p.kind = 'count'
-  AND p.access_uses > 0
-  AND p.private_lesson_credits = 0
-  AND p.valid_days IS NULL
-  AND NOT EXISTS (
-      SELECT 1
-      FROM gym_card_products_v3_shadow AS target
-      WHERE target.id = p.id
-  );
-
-INSERT INTO visit_gym_card_products_v3_shadow (
-    product_id,
-    kind,
-    total_entries
-)
-SELECT
-    p.id,
-    'visit',
-    p.access_uses
-FROM card_products AS p
-JOIN gym_card_products_v3_shadow AS root
-  ON root.id = p.id
- AND root.kind = 'visit'
-WHERE p.kind = 'count'
-  AND p.access_uses > 0
-  AND p.private_lesson_credits = 0
-  AND p.valid_days IS NULL
-  AND NOT EXISTS (
-      SELECT 1
-      FROM visit_gym_card_products_v3_shadow AS target
-      WHERE target.product_id = p.id
-  );
-
-INSERT INTO v3_product_map (
-    old_product_id,
-    gym_card_product_id,
-    lesson_package_product_id,
-    historical_gift_rule_id
-)
-SELECT
-    p.id,
-    p.id,
-    NULL,
-    NULL
-FROM card_products AS p
-JOIN visit_gym_card_products_v3_shadow AS target
-  ON target.product_id = p.id
-WHERE p.kind = 'count'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM v3_product_map AS mapping
-      WHERE mapping.old_product_id = p.id
-  );
-```
-
-5. 为每条旧 `memberships` 生成一笔确定的 `SaleOrder`、一项 `quantity=1` 的 `SaleItem` 和一笔 `Payment`，保留金额、付款方式、购买时刻和操作者。映射表保证重跑得到相同目标编号；已经存在的目标行必须逐字段相等，不能用覆盖更新掩盖差异。
-
-6. 旧期限权益产生 purchased `DurationGymCard`；旧 count 权益产生 purchased `VisitGymCard`，逐值保存 `total_entries=access_uses` 和 `remaining_entries=remaining_accesses`；含私教课的权益产生 `LessonPackage`，并通过历史规则产生 `GiftGrant` 和 gifted `DurationGymCard`。count 权益回填如下：
-
-```sql
-INSERT INTO gym_cards_v3_shadow (
-    id,
-    member_id,
-    product_id,
-    kind,
-    purchase_sale_item_id,
-    gift_grant_id,
-    name,
-    status,
-    created_at,
-    updated_at
-)
-SELECT
-    m.id,
-    member_map.member_id,
-    product_map.gym_card_product_id,
-    'visit',
-    sale_map.sale_item_id,
-    NULL,
-    m.name,
-    m.status,
-    m.created_at,
-    m.updated_at
-FROM memberships AS m
-JOIN v3_member_map AS member_map
-  ON member_map.old_member_id = m.member_id
-JOIN v3_product_map AS product_map
-  ON product_map.old_product_id = m.product_id
-JOIN v3_sale_map AS sale_map
-  ON sale_map.old_membership_id = m.id
-JOIN gym_card_sale_items_v3_shadow AS sale_item
-  ON sale_item.sale_item_id = sale_map.sale_item_id
- AND sale_item.member_id = member_map.member_id
- AND sale_item.gym_card_product_id = product_map.gym_card_product_id
-WHERE m.kind = 'count'
-  AND m.access_uses > 0
-  AND m.remaining_accesses BETWEEN 0 AND m.access_uses
-  AND NOT EXISTS (
-      SELECT 1
-      FROM gym_cards_v3_shadow AS target
-      WHERE target.id = m.id
-  );
-
-INSERT INTO visit_gym_cards_v3_shadow (
-    gym_card_id,
-    member_id,
-    kind,
-    total_entries,
-    remaining_entries
-)
-SELECT
-    m.id,
-    member_map.member_id,
-    'visit',
-    m.access_uses,
-    m.remaining_accesses
-FROM memberships AS m
-JOIN v3_member_map AS member_map
-  ON member_map.old_member_id = m.member_id
-JOIN gym_cards_v3_shadow AS root
-  ON root.id = m.id
- AND root.member_id = member_map.member_id
- AND root.kind = 'visit'
-WHERE m.kind = 'count'
-  AND m.access_uses > 0
-  AND m.remaining_accesses BETWEEN 0 AND m.access_uses
-  AND NOT EXISTS (
-      SELECT 1
-      FROM visit_gym_cards_v3_shadow AS target
-      WHERE target.gym_card_id = m.id
-  );
-
-INSERT INTO v3_entitlement_map (
-    old_membership_id,
-    lesson_package_id,
-    gift_grant_id,
-    gym_card_id
-)
-SELECT
-    m.id,
-    NULL,
-    NULL,
-    m.id
-FROM memberships AS m
-JOIN visit_gym_cards_v3_shadow AS target
-  ON target.gym_card_id = m.id
-WHERE m.kind = 'count'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM v3_entitlement_map AS mapping
-      WHERE mapping.old_membership_id = m.id
-  );
-```
-
-7. 给预约和消课影子结构回填 `lesson_package_id`。每条预约通过旧 `membership_id` 映射到课包；每条消课同时核对 `(booking_id, lesson_package_id)`，再校验总课节、剩余课节和占用课节与旧数据一致。课次时长仅在微秒差值能被 `60 * 1000000` 整除且与关联课程模板时长一致时回填。
-
-8. 将旧入场记录回填到单表 `gym_entries`。旧表只保存 `membership_id`，没有预约来源字段，因此迁移只采用可审计的权益来源：count 权益写 `visit_gym_card`，月卡、季卡和年卡权益写其历史 `duration_gym_card`，`booking_id` 写 `NULL`。不得根据预约时间、状态或课次日期推测历史预约来源。只有其他数据源存在明确、唯一且可审计的旧预约关联字段时，才允许单独迁移为 booking 来源。
-
-```sql
-INSERT INTO gym_entries_v3_shadow (
-    id,
-    member_id,
-    source_kind,
-    duration_gym_card_id,
-    visit_gym_card_id,
-    booking_id,
-    business_date,
-    entered_at,
-    operator_id
-)
-SELECT
-    old_entry.id,
-    member_map.member_id,
-    CASE
-        WHEN old_membership.kind = 'count'
-            THEN 'visit_gym_card'
-        ELSE 'duration_gym_card'
-    END,
-    CASE
-        WHEN old_membership.kind IN ('monthly', 'quarterly', 'yearly')
-            THEN entitlement_map.gym_card_id
-        ELSE NULL
-    END,
-    CASE
-        WHEN old_membership.kind = 'count'
-            THEN entitlement_map.gym_card_id
-        ELSE NULL
-    END,
-    NULL,
-    old_entry.business_date,
-    old_entry.entered_at,
-    old_entry.operator_id
-FROM gym_entries AS old_entry
-JOIN memberships AS old_membership
-  ON old_membership.id = old_entry.membership_id
- AND old_membership.member_id = old_entry.member_id
-JOIN v3_member_map AS member_map
-  ON member_map.old_member_id = old_entry.member_id
-JOIN v3_entitlement_map AS entitlement_map
-  ON entitlement_map.old_membership_id = old_membership.id
-WHERE (
-        old_membership.kind = 'count'
-        AND old_entry.accesses_used = 1
-      )
-   OR (
-        old_membership.kind IN ('monthly', 'quarterly', 'yearly')
-        AND old_entry.accesses_used = 0
-      );
-
-INSERT INTO v3_entry_map (
-    old_gym_entry_id,
-    gym_entry_id
-)
-SELECT
-    old_entry.id,
-    target.id
-FROM gym_entries AS old_entry
-JOIN gym_entries_v3_shadow AS target
-  ON target.id = old_entry.id;
-```
-
-回填后要求 `v3_entry_map`、旧 `gym_entries` 和目标 `gym_entries_v3_shadow` 数量完全一致；旧 count 入场必须满足 `accesses_used=1`，旧混合权益入场必须满足 `accesses_used=0`。
-
-9. 迁移旧 `operation_records`：`sell_product` 根据产品映射转换为 `sell_gym_card` 或 `sell_lesson_package`，结果编号指向对应订单；旧预约、取消、排课和入场操作映射到目标结果编号。能够完整重建输入的记录生成当前 `payload_hash`；字段不足的记录保存 `payload_version='legacy-v2'` 和旧规范化载荷哈希。
-
-10. 逐表核对源记录数、映射记录数、金额总额、课节总额、占用总额、付款数量、权益数量、入场数量和操作记录数量。以下校验中的违规查询必须返回零或空结果，对应源/目标汇总必须相等。
-
-产品与卡的判别子类型校验：
-
-```sql
-SELECT COUNT(*) AS invalid_gym_card_product_subtype_count
-FROM gym_card_products_v3_shadow AS root
-LEFT JOIN duration_gym_card_products_v3_shadow AS duration_product
-  ON duration_product.product_id = root.id
-LEFT JOIN visit_gym_card_products_v3_shadow AS visit_product
-  ON visit_product.product_id = root.id
-WHERE
-    (duration_product.product_id IS NOT NULL)
-    + (visit_product.product_id IS NOT NULL) <> 1
- OR (root.kind = 'duration' AND duration_product.product_id IS NULL)
- OR (root.kind = 'visit' AND visit_product.product_id IS NULL)
- OR (root.kind = 'duration' AND visit_product.product_id IS NOT NULL)
- OR (root.kind = 'visit' AND duration_product.product_id IS NOT NULL);
-
-SELECT COUNT(*) AS invalid_gym_card_subtype_count
-FROM gym_cards_v3_shadow AS root
-LEFT JOIN duration_gym_cards_v3_shadow AS duration_card
-  ON duration_card.gym_card_id = root.id
-LEFT JOIN visit_gym_cards_v3_shadow AS visit_card
-  ON visit_card.gym_card_id = root.id
-WHERE
-    (duration_card.gym_card_id IS NOT NULL)
-    + (visit_card.gym_card_id IS NOT NULL) <> 1
- OR (root.kind = 'duration' AND duration_card.gym_card_id IS NULL)
- OR (root.kind = 'visit' AND visit_card.gym_card_id IS NULL)
- OR (root.kind = 'duration' AND visit_card.gym_card_id IS NOT NULL)
- OR (root.kind = 'visit' AND duration_card.gym_card_id IS NOT NULL);
-```
-
-旧 count 产品、实例和余额校验：
-
-```sql
-SELECT
-    source.id AS old_product_id,
-    source.access_uses AS source_total_entries,
-    target.total_entries AS target_total_entries
-FROM card_products AS source
-LEFT JOIN v3_product_map AS mapping
-  ON mapping.old_product_id = source.id
-LEFT JOIN visit_gym_card_products_v3_shadow AS target
-  ON target.product_id = mapping.gym_card_product_id
-WHERE source.kind = 'count'
-  AND (
-      mapping.lesson_package_product_id IS NOT NULL
-      OR mapping.historical_gift_rule_id IS NOT NULL
-      OR target.product_id IS NULL
-      OR target.total_entries <> source.access_uses
-  );
-
-SELECT
-    COUNT(*) AS source_count_product_count,
-    COALESCE(SUM(source.access_uses), 0) AS source_total_entries,
-    COUNT(target.product_id) AS target_visit_product_count,
-    COALESCE(SUM(target.total_entries), 0) AS target_total_entries
-FROM card_products AS source
-LEFT JOIN v3_product_map AS mapping
-  ON mapping.old_product_id = source.id
-LEFT JOIN visit_gym_card_products_v3_shadow AS target
-  ON target.product_id = mapping.gym_card_product_id
-WHERE source.kind = 'count';
-
-SELECT
-    source.id AS old_membership_id,
-    source.access_uses AS source_total_entries,
-    target.total_entries AS target_total_entries,
-    source.remaining_accesses AS source_remaining_entries,
-    target.remaining_entries AS target_remaining_entries
-FROM memberships AS source
-LEFT JOIN v3_entitlement_map AS mapping
-  ON mapping.old_membership_id = source.id
-LEFT JOIN visit_gym_cards_v3_shadow AS target
-  ON target.gym_card_id = mapping.gym_card_id
-WHERE source.kind = 'count'
-  AND (
-      mapping.lesson_package_id IS NOT NULL
-      OR mapping.gift_grant_id IS NOT NULL
-      OR target.gym_card_id IS NULL
-      OR target.total_entries <> source.access_uses
-      OR target.remaining_entries <> source.remaining_accesses
-  );
-
-SELECT
-    COUNT(*) AS source_count_membership_count,
-    COALESCE(SUM(source.access_uses), 0) AS source_total_entries,
-    COALESCE(SUM(source.remaining_accesses), 0)
-        AS source_remaining_entries,
-    COUNT(target.gym_card_id) AS target_visit_card_count,
-    COALESCE(SUM(target.total_entries), 0) AS target_total_entries,
-    COALESCE(SUM(target.remaining_entries), 0)
-        AS target_remaining_entries
-FROM memberships AS source
-LEFT JOIN v3_entitlement_map AS mapping
-  ON mapping.old_membership_id = source.id
-LEFT JOIN visit_gym_cards_v3_shadow AS target
-  ON target.gym_card_id = mapping.gym_card_id
-WHERE source.kind = 'count';
-```
-
-入场来源、子类型和会员归属校验：
-
-```sql
-SELECT COUNT(*) AS invalid_entry_xor_count
-FROM gym_entries_v3_shadow AS entry_record
-WHERE
-    (entry_record.duration_gym_card_id IS NOT NULL)
-    + (entry_record.visit_gym_card_id IS NOT NULL)
-    + (entry_record.booking_id IS NOT NULL) <> 1
- OR (
-      entry_record.source_kind = 'duration_gym_card'
-      AND (
-          entry_record.duration_gym_card_id IS NULL
-          OR entry_record.visit_gym_card_id IS NOT NULL
-          OR entry_record.booking_id IS NOT NULL
-      )
-    )
- OR (
-      entry_record.source_kind = 'visit_gym_card'
-      AND (
-          entry_record.visit_gym_card_id IS NULL
-          OR entry_record.duration_gym_card_id IS NOT NULL
-          OR entry_record.booking_id IS NOT NULL
-      )
-    )
- OR (
-      entry_record.source_kind = 'booking'
-      AND (
-          entry_record.booking_id IS NULL
-          OR entry_record.duration_gym_card_id IS NOT NULL
-          OR entry_record.visit_gym_card_id IS NOT NULL
-      )
-    )
- OR entry_record.source_kind NOT IN (
-      'duration_gym_card',
-      'visit_gym_card',
-      'booking'
-    );
-
-SELECT COUNT(*) AS invalid_entry_owner_or_subtype_count
-FROM gym_entries_v3_shadow AS entry_record
-LEFT JOIN duration_gym_cards_v3_shadow AS duration_card
-  ON duration_card.gym_card_id = entry_record.duration_gym_card_id
-LEFT JOIN visit_gym_cards_v3_shadow AS visit_card
-  ON visit_card.gym_card_id = entry_record.visit_gym_card_id
-LEFT JOIN bookings_v3_shadow AS booking_record
-  ON booking_record.id = entry_record.booking_id
-WHERE
-    (
-        entry_record.source_kind = 'duration_gym_card'
-        AND (
-            duration_card.gym_card_id IS NULL
-            OR duration_card.member_id <> entry_record.member_id
-        )
-    )
- OR (
-        entry_record.source_kind = 'visit_gym_card'
-        AND (
-            visit_card.gym_card_id IS NULL
-            OR visit_card.member_id <> entry_record.member_id
-        )
-    )
- OR (
-        entry_record.source_kind = 'booking'
-        AND (
-            booking_record.id IS NULL
-            OR booking_record.member_id <> entry_record.member_id
-        )
-    );
-
-SELECT
-    (SELECT COUNT(*) FROM gym_entries) AS source_entry_count,
-    (SELECT COUNT(*) FROM v3_entry_map) AS entry_map_count,
-    (SELECT COUNT(*) FROM gym_entries_v3_shadow) AS target_entry_count,
-    (
-        SELECT COUNT(*)
-        FROM gym_entries_v3_shadow
-        WHERE source_kind = 'duration_gym_card'
-    ) AS duration_source_count,
-    (
-        SELECT COUNT(*)
-        FROM gym_entries_v3_shadow
-        WHERE source_kind = 'visit_gym_card'
-    ) AS visit_source_count,
-    (
-        SELECT COUNT(*)
-        FROM gym_entries_v3_shadow
-        WHERE source_kind = 'booking'
-    ) AS booking_source_count;
-```
-
-付款、订单、课包和卡来源校验：
-
-```sql
-SELECT
-    (SELECT COUNT(*) FROM memberships) AS source_membership_count,
-    (SELECT COUNT(*) FROM payments) AS source_payment_count,
-    (SELECT COUNT(*) FROM v3_sale_map) AS sale_map_count,
-    (SELECT COUNT(*) FROM sale_orders_v3_shadow) AS target_order_count,
-    (SELECT COUNT(*) FROM sale_items_v3_shadow) AS target_sale_item_count,
-    (SELECT COUNT(*) FROM payments_v3_shadow) AS target_payment_count,
-    (SELECT COUNT(*) FROM v3_entitlement_map) AS entitlement_map_count,
-    (SELECT COUNT(*) FROM gym_cards_v3_shadow) AS target_gym_card_count,
-    (
-        SELECT COUNT(*)
-        FROM memberships
-        WHERE private_lesson_credits > 0
-    ) AS source_mixed_membership_count,
-    (SELECT COUNT(*) FROM lesson_packages_v3_shadow)
-        AS target_lesson_package_count,
-    (SELECT COUNT(*) FROM gift_grants_v3_shadow)
-        AS target_gift_grant_count;
-
-SELECT
-    (SELECT COALESCE(SUM(amount), 0.00) FROM payments)
-        AS source_payment_amount,
-    (SELECT COALESCE(SUM(total_amount), 0.00) FROM sale_orders_v3_shadow)
-        AS target_order_amount,
-    (SELECT COALESCE(SUM(amount), 0.00) FROM payments_v3_shadow)
-        AS target_payment_amount;
-
-SELECT COUNT(*) AS invalid_payment_order_count
-FROM payments_v3_shadow AS payment_record
-LEFT JOIN sale_orders_v3_shadow AS order_record
-  ON order_record.id = payment_record.sale_order_id
-WHERE order_record.id IS NULL
-   OR order_record.member_id <> payment_record.member_id
-   OR order_record.total_amount <> payment_record.amount;
-
-SELECT COUNT(*) AS order_without_exactly_one_payment_count
-FROM sale_orders_v3_shadow AS order_record
-LEFT JOIN payments_v3_shadow AS payment_record
-  ON payment_record.sale_order_id = order_record.id
-GROUP BY order_record.id
-HAVING COUNT(payment_record.id) <> 1;
-
-SELECT COUNT(*) AS invalid_lesson_package_source_count
-FROM lesson_packages_v3_shadow AS package_record
-LEFT JOIN lesson_package_sale_items_v3_shadow AS source_item
-  ON source_item.sale_item_id = package_record.purchase_sale_item_id
-WHERE source_item.sale_item_id IS NULL
-   OR source_item.member_id <> package_record.member_id
-   OR source_item.lesson_package_product_id <> package_record.product_id;
-
-SELECT COUNT(*) AS invalid_gym_card_source_count
-FROM gym_cards_v3_shadow AS card_record
-LEFT JOIN gym_card_sale_items_v3_shadow AS purchase_item
-  ON purchase_item.sale_item_id = card_record.purchase_sale_item_id
-LEFT JOIN gift_grants_v3_shadow AS gift_record
-  ON gift_record.id = card_record.gift_grant_id
-WHERE
-    (card_record.purchase_sale_item_id IS NOT NULL)
-    + (card_record.gift_grant_id IS NOT NULL) <> 1
- OR (
-      card_record.purchase_sale_item_id IS NOT NULL
-      AND (
-          purchase_item.sale_item_id IS NULL
-          OR purchase_item.member_id <> card_record.member_id
-          OR purchase_item.gym_card_product_id <> card_record.product_id
-      )
-    )
- OR (
-      card_record.gift_grant_id IS NOT NULL
-      AND (
-          gift_record.id IS NULL
-          OR gift_record.member_id <> card_record.member_id
-          OR gift_record.reward_gym_card_product_id <> card_record.product_id
-          OR card_record.kind <> 'duration'
-      )
-    )
- OR (
-      card_record.kind = 'visit'
-      AND card_record.gift_grant_id IS NOT NULL
-    );
-```
-
-11. 在影子结构上添加最终 `NOT NULL`、复合外键、`CHECK` 和唯一约束，执行结构契约测试和只读业务核对。全部校验通过后复核结构指纹，并将阶段推进到 `validated`：
-
-```sql
-UPDATE schema_migration_runs
-SET phase = 'validated',
-    updated_at = CURRENT_TIMESTAMP(6)
-WHERE target_version = 3
-  AND phase = 'prepared'
-  AND structure_fingerprint = :structure_fingerprint;
-```
-
-12. 确认 `phase='validated'`，确认全部正式旧表、影子表和目标备份名称处于预期状态，并确认影子子表外键只指向影子父表。随后使用一条 `RENAME TABLE` 切换整个依赖闭包，不能拆分：
-
-```sql
-RENAME TABLE
-    members TO members_v2_backup,
-    members_v3_shadow TO members,
-    coaches TO coaches_v2_backup,
-    coaches_v3_shadow TO coaches,
-    courses TO courses_v2_backup,
-    courses_v3_shadow TO courses,
-    rooms TO rooms_v2_backup,
-    rooms_v3_shadow TO rooms,
-    member_account_links_v3_shadow TO member_account_links,
-    coach_account_links_v3_shadow TO coach_account_links,
-    card_products TO card_products_v2_backup,
-    gym_card_products_v3_shadow TO gym_card_products,
-    duration_gym_card_products_v3_shadow TO duration_gym_card_products,
-    visit_gym_card_products_v3_shadow TO visit_gym_card_products,
-    lesson_package_products_v3_shadow TO lesson_package_products,
-    lesson_package_gift_rules_v3_shadow TO lesson_package_gift_rules,
-    sale_orders_v3_shadow TO sale_orders,
-    sale_items_v3_shadow TO sale_items,
-    gym_card_sale_items_v3_shadow TO gym_card_sale_items,
-    lesson_package_sale_items_v3_shadow TO lesson_package_sale_items,
-    memberships TO memberships_v2_backup,
-    payments TO payments_v2_backup,
-    payments_v3_shadow TO payments,
-    gift_grants_v3_shadow TO gift_grants,
-    gym_cards_v3_shadow TO gym_cards,
-    duration_gym_cards_v3_shadow TO duration_gym_cards,
-    visit_gym_cards_v3_shadow TO visit_gym_cards,
-    lesson_packages_v3_shadow TO lesson_packages,
-    course_sessions TO course_sessions_v2_backup,
-    course_sessions_v3_shadow TO course_sessions,
-    bookings TO bookings_v2_backup,
-    bookings_v3_shadow TO bookings,
-    consumptions TO consumptions_v2_backup,
-    consumptions_v3_shadow TO consumptions,
-    gym_entries TO gym_entries_v2_backup,
-    gym_entries_v3_shadow TO gym_entries,
-    reviews TO reviews_v2_backup,
-    reviews_v3_shadow TO reviews,
-    body_measurements TO body_measurements_v2_backup,
-    body_measurements_v3_shadow TO body_measurements,
-    operation_records TO operation_records_v2_backup,
-    operation_records_v3_shadow TO operation_records;
-```
-
-换名成功后立即将阶段推进到 `renamed`，并验证正式子表没有外键指向 `_v2_backup` 或 `_v3_shadow`：
-
-```sql
-UPDATE schema_migration_runs
-SET phase = 'renamed',
-    updated_at = CURRENT_TIMESTAMP(6)
-WHERE target_version = 3
-  AND phase = 'validated';
-
-SELECT
-    constraint_name,
-    table_name,
-    referenced_table_name
-FROM information_schema.referential_constraints
-WHERE constraint_schema = DATABASE()
-  AND table_name NOT LIKE '%\\_v2\\_backup' ESCAPE '\\'
-  AND table_name NOT LIKE '%\\_v3\\_shadow' ESCAPE '\\'
-  AND (
-      referenced_table_name LIKE '%\\_v3\\_shadow' ESCAPE '\\'
-      OR referenced_table_name LIKE '%\\_v2\\_backup' ESCAPE '\\'
-  );
-```
-
-13. 再次核对正式结构指纹、映射数量、金额、权益余额和外键目标。通过后在一个普通 DML 事务内登记结构版本 3，并将阶段推进到 `versioned`；该事务只负责版本记录和阶段更新，不承担回滚此前 DDL 的职责：
-
-```sql
-START TRANSACTION;
-
-INSERT INTO schema_versions (version, applied_at)
-SELECT 3, CURRENT_TIMESTAMP(6)
-WHERE EXISTS (
-    SELECT 1
-    FROM schema_migration_runs
-    WHERE target_version = 3
-      AND phase = 'renamed'
-)
-  AND NOT EXISTS (
-    SELECT 1
-    FROM schema_versions
-    WHERE version = 3
-);
-
-UPDATE schema_migration_runs
-SET phase = 'versioned',
-    updated_at = CURRENT_TIMESTAMP(6)
-WHERE target_version = 3
-  AND phase = 'renamed';
-
-COMMIT;
-```
-
-随后部署 v3 代码并启动应用。启动结构检查通过后释放命名锁并开放写入。检测到 `renamed` 时只复核正式结构和数据并完成版本登记；检测到 `versioned` 时迁移直接返回已完成。
-
-每一步都先查映射表和 `information_schema`。定义和数据已符合目标时记录完成并继续；部分完成时从数据库实际状态补齐。无法唯一映射、数量或金额不相等、约束创建失败时停止切换并保持应用停写。DDL 结果不明时抛 `MigrationError`，包含已确认步骤和失败步骤；再次执行先重新核验实际结构。
-
-### 15.3 实现同步顺序
-
-1. 固定 `src/models/contracts.py` 中的 Literal、Input、View、Query 和异常。
-2. 实现 v3 SQL、存储模型和结构检查。
-3. 实现会员与账号关联、产品、赠卡规则、销售和权益 Repository。
-4. 实现 `SalesService` 和权益查询。
-5. 将预约、消课和报表切换到 `lesson_package_id`。
-6. 实现 `AccessService` 和单表判别结构 `gym_entries`。
-7. 同步 CLI/TUI Handler、Formatter 和演示数据。
-8. 执行单元测试、MySQL 集成测试、迁移测试和并发测试。
-9. 同步功能清单、工程规范和报告材料。
-
-### 15.4 两轮审计
-
-第一轮对照本文检查公共类型、服务签名、异常、事务、权限、SQL、索引、迁移和调用方。
-
-修复第一轮发现后，第二轮独立检查业务闭环、并发竞争、安全边界、性能、遗漏引用和文档同步。
-
-两轮审计都以具体实现和真实 MySQL 验证为依据。占位实现记录依赖状态；已实现入口调用占位依赖而不能完成承诺流程时记录为集成阻塞项。
-
-### 15.5 测试矩阵
-
-#### 15.5.1 领域与接口契约
-
-| 场景 | 预期 |
-|---|---|
-| `BookingInput` 使用课包编号 | 创建预约和 View 全程返回同一 `lesson_package_id` |
-| 列表无数据 | 返回空 `Page`，不返回裸列表或 `None` |
-| 详情不存在或越权 | 抛 `NotFoundError` |
-| 课包无到期日 | 有效期判断只检查 `valid_from` |
-| 课包未来生效但课次在有效期内 | 允许提前预约 |
-| 健身房卡有效，课包用尽 | 可入场，不能预约 |
-| 课包有余额，没有健身房卡 | 可预约；仅在上课业务日期凭预约入场 |
-| 课包不属于会员或日期不适用 | `LessonPackageNotEligible` 或按隐藏存在性规则返回 `NotFoundError` |
-
-#### 15.5.2 预约与余额
-
-| 场景 | 预期 |
-|---|---|
-| 两人并发预约私教课最后名额 | 一人成功，另一人 `CapacityExceeded` |
-| 同会员并发预约重叠课次 | 至多一项成功，另一项 `ScheduleConflict` |
-| 同一课包并发预约最后一节 | 至多一项成功，余额不为负 |
-| 同会员同课次取消后再预约 | `ConflictError`，历史唯一记录不变 |
-| 使用他人课包编号 | `NotFoundError`，无余额变化 |
-| 预约成功 | `reserved_lessons + 1`，`remaining_lessons` 不变 |
-| 取消预约 | `reserved_lessons - 1`，状态和 `closed_at` 正确 |
-| 凭预约入场后取消 | `InvalidState`，预约占用不释放 |
-| 同一 `request_id` 相同输入重试 | 返回同一预约 |
-| 同一 `request_id` 不同输入 | `ConflictError` |
-
-#### 15.5.3 取消课次
-
-| 场景 | 预期 |
-|---|---|
-| 无预约取消 | 课次直接取消 |
-| 多课包、多会员预约 | 全部预约取消，各课包按实际数量释放 |
-| 候选读取后新增预约先提交 | 快照变化，整体回滚并重开 |
-| 等锁期间跨过 `starts_at` | `InvalidState`，无操作记录 |
-| 预约曾用于入场 | 课次仍可由管理员取消，入场记录保留 |
-| 候选持续变化或释放失败 | `ConflictError` 或原异常，课次、预约和课包全部回滚 |
-
-#### 15.5.4 签到、消课和缺席
-
-| 场景 | 预期 |
-|---|---|
-| 开课前签到 | `InvalidState` |
-| 到达 `ends_at` 或课后普通签到 | `InvalidState` |
-| 课后由本课教练或管理员补签 | 更正成功并写结构化审计 |
-| 重复签到 | 返回当前预约，不重复写状态 |
-| 已签到更正为未到 | 回到 `reserved` 并清空 `checked_in_at` |
-| 未结束消课 | `InvalidState` |
-| 两次并发消同一预约 | 只创建一条消课、只扣一节 |
-| 并发消同课包两项预约 | 两项串行扣减，不丢失更新 |
-| 完成预约 | remaining 与 reserved 各减 1 |
-| 缺席 | 只减 reserved，remaining 不变 |
-| 终态更正签到 | `InvalidState` |
-
-#### 15.5.5 门禁
-
-| 场景 | 预期 |
-|---|---|
-| 有效期限卡入场 | 记录 `duration_gym_card` 来源且不扣次数 |
-| 次卡销售 | `remaining_entries=total_entries` 且没有起止日期 |
-| 次卡当日首次入场 | 记录 `visit_gym_card` 来源并原子扣减 1 |
-| 同一次卡同日重复入场 | 返回首次记录且不再次扣次 |
-| 最后一次次卡余额并发入场 | 只扣减一次，余额不为负，并发请求返回同一当日记录 |
-| 期限卡未生效、到期、作废或次卡余额耗尽 | `GymCardNotEligible` |
-| 当天有效预约入场 | 记录 `booking` 来源 |
-| archived 会员使用卡来源 | `GymCardNotEligible` |
-| archived 会员使用归档前既有开放预约 | 允许预约来源入场 |
-| 预约日期不符、已取消或缺席 | `BookingEntryNotEligible` |
-| 同会员同日并发两次登记 | 只有一条记录，返回同一首次结果 |
-| 来源类型非法或来源属于他人 | `InvalidInputError` 或 `NotFoundError` |
-
-#### 15.5.6 体测、评价与报表
-
-| 场景 | 预期 |
-|---|---|
-| 教练有当前有效预约录入体测 | 成功，coach_id 来自 Actor |
-| 预约取消后录入 | `PermissionDenied` |
-| 补录 measured_at 到授权期内、created_at 已超期 | 教练不可见 |
-| 会员评价本人 completed 预约 | 成功 |
-| 并发重复评价 | 一条成功，另一条 `ConflictError` |
-| 会员查询他人评价或教练查询其他教练课次评价 | `NotFoundError`，分页 total 不包含越权记录 |
-| 教练查询本人课次评价、管理员查询全部 | 按角色范围返回；前台查询抛 `PermissionDenied` |
-| 一次购买产生课包和赠卡 | 收入只计一笔付款，权益统计分别计数 |
-| 收入任一分类无数据 | `breakdowns` 仍固定返回 `gym_card` 和 `lesson_package` 两类零值 |
-| 无报表数据或统计课包 | 零值类型稳定，available 与 reserved 分列且分类互斥 |
-| 五类导出 | 仅管理员；同一快照；超过 10,000 行报错；文本公式前缀转义 |
-
-#### 15.5.7 SQL、迁移与安全
-
-| 场景 | 预期 |
-|---|---|
-| 预约课包不属于会员 | 复合外键拒绝 |
-| 消课记录课包与预约不一致 | 复合外键拒绝 |
-| 三种入场来源多于一个有值或均为空 | 三路 XOR CHECK 拒绝 |
-| 同会员同日两条入场 | 唯一约束拒绝 |
-| 课包余额越界 | CHECK 拒绝 |
-| GiftRule 引用次卡产品 | 服务校验或期限产品外键拒绝 |
-| 课次时长多出秒或微秒 | 精确微秒 CHECK 拒绝 |
-| 旧 count 产品和权益迁移 | `total_entries/remaining_entries` 与旧值逐项相等且无日期字段 |
-| 预约授权索引契约 | 存在 `(member_id, status, session_id)` 且列顺序一致 |
-| 迁移后契约测试 | 按全部迁移后的最终结构核对，不只解析初始脚本 |
-| SQL 特殊字符或 CSV 公式前缀 | 参数绑定按文本处理，导出完成公式注入转义 |
+**不要复制定义**：
+- 所有模块都从 contracts.py 导入
+- 不要在业务文件中复制一套同名类
+
+**frozen=True 的含义**：
+- 不能重新赋值字段（如 `page.items = [...]`）
+- 但 items 仍是 list，调用方应只读使用
+- 界面排序时另复制列表
