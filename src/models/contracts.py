@@ -527,17 +527,6 @@ class LessonPackageSaleResultView:
 
 
 @dataclass(frozen=True, kw_only=True)
-class LegacyOperationResultView:
-    request_id: str
-    legacy_operation: str
-    target_operation: OperationName
-    result_kind: OperationResultKind
-    result_id: int
-    legacy_payload_hash: str
-    migrated_at: datetime
-
-
-@dataclass(frozen=True, kw_only=True)
 class DurationGymCardEntrySourceInput:
     kind: Literal["duration_gym_card"]
     gym_card_id: int

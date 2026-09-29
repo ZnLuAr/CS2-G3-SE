@@ -316,10 +316,8 @@ class ContractConsistencyTests(unittest.TestCase):
         design_tables = dict(re.findall(
             r"CREATE TABLE (\w+) \((.*?)\) ENGINE=InnoDB", self.design, re.S,
         ))
-        # 读取 001 初始结构和 003 v3 迁移结构
-        sql_001 = (ROOT / "sql/001_initial_schema.sql").read_text(encoding="utf-8")
-        sql_003 = (ROOT / "sql/003_v3_structure.sql").read_text(encoding="utf-8")
-        sql_source = sql_001 + "\n" + sql_003
+        # 读取单一的 born-v3 初始结构
+        sql_source = (ROOT / "sql/001_initial_schema.sql").read_text(encoding="utf-8")
         tables = dict(re.findall(
             r"CREATE TABLE (\w+) \((.*?)\) ENGINE=InnoDB", sql_source, re.S,
         ))

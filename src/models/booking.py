@@ -15,7 +15,7 @@ class Booking:
     id: int
     member_id: int
     session_id: int
-    membership_id: int
+    lesson_package_id: int
     status: BookingStatus
     booked_at: datetime
     checked_in_at: datetime | None

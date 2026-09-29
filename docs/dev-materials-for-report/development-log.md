@@ -17,6 +17,16 @@
 
 ## 日志
 
+### [2026-09-29] 数据库改为"天生 v3"，剥离迁移痕迹并标注表归属
+
+- **背景**：09-28 让代码追上 v3 后，数据库仍是"经历过一次浩劫"的样子——`001`(v2 基础表) + `002`(v2 索引增量迁移) + `003`(v2→v3 迁移，含 7 张 `v3_*_map` 影子映射表 + `schema_migration_runs`)。本项目是全新构建、没有真实 v2 数据要迁移，这套迁移机制纯属噪音。本轮把它改成"数据库天生即 v3"的干净结构。执行顺序：先定表格式 → 再改文档 → 最后落代码。
+- **归档迁移方案（不删只搬）**：曾规划的停机迁移方案（命名锁、可重入影子结构、7 张新旧编号映射表、回填与原子切换步骤）整体搬到 [`docs/archive/schema/v2-to-v3-migration.md`](../archive/schema/v2-to-v3-migration.md)，供将来万一需从真实 v2 部署导数据时参考，不再占用主线。
+- **SQL 重建**：合并 `001`+`003` 的业务表为单一 `001_initial_schema.sql`，按外键依赖顺序一次建成 31 张 v3 表；删除 `002`/`003`。清理表内迁移痕迹：删 `operation_records.payload_version`（区分 v3/legacy-v2 的列）；`bookings.membership_id` → `lesson_package_id`，悬空外键（指向已删的 `memberships`）改指 `lesson_packages`；补上 `gym_entries` 依赖的 `uq_booking_owner` 唯一键（原 v2 遗漏，契约测试不执行 SQL 未暴露）。
+- **文档对齐**：第 15 章从"v3 迁移与实施同步"改为"结构版本与实施同步"，15.1 重写为 born-v3 叙事，15.2 的 822 行迁移 SQL 换成指向归档的说明；第 6 章删掉 §6.11/6.12（v2→v3 增量 ALTER）、§6.15（影子结构校验），修正节号；删 `LegacyOperationResultView`、`get_legacy_operation_result` 及引言里的"影子迁移"句。
+- **代码对齐**：删 `src/models/migration.py`（7 个迁移映射模型）；`contracts.py` 删 `LegacyOperationResultView`；`OperationRecord` 删 `payload_version` 字段、`Booking` 改 `lesson_package_id`；契约测试改为只读单一 `001`；`cmd/db.py` 的 `expected_tables` 改到 v3 的 31 表、`init` 建表后直接写版本 3、`migrate_database` 改为 born-v3 无操作（不再读已删的 `002`）。
+- **表归属标注**：按 `feature-list.csv` 分工，给本次重构范围外的表加注释——器械/维修/体测（Tuao SONG、Mingjin LI，EQ-*/MEASURE-*）、评价（Yihao QIAN，REVIEW-*）——写明负责人和"本次未改动，保留完整结构供填充"。全员共享的 schema 保持 31 张表完整定义，不砍成空占位（砍表会让对应 View/Service 语义脱节、破坏其他组员开发基础）。
+- **验证**：`test_contract_consistency.py` 7/7 全通过；`init` 解析器正确跳过新注释行，`expected_tables` 与 SQL 表序完全一致。全量测试 32 通过、18 失败、1 错误（较上轮 31 通过略增），失败仍集中在按 v2 迁移行为写的 `test_sys_base.py` 迁移用例——其前提（迁移链）在 born-v3 下已不成立，属预期失效，待后续按 born-v3 重写。未连接真实 MySQL。
+
 ### [2026-09-28] 让代码骨架追上 v3 架构合同，契约测试 7/7 全通过
 
 - **背景**：09-25 只重写了 `architecture.md` 的 v3 设计，未同步代码；`test_contract_consistency.py` 因此出现 10 个断言失败（见测试笔记同日基线）。本轮把代码骨架、接口签名和 SQL 全部对齐到 v3 权威文档。

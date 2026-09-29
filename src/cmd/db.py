@@ -99,10 +99,16 @@ def init_database(connection: Connection) -> InitResult:
     if not schema_statements:
         raise StorageError("数据库初始化脚本为空")
     expected_tables = (
-        "schema_versions", "accounts", "members", "coaches", "card_products", "memberships",
-        "payments", "gym_entries", "courses", "rooms", "course_sessions", "bookings",
-        "consumptions", "reviews", "equipment", "maintenance_records", "body_measurements",
-        "operation_records",
+        "schema_versions", "accounts", "members", "coaches",
+        "member_account_links", "coach_account_links",
+        "courses", "rooms", "course_sessions",
+        "equipment", "maintenance_records", "body_measurements", "operation_records",
+        "gym_card_products", "duration_gym_card_products", "visit_gym_card_products",
+        "lesson_package_products", "lesson_package_gift_rules",
+        "sale_orders", "sale_items", "gym_card_sale_items", "lesson_package_sale_items",
+        "payments", "gift_grants",
+        "gym_cards", "duration_gym_cards", "visit_gym_cards", "lesson_packages",
+        "bookings", "gym_entries", "reviews",
     )
     schema_steps: list[tuple[str, str, str]] = []
     created_tables: list[str] = []
@@ -133,7 +139,7 @@ def init_database(connection: Connection) -> InitResult:
         schema_steps.append((table_name, step_name, statement))
 
     if tuple(created_tables) != expected_tables:
-        raise StorageError("数据库初始化脚本的表名、顺序或数量不符合版本 1 设计")
+        raise StorageError("数据库初始化脚本的表名、顺序或数量不符合 v3 结构设计")
     lock_name = "cs2g3:schema:" + hashlib.sha256(
         str(connection.engine.url.database).encode("utf-8")
     ).hexdigest()[:40]
@@ -174,9 +180,9 @@ def init_database(connection: Connection) -> InitResult:
                 completed_tables.append(table_name)
             current_step = None
 
-        # 记录版本号
+        # 记录版本号（天生 v3，一次建成，不经过迁移链）
         current_step = "schema_versions.version"
-        connection.execute(text("INSERT INTO schema_versions (version) VALUES (1)"))
+        connection.execute(text("INSERT INTO schema_versions (version) VALUES (3)"))
         try:
             connection.commit()
         except BaseException as exc:
@@ -188,18 +194,9 @@ def init_database(connection: Connection) -> InitResult:
             ) from exc
         current_step = None
 
-        try:
-            migration = _migrate_database(connection, lock_already_held=True)
-        except MigrationError as exc:
-            raise InitializationError(
-                "建表完成，但迁移到版本 2 失败",
-                completed_tables=tuple(completed_tables),
-                failed_step=exc.failed_step,
-                outcome_unknown=exc.outcome_unknown,
-            ) from exc
         return InitResult(
             tables_created=tables_created,
-            schema_version=migration.schema_version,
+            schema_version=3,
         )
 
     except InvalidState:
@@ -235,208 +232,35 @@ def init_database(connection: Connection) -> InitResult:
 
 
 def migrate_database(connection: Connection) -> MigrationResult:
-    """把版本 1 数据库迁移到当前版本 2。
+    """数据库天生即 v3，没有迁移链。
 
     输入：命令持有的专用数据库连接。
-    返回：迁移前后版本和本次实际执行的 DDL 步骤数。
-    数据变更：补充 7 个索引和器械位置非空白 CHECK，并写入版本 2。
+    返回：MigrationResult；已是版本 3 时 steps_applied=0。
+    数据变更：无。仅核对 schema_versions 已记录版本 3。
 
-    每条 MySQL DDL 都会隐式提交。函数在同一连接上持有数据库级命名锁，
-    每一步执行前查询 information_schema；部分成功后可重新运行并跳过已有结构。
-    失败抛 MigrationError，包含已确认步骤、失败步骤及结果未知标记。
+    本项目为全新构建，`001_initial_schema.sql` 一次建成 v3 全部表并写入版本 3。
+    若将来需从真实 v2 部署导入数据，见 docs/archive/schema/v2-to-v3-migration.md。
     """
-    return _migrate_database(connection, lock_already_held=False)
-
-
-def _migrate_database(
-    connection: Connection,
-    *,
-    lock_already_held: bool,
-) -> MigrationResult:
-    """在调用方指定的结构锁状态下执行版本 2 迁移。"""
-    import hashlib
-    import re
-    from pathlib import Path
     from sqlalchemy import text
     from src.errors.business import InvalidState
-    from src.errors.storage import MigrationError
-
     from src.db.connection import CURRENT_SCHEMA_VERSION
 
-    target_version = 2
-    if target_version != CURRENT_SCHEMA_VERSION:
-        raise MigrationError(
-            "数据库迁移链未覆盖当前结构版本",
-            completed_steps=(),
-            failed_step="migration.chain",
+    current = connection.execute(
+        text("SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1")
+    ).fetchone()
+    if current is None:
+        raise InvalidState("数据库版本记录缺失，请先运行：python -m src.cmd.db init")
+    previous_version = int(current[0])
+    if previous_version != CURRENT_SCHEMA_VERSION:
+        raise InvalidState(
+            f"数据库版本 {previous_version} 无迁移路径到 {CURRENT_SCHEMA_VERSION}；"
+            f"本项目天生即 v3，请使用全新数据库执行 init"
         )
-    migration_path = (
-        Path(__file__).resolve().parents[2]
-        / "sql"
-        / "002_query_indexes_and_equipment_location.sql"
+    return MigrationResult(
+        previous_version=previous_version,
+        schema_version=CURRENT_SCHEMA_VERSION,
+        steps_applied=0,
     )
-    try:
-        source = migration_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise MigrationError(
-            "无法读取版本 2 数据库迁移脚本",
-            completed_steps=(),
-            failed_step="migration[2].script",
-        ) from exc
-    source = "\n".join(
-        line for line in source.splitlines()
-        if not line.lstrip().startswith("--")
-    )
-    statements = [
-        statement.strip()
-        for statement in re.split(r";\s*(?:\r?\n|$)", source)
-        if statement.strip()
-    ]
-    steps: list[tuple[str, str, str, str]] = []
-    for statement in statements:
-        index_match = re.fullmatch(
-            r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+(?:KEY|INDEX)\s+(\w+)\s*\(.+\)",
-            statement,
-            re.IGNORECASE | re.DOTALL,
-        )
-        constraint_match = re.fullmatch(
-            r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+CONSTRAINT\s+(\w+)\s+CHECK\s*\(.+\)",
-            statement,
-            re.IGNORECASE | re.DOTALL,
-        )
-        match = index_match or constraint_match
-        if match is None:
-            raise MigrationError(
-                "版本 2 数据库迁移脚本包含不支持的语句",
-                completed_steps=(),
-                failed_step="migration[2].script",
-            )
-        table_name, object_name = match.groups()
-        kind = "index" if index_match is not None else "constraint"
-        steps.append((kind, table_name, object_name, statement))
-    if len(steps) != 8:
-        raise MigrationError(
-            "版本 2 数据库迁移脚本步骤数量不符合设计",
-            completed_steps=(),
-            failed_step="migration[2].script",
-        )
-
-    lock_name = "cs2g3:schema:" + hashlib.sha256(
-        str(connection.engine.url.database).encode("utf-8")
-    ).hexdigest()[:40]
-    lock_acquired = False
-    completed_steps: list[str] = []
-    applied_steps = 0
-    current_step = "schema_versions.version[2]"
-    previous_version = 0
-
-    def object_exists(kind: str, table_name: str, object_name: str) -> bool:
-        if kind == "index":
-            query = text(
-                """
-                SELECT COUNT(*)
-                FROM information_schema.statistics
-                WHERE table_schema = DATABASE()
-                  AND table_name = :table_name
-                  AND index_name = :object_name
-                """
-            )
-        else:
-            query = text(
-                """
-                SELECT COUNT(*)
-                FROM information_schema.table_constraints
-                WHERE table_schema = DATABASE()
-                  AND table_name = :table_name
-                  AND constraint_name = :object_name
-                  AND constraint_type = 'CHECK'
-                """
-            )
-        result = connection.execute(
-            query, {"table_name": table_name, "object_name": object_name}
-        )
-        row = result.fetchone()
-        return bool(row and row[0])
-
-    try:
-        if not lock_already_held:
-            lock_row = connection.execute(
-                text("SELECT GET_LOCK(:lock_name, 0)"), {"lock_name": lock_name}
-            ).scalar_one()
-            if lock_row != 1:
-                raise InvalidState("已有另一个数据库结构维护操作正在进行，请稍后重试")
-            lock_acquired = True
-
-        current = connection.execute(
-            text("SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1")
-        ).fetchone()
-        if current is None:
-            raise InvalidState("数据库版本记录缺失")
-        previous_version = int(current[0])
-        if previous_version == target_version:
-            return MigrationResult(
-                previous_version=previous_version,
-                schema_version=target_version,
-                steps_applied=0,
-            )
-        if previous_version != 1:
-            raise InvalidState(
-                f"数据库版本不支持迁移：当前 {previous_version}，只能从版本 1 迁移"
-            )
-
-        for kind, table_name, object_name, sql in steps:
-            current_step = f"{table_name}.{object_name}"
-            if object_exists(kind, table_name, object_name):
-                completed_steps.append(current_step)
-                continue
-            connection.execute(text(sql))
-            completed_steps.append(current_step)
-            applied_steps += 1
-
-        current_step = "schema_versions.version[2]"
-        connection.execute(text("INSERT INTO schema_versions (version) VALUES (2)"))
-        try:
-            connection.commit()
-        except BaseException as exc:
-            raise MigrationError(
-                "版本 2 记录提交结果未知，请核实 schema_versions",
-                completed_steps=tuple(completed_steps),
-                failed_step=current_step,
-                outcome_unknown=True,
-            ) from exc
-        completed_steps.append(current_step)
-        return MigrationResult(
-            previous_version=previous_version,
-            schema_version=target_version,
-            steps_applied=applied_steps,
-        )
-    except (InvalidState, MigrationError):
-        raise
-    except KeyboardInterrupt as exc:
-        raise MigrationError(
-            "迁移被中断，部分结构可能已经生效",
-            completed_steps=tuple(completed_steps),
-            failed_step=current_step,
-            outcome_unknown=True,
-        ) from exc
-    except Exception as exc:
-        raise MigrationError(
-            "数据库迁移失败",
-            completed_steps=tuple(completed_steps),
-            failed_step=current_step,
-            outcome_unknown=bool(getattr(exc, "connection_invalidated", False)),
-        ) from exc
-    finally:
-        if lock_acquired:
-            try:
-                connection.execute(
-                    text("SELECT RELEASE_LOCK(:lock_name)"), {"lock_name": lock_name}
-                )
-            except BaseException:
-                try:
-                    connection.invalidate()
-                except BaseException:
-                    pass
 
 
 def seed_demo_data(
