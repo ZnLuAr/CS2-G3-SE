@@ -89,11 +89,18 @@ def check_schema(engine: Engine, required_version: int = 3) -> None:
 
     try:
         with engine.connect() as conn:
+            # v3 的 31 张表（与 cmd/db.py 的 expected_tables 保持一致）
             required_tables = {
-                "schema_versions", "accounts", "members", "coaches", "card_products",
-                "memberships", "payments", "gym_entries", "courses", "rooms",
-                "course_sessions", "bookings", "consumptions", "reviews", "equipment",
-                "maintenance_records", "body_measurements", "operation_records",
+                "schema_versions", "accounts", "members", "coaches",
+                "member_account_links", "coach_account_links",
+                "courses", "rooms", "course_sessions",
+                "equipment", "maintenance_records", "body_measurements", "operation_records",
+                "gym_card_products", "duration_gym_card_products", "visit_gym_card_products",
+                "lesson_package_products", "lesson_package_gift_rules",
+                "sale_orders", "sale_items", "gym_card_sale_items", "lesson_package_sale_items",
+                "payments", "gift_grants",
+                "gym_cards", "duration_gym_cards", "visit_gym_cards", "lesson_packages",
+                "bookings", "gym_entries", "reviews",
             }
             result = conn.execute(
                 text(

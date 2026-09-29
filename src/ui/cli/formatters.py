@@ -2,7 +2,7 @@
 
 
 from __future__ import annotations
-from src.models.contracts import AccountView, BookingView, CoachStatsView, CoachView, CourseView, EntryView, EquipmentView, MaintenanceView, MeasurementComparison, MeasurementView, MemberView, MembershipStats, Page, PaymentView, RevenueView, ReviewView, RoomView, SaleView, SessionStatsView, SessionView
+from src.models.contracts import AccountView, BookingView, CoachStatsView, CoachView, CourseView, EntryView, EquipmentView, MaintenanceView, MeasurementComparison, MeasurementView, MemberView, MembershipStats, Page, PaymentView, RevenueView, ReviewView, RoomView, SessionStatsView, SessionView
 
 
 
@@ -85,48 +85,6 @@ def format_member(member: MemberView, *, timezone_name: str) -> str:
         ("启用", member.is_active),
     ], timezone_name)
     return details
-
-
-def format_card_product(view: CardProductView, *, timezone_name: str) -> str:
-    """返回中文展示文本。"""
-    details = _lines([
-        ("编号", view.id),
-        ("名称", view.terms.name),
-        ("类型", _WORDS[view.terms.kind]),
-        ("价格", view.terms.price),
-        ("购买课节", view.terms.private_lesson_credits),
-        ("入场次数", view.terms.access_uses),
-        ("门禁天数", view.terms.valid_days),
-        ("启用", view.is_active),
-    ], timezone_name)
-    return details
-
-
-def format_card(view: CardView, *, timezone_name: str) -> str:
-    """返回中文展示文本。"""
-    details = _lines([
-        ("编号", view.id),
-        ("会员编号", view.member_id),
-        ("卡产品编号", view.product_id),
-        ("名称", view.terms.name),
-        ("类型", _WORDS[view.terms.kind]),
-        ("价格", view.terms.price),
-        ("购买课节", view.terms.private_lesson_credits),
-        ("入场次数", view.terms.access_uses),
-        ("门禁天数", view.terms.valid_days),
-        ("生效日期", view.valid_from),
-        ("有效截止日期（不含当日）", view.valid_until),
-        ("剩余入场次数", view.remaining_accesses),
-        ("账面剩余课节", view.remaining_private_lessons),
-        ("预约占用课节", view.reserved_private_lessons),
-        ("状态", _WORDS[view.status]),
-    ], timezone_name)
-    return details
-
-
-def format_sale(view: SaleView, *, timezone_name: str) -> str:
-    """返回中文展示文本。"""
-    return "会员卡：\n" + format_card(view.card, timezone_name=timezone_name) + "\n" + "收款：\n" + format_payment(view.payment, timezone_name=timezone_name)
 
 
 def format_entry(view: EntryView, *, timezone_name: str) -> str:
@@ -212,19 +170,6 @@ def format_booking(view: BookingView, *, timezone_name: str) -> str:
         ("结算时刻", view.closed_at),
     ], timezone_name)
     return details + "\n" + "课次：\n" + format_session(view.session, timezone_name=timezone_name)
-
-
-def format_consumption(view: ConsumptionView, *, timezone_name: str) -> str:
-    """返回中文展示文本。"""
-    details = _lines([
-        ("编号", view.id),
-        ("预约编号", view.booking_id),
-        ("会员卡编号", view.membership_id),
-        ("消课节数", view.lessons_used),
-        ("完成时刻", view.completed_at),
-        ("操作人编号", view.operator_id),
-    ], timezone_name)
-    return details
 
 
 def format_review(view: ReviewView, *, timezone_name: str) -> str:
@@ -365,16 +310,6 @@ def format_accounts(page: Page[AccountView], *, timezone_name: str) -> str:
 def format_members(page: Page[MemberView], *, timezone_name: str) -> str:
     """返回中文展示文本。"""
     return _page(page, format_member, timezone_name)
-
-
-def format_products(page: Page[CardProductView], *, timezone_name: str) -> str:
-    """返回中文展示文本。"""
-    return _page(page, format_card_product, timezone_name)
-
-
-def format_cards(page: Page[CardView], *, timezone_name: str) -> str:
-    """返回中文展示文本。"""
-    return _page(page, format_card, timezone_name)
 
 
 def format_coaches(page: Page[CoachView], *, timezone_name: str) -> str:

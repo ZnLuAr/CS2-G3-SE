@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
-    from src.models.member_account_link import MemberAccountLink
+    from src.models.account_link import MemberAccountLink
 
 
 class MemberAccountLinkRepository(Protocol):

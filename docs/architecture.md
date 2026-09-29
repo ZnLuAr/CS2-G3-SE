@@ -963,6 +963,11 @@ def close_logging() -> None: ...
 
 ```python
 @dataclass(frozen=True, kw_only=True)
+class AttendanceChange:
+    before: Literal["reserved", "checked_in"]
+    after: Literal["reserved", "checked_in"]
+
+@dataclass(frozen=True, kw_only=True)
 class LogFrame:
     filename: str
     line_number: int
@@ -4047,6 +4052,11 @@ class PaymentQuery:
     member_id: int | None = None
     method: PaymentMethod | None = None
     paging: PageRequest = field(default_factory=PageRequest)
+
+@dataclass(frozen=True, kw_only=True)
+class PaymentTotals:
+    payment_count: int
+    total_amount: Decimal
 
 @dataclass(frozen=True, kw_only=True)
 class RevenueBreakdownView:

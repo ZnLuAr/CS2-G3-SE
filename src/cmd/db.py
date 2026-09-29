@@ -61,7 +61,7 @@ def init_database(connection: Connection) -> InitResult:
 
     执行：
     - 逐表创建（按依赖顺序）
-    - 记录版本 1 后应用后续迁移，最终达到当前版本
+    - 建表完成后记录版本 3（数据库天生即 v3，无迁移链）
 
     失败处理：
     - MySQL 建表会隐式提交，不能回滚
@@ -80,7 +80,7 @@ def init_database(connection: Connection) -> InitResult:
     from pathlib import Path
     from sqlalchemy import text
     from src.errors.business import InvalidState
-    from src.errors.storage import InitializationError, MigrationError, StorageError
+    from src.errors.storage import InitializationError, StorageError
 
     schema_path = Path(__file__).resolve().parents[2] / "sql" / "001_initial_schema.sql"
     try:
@@ -365,36 +365,65 @@ def seed_demo_data(
             )
             account_ids[role] = result.lastrowid
 
-        # 生成会员档案
+        # 生成会员档案（v3: 不含 account_id/is_active，status 默认 active）
         random_source = random.Random(seed)
         member_phone = "1" + "".join(str(random_source.randrange(10)) for _ in range(10))
 
-        session.execute(
+        result = session.execute(
             text(
                 """
-            INSERT INTO members (account_id, name, phone, is_active)
-            VALUES (:account_id, :name, :phone, TRUE)
+            INSERT INTO members (name, phone)
+            VALUES (:name, :phone)
             """
             ),
             {
-                "account_id": account_ids["member"],
                 "name": "演示会员",
                 "phone": member_phone,
             },
         )
+        member_id = result.lastrowid
 
-        # 生成教练档案
+        # 生成教练档案（v3: 不含 account_id/specialty/is_active，specialty 已删除）
+        coach_phone = "1" + "".join(str(random_source.randrange(10)) for _ in range(10))
+        result = session.execute(
+            text(
+                """
+            INSERT INTO coaches (name, phone)
+            VALUES (:name, :phone)
+            """
+            ),
+            {
+                "name": "演示教练",
+                "phone": coach_phone,
+            },
+        )
+        coach_id = result.lastrowid
+
+        # 建立账号-档案关联（v3 新增的 account_links 表）
         session.execute(
             text(
                 """
-            INSERT INTO coaches (account_id, name, specialty, is_active)
-            VALUES (:account_id, :name, :specialty, TRUE)
+            INSERT INTO member_account_links (account_id, member_id, linked_at, linked_by)
+            VALUES (:account_id, :member_id, CURRENT_TIMESTAMP(6), :linked_by)
+            """
+            ),
+            {
+                "account_id": account_ids["member"],
+                "member_id": member_id,
+                "linked_by": account_ids["admin"],
+            },
+        )
+        session.execute(
+            text(
+                """
+            INSERT INTO coach_account_links (account_id, coach_id, linked_at, linked_by)
+            VALUES (:account_id, :coach_id, CURRENT_TIMESTAMP(6), :linked_by)
             """
             ),
             {
                 "account_id": account_ids["coach"],
-                "name": "演示教练",
-                "specialty": "力量训练、体能提升",
+                "coach_id": coach_id,
+                "linked_by": account_ids["admin"],
             },
         )
 
@@ -441,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
         transaction,
     )
     from src.errors.base import GymError
-    from src.errors.storage import InitializationError, MigrationError, StorageError
+    from src.errors.storage import InitializationError, StorageError
     from src.ui.cli.prompts import prompt_password
 
     parser = argparse.ArgumentParser(description="数据库初始化和演示数据命令")
@@ -526,13 +555,6 @@ def main(argv: list[str] | None = None) -> int:
             completed = "、".join(exc.completed_tables) or "无"
             print(
                 f"初始化失败：{exc.message}；已确认完成：{completed}；"
-                f"失败步骤：{exc.failed_step}；结果未知：{'是' if exc.outcome_unknown else '否'}",
-                file=sys.stderr,
-            )
-        elif isinstance(exc, MigrationError):
-            completed = "、".join(exc.completed_steps) or "无"
-            print(
-                f"迁移失败：{exc.message}；已确认完成：{completed}；"
                 f"失败步骤：{exc.failed_step}；结果未知：{'是' if exc.outcome_unknown else '否'}",
                 file=sys.stderr,
             )

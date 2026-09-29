@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.models.contracts import DateWindow, PaymentMethod, PaymentQuery
+from src.models.contracts import DateWindow, PaymentMethod, PaymentQuery, PaymentTotals
 from src.models.payment import Payment
 
 if TYPE_CHECKING:

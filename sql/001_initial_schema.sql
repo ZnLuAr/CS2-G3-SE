@@ -324,6 +324,7 @@ CREATE TABLE gym_card_products (
     CONSTRAINT ck_gym_card_products_kind CHECK (kind IN ('duration', 'visit')),
     CONSTRAINT ck_gym_card_products_name CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
     CONSTRAINT ck_gym_card_products_price CHECK (price BETWEEN 0.01 AND 99999999.99),
+    CONSTRAINT ck_gym_card_products_sale_enabled CHECK (is_sale_enabled IN (0, 1)),
     KEY ix_gym_card_product_sale_kind_name_id (is_sale_enabled, kind, name, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健身房卡产品';
 
@@ -339,6 +340,7 @@ CREATE TABLE duration_gym_card_products (
     CONSTRAINT ck_duration_product_kind CHECK (kind = 'duration'),
     CONSTRAINT ck_duration_product_valid_days CHECK (valid_days > 0),
     CONSTRAINT ck_duration_product_start_policy CHECK (start_policy IN ('immediate', 'append')),
+    CONSTRAINT ck_duration_product_gift_enabled CHECK (is_gift_enabled IN (0, 1)),
     KEY ix_duration_product_gift (is_gift_enabled, product_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='期限卡产品';
 
@@ -370,6 +372,7 @@ CREATE TABLE lesson_package_products (
     CONSTRAINT ck_lesson_package_products_price CHECK (price BETWEEN 0.01 AND 99999999.99),
     CONSTRAINT ck_lesson_package_products_credits CHECK (lesson_credits > 0),
     CONSTRAINT ck_lesson_package_products_valid_days CHECK (valid_days IS NULL OR valid_days > 0),
+    CONSTRAINT ck_lesson_package_products_sale_enabled CHECK (is_sale_enabled IN (0, 1)),
     KEY ix_lesson_product_sale_name_id (is_sale_enabled, name, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='私教课包产品';
 
@@ -394,6 +397,7 @@ CREATE TABLE lesson_package_gift_rules (
     CONSTRAINT ck_gift_rule_activation_policy CHECK (activation_policy IN ('immediate', 'append')),
     CONSTRAINT ck_gift_rule_immediate_quantity CHECK (activation_policy <> 'immediate' OR reward_quantity = 1),
     CONSTRAINT ck_gift_rule_version CHECK (version > 0),
+    CONSTRAINT ck_gift_rule_active CHECK (is_active IN (0, 1)),
     KEY ix_gift_rule_trigger_active_id (trigger_product_id, is_active, id),
     KEY ix_gift_rule_reward_product (reward_gym_card_product_id, is_active, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='赠卡规则';
@@ -537,7 +541,7 @@ CREATE TABLE gym_cards (
     CONSTRAINT uq_gym_card_owner_kind UNIQUE (id, member_id, kind),
     CONSTRAINT fk_gym_cards_member FOREIGN KEY (member_id) REFERENCES members(id),
     CONSTRAINT fk_gym_cards_product_kind FOREIGN KEY (product_id, kind) REFERENCES gym_card_products(id, kind),
-    CONSTRAINT fk_gym_cards_gift_origin FOREIGN KEY (gift_grant_id, member_id, reward_gym_card_product_id) REFERENCES gift_grants(id, member_id, reward_gym_card_product_id),
+    CONSTRAINT fk_gym_cards_gift_origin FOREIGN KEY (gift_grant_id, member_id, product_id) REFERENCES gift_grants(id, member_id, reward_gym_card_product_id),
     CONSTRAINT ck_gym_cards_kind CHECK (kind IN ('duration', 'visit')),
     CONSTRAINT ck_gym_cards_name CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
     CONSTRAINT ck_gym_cards_status CHECK (status IN ('active', 'void')),

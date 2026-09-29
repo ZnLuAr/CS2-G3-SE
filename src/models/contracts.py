@@ -856,8 +856,10 @@ class MembershipStats:
     reserved_lessons: int
 
 
-# 兼容层：v2 formatters 使用的 SaleView 别名指向 v3 的 SaleOrderView
-SaleView = SaleOrderView
+@dataclass(frozen=True, kw_only=True)
+class PaymentTotals:
+    payment_count: int
+    total_amount: Decimal
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -903,6 +905,14 @@ class CsvExport:
 
 
 # ================== 日志查询 ==================
+
+@dataclass(frozen=True, kw_only=True)
+class AttendanceChange:
+    """签到状态变更记录（消课/纠正签到时写入日志）。"""
+
+    before: Literal["reserved", "checked_in"]
+    after: Literal["reserved", "checked_in"]
+
 
 @dataclass(frozen=True, kw_only=True)
 class LogFrame:
