@@ -9,12 +9,13 @@ from src.config import LogConfig
 
 from src.models.contracts import (
     AccountInput,
-    AccountLinkInput,
     AccountView,
     Actor,
+    CoachAccountLinkInput,
     LogEntry,
     LogQuery,
     LogSnapshot,
+    MemberAccountLinkInput,
     NamedQuery,
     Page,
 )
@@ -80,15 +81,35 @@ class AuthService:
         异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.set_account_active 尚未实现")
 
-    def link_profile(self, actor: Actor, account_id: int, data: AccountLinkInput) -> AccountView:
-        """将 data 指定的档案移交给 account_id 指定的目标账号。
+    def link_member(self, actor: Actor, data: MemberAccountLinkInput) -> AccountView:
+        """将会员档案关联到会员账号。
 
-        返回：目标账号的 AccountView；同一档案重复关联不变，目标占用其他档案则拒绝。
-        先只读取得旧账号，再将操作者、旧账号和目标账号去重后按编号升序统一锁定，
-        最后锁档案；关联变化时最多重开 3 次。
-        同事务把档案外键从旧账号直接改为目标账号；失败清理后抛异常。
+        操作者账号和目标账号按编号升序锁定，再锁定会员档案；数据库双向唯一约束作为最终防重。
+        账号角色不是 member 抛 InvalidState；重复关联返回当前结果。
         异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
-        raise NotImplementedError("AuthService.link_profile 尚未实现")
+        raise NotImplementedError("AuthService.link_member 尚未实现")
+
+    def link_coach(self, actor: Actor, data: CoachAccountLinkInput) -> AccountView:
+        """将教练档案关联到教练账号。
+
+        操作者账号和目标账号按编号升序锁定，再锁定教练档案；数据库双向唯一约束作为最终防重。
+        账号角色不是 coach 抛 InvalidState；重复关联返回当前结果。
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        raise NotImplementedError("AuthService.link_coach 尚未实现")
+
+    def relink_member(self, actor: Actor, account_id: int, member_id: int) -> AccountView:
+        """将会员档案移交给指定的会员账号。
+
+        先只读取得旧账号，再将操作者、旧账号和目标账号去重后按编号升序统一锁定，最后锁档案；关联变化时最多重开 3 次。
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        raise NotImplementedError("AuthService.relink_member 尚未实现")
+
+    def relink_coach(self, actor: Actor, account_id: int, coach_id: int) -> AccountView:
+        """将教练档案移交给指定的教练账号。
+
+        先只读取得旧账号，再将操作者、旧账号和目标账号去重后按编号升序统一锁定，最后锁档案；关联变化时最多重开 3 次。
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        raise NotImplementedError("AuthService.relink_coach 尚未实现")
 
     def verify_actor(self, session: Session, actor: Actor) -> Actor:
         """锁定并重验账号、角色档案不变量及档案启用状态。

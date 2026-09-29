@@ -7,6 +7,19 @@
 
 ## 测试思路与策略
 
+### [2026-09-28] 契约测试从 10 个断言失败修复到 7/7 全通过
+
+- **起点**：09-25 记录的基线——文档已是 v3、代码仍是 v2，`test_contract_consistency.py` 出现 10 个断言失败。本轮目标是让代码追上文档，把 7 个测试方法全部修绿。
+- **定位方法**：写一次性只读诊断脚本，复用测试自身的 `parse_file`/`fields`/`sql_columns` 等辅助函数与 `setUpClass`，把三类差异（dataclass 字段、service/repo 签名、SQL 列）一次性列成清单，避免逐个跑测试试错。诊断脚本用完即删，不留在仓库。
+- **逐测试修复**：
+  - `test_current_schema_version`：代码 `CURRENT_SCHEMA_VERSION` 升到 3；测试原本硬编码 `2` 且只认 `ast.Assign`，改为同时支持带类型注解的 `ast.AnnAssign` 并接受 `int = 3` 字面量。
+  - `test_booking_checks_duplicate_before_capacity` / `test_identity_revalidation`：v3 文档结构变了（无独立"预约规则"章节、身份锁契约写进各方法），更新测试正则匹配新结构。**注意**：中途发现自己一度误删了 4 句仍然有效的锁契约代码断言，核对到这 4 句原话在 `auth_service.py`/`account_repo.py` 里仍存在后恢复，避免放水。
+  - `test_public_fields`：删除源码里文档未定义的类。
+  - `test_service_repository`：拆分/新建 service 类、删 `ProductService`、逐个对齐方法签名和 repository。
+  - `test_storage_fields`：删 v2 遗留表、对齐 12 张表列、修 18 个模型字段、补 11 个缺失模型。
+- **命令与结果**：`python -m pytest tests/test_contract_consistency.py -v` → **7 passed**，逐条确认无放水。全量 `python -m pytest tests/` → 31 passed、19 failed、1 error。
+- **验证边界**：契约测试只证明"文档=代码声明"一致，不代表 v3 SQL 在 MySQL 建表成功、并发锁正确或业务行为通过——所有业务方法仍是 `NotImplementedError`。失败的 19 项主要是 `test_sys_base.py` 按 v2 结构写的数据库迁移用例（v2→v3 大改后待同步）和 CLI 子进程用例，未连接真实 MySQL。
+
 ### [2026-09-25] v3 架构两轮静态审计
 
 - **检查范围**：从业务场景反推会员归档、健身房卡与课包销售、赠卡、预约、取消、签到、消课、门禁、体测、评价和报表合同；从实现角度检查公共类型、SQL 复合外键、MySQL CHECK、索引、幂等负载、锁顺序和 v2→v3 历史映射。

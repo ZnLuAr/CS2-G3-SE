@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from src.models.contracts import Actor, Page, PageRequest, ReviewInput, ReviewView
+from src.models.contracts import Actor, Page, ReviewInput, ReviewQuery, ReviewView
 from src.services.auth_service import AuthService
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ class ReviewService:
         异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReviewService.get_review 尚未实现")
 
-    def list_reviews(self, actor: Actor, paging: PageRequest) -> Page[ReviewView]:
+    def list_reviews(self, actor: Actor, query: ReviewQuery) -> Page[ReviewView]:
         """分页查询本人评价。
 
         返回：Page[ReviewView]。不修改业务数据。

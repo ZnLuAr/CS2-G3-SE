@@ -22,6 +22,8 @@ from src.models.contracts import (
 from src.services.auth_service import AuthService
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.orm import Session
 
 
@@ -106,7 +108,7 @@ class ReportService:
         异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("ReportService.export_revenue 尚未实现")
 
-    def export_memberships(self, actor: Actor) -> CsvExport:
+    def export_memberships(self, actor: Actor, as_of: datetime) -> CsvExport:
         """导出会员与持卡统计。
 
         返回：CsvExport。不修改业务数据。

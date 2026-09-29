@@ -6,26 +6,42 @@ from dataclasses import dataclass
 
 from src.config import AppSettings
 from src.models.contracts import Actor
+from src.services.access_service import AccessService
 from src.services.attendance_service import AttendanceService
 from src.services.auth_service import AuthService
 from src.services.booking_service import BookingService
-from src.services.product_service import ProductService
+from src.services.coach_service import CoachService
 from src.services.course_service import CourseService
+from src.services.entitlement_query_service import EntitlementQueryService
 from src.services.equipment_service import EquipmentService
+from src.services.gym_card_product_service import GymCardProductService
+from src.services.lesson_package_product_service import LessonPackageProductService
 from src.services.measurement_service import MeasurementService
 from src.services.member_service import MemberService
 from src.services.report_service import ReportService
 from src.services.review_service import ReviewService
+from src.services.room_service import RoomService
+from src.services.sales_service import SalesService
 
 
 @dataclass(frozen=True, kw_only=True)
 class ServiceBundle:
-    """应用创建的各业务服务，交互层按职责取用。"""
+    """应用创建的各业务服务，交互层按职责取用。
+
+    v3 将 v2 的 ProductService 拆成健身房卡产品、私教课包产品、销售、权益查询、门禁；
+    并将课程域拆成教练、课程、场地三个服务。
+    """
 
     auth: AuthService
     members: MemberService
-    products: ProductService
+    gym_card_products: GymCardProductService
+    lesson_package_products: LessonPackageProductService
+    sales: SalesService
+    entitlements: EntitlementQueryService
+    access: AccessService
+    coaches: CoachService
     courses: CourseService
+    rooms: RoomService
     bookings: BookingService
     attendance: AttendanceService
     reviews: ReviewService
@@ -68,8 +84,14 @@ class App:
         auth = AuthService(factory, log_config=self.settings.log)
         services = ServiceBundle(
             auth=auth, members=MemberService(factory, auth),
-            products=ProductService(factory, auth, timezone_name=zone),
+            gym_card_products=GymCardProductService(factory, auth),
+            lesson_package_products=LessonPackageProductService(factory, auth),
+            sales=SalesService(factory, auth),
+            entitlements=EntitlementQueryService(factory, auth),
+            access=AccessService(factory, auth),
+            coaches=CoachService(factory, auth),
             courses=CourseService(factory, auth),
+            rooms=RoomService(factory, auth),
             bookings=BookingService(factory, auth, timezone_name=zone),
             attendance=AttendanceService(factory, auth), reviews=ReviewService(factory, auth),
             equipment=EquipmentService(factory, auth), measurements=MeasurementService(factory, auth),
@@ -79,9 +101,13 @@ class App:
         handlers = menus.CliHandlers(
             auth=menus.AuthHandler(auth, self.get_actor, self.set_actor, self.logout, timezone_name=zone),
             member=menus.MemberHandler(services.members, self.get_actor, timezone_name=zone),
-            product=menus.ProductHandler(services.products, self.get_actor, timezone_name=zone),
+            product=menus.ProductHandler(
+                services.gym_card_products, services.lesson_package_products,
+                services.sales, services.entitlements, services.access,
+                self.get_actor, timezone_name=zone,
+            ),
             course=menus.CourseHandler(services.courses, self.get_actor, timezone_name=zone),
-            booking=menus.BookingHandler(services.bookings, self.get_actor, services.courses, services.products, timezone_name=zone),
+            booking=menus.BookingHandler(services.bookings, self.get_actor, services.courses, services.entitlements, timezone_name=zone),
             attendance=menus.AttendanceHandler(services.attendance, self.get_actor, timezone_name=zone),
             review=menus.ReviewHandler(services.reviews, self.get_actor, timezone_name=zone),
             equipment=menus.EquipmentHandler(services.equipment, self.get_actor, timezone_name=zone),

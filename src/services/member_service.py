@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from src.models.contracts import Actor, MemberInput, MemberQuery, MemberView, Page
+from src.models.contracts import Actor, MemberInput, MemberQuery, MemberStatus, MemberView, Page
 from src.services.auth_service import AuthService
 
 if TYPE_CHECKING:
@@ -25,12 +25,19 @@ class MemberService:
         self._session_factory = session_factory
         self._auth = auth
 
-    def create_member(self, actor: Actor, data: MemberInput) -> MemberView:
-        """创建会员档案。
+    def create_member(self, actor: Actor, data: MemberInput, request_id: str) -> MemberView:
+        """创建会员档案（幂等）。
 
-        返回：MemberView。在同一服务事务中修改对应记录，失败清理后抛异常。
+        返回：MemberView；相同 request_id 重试返回原会员的当前 View。
         异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("MemberService.create_member 尚未实现")
+
+    def get_member_by_request(self, actor: Actor, request_id: str) -> MemberView:
+        """按幂等请求编号查会员。
+
+        返回：MemberView。不修改业务数据。
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        raise NotImplementedError("MemberService.get_member_by_request 尚未实现")
 
     def get_member(self, actor: Actor, member_id: int) -> MemberView:
         """查询会员详情。
@@ -53,11 +60,11 @@ class MemberService:
         异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
         raise NotImplementedError("MemberService.update_member 尚未实现")
 
-    def set_member_active(self, actor: Actor, member_id: int, active: bool) -> MemberView:
-        """停用或恢复会员。
+    def set_member_status(self, actor: Actor, member_id: int, status: MemberStatus) -> MemberView:
+        """设置会员状态（启用/归档）。
 
-        停用时先锁会员，并在锁内拒绝仍有 reserved/checked_in 预约的会员。
-        办卡、预约、入场和体测录入使用同一会员锁复核启用状态。
+        先锁会员，并在锁内按目标状态复核约束（如归档拒绝仍有 reserved/checked_in 预约）。
+        办卡、预约、入场和体测录入使用同一会员锁复核状态。
         返回：MemberView。在同一服务事务中修改对应记录，失败清理后抛异常。
         异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
-        raise NotImplementedError("MemberService.set_member_active 尚未实现")
+        raise NotImplementedError("MemberService.set_member_status 尚未实现")

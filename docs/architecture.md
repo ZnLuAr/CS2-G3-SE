@@ -669,6 +669,7 @@ class CoachAccountLinkInput:
 ### 9.2 `AuthService`
 
 ```python
+# src/services/auth_service.py
 class AuthService:
     def __init__(
         self,
@@ -962,6 +963,11 @@ def close_logging() -> None: ...
 
 ```python
 @dataclass(frozen=True, kw_only=True)
+class AttendanceChange:
+    before: Literal["reserved", "checked_in"]
+    after: Literal["reserved", "checked_in"]
+
+@dataclass(frozen=True, kw_only=True)
 class LogFrame:
     filename: str
     line_number: int
@@ -1090,11 +1096,11 @@ def main(argv: list[str] | None = None) -> int: ...
 本领域复用第 9.1 节定义的 `MemberStatus`、`GymCardStatus`、`LessonPackageStatus`、`PaymentMethod` 等。本节补充销售与权益来源类型：
 
 ```python
-EntitlementOriginKind = Literal[“purchase”, “gift”]
-SaleKind = Literal[“gym_card”, “lesson_package”]
-SaleItemKind = Literal[“gym_card”, “lesson_package”]
+EntitlementOriginKind = Literal["purchase", "gift"]
+SaleKind = Literal["gym_card", "lesson_package"]
+SaleItemKind = Literal["gym_card", "lesson_package"]
 OperationResultKind = Literal[
-    “member”, “sale_order”, “course_session”, “booking”, “gym_entry”
+    "member", "sale_order", "course_session", "booking", "gym_entry"
 ]
 ```
 
@@ -1422,16 +1428,6 @@ class SaleOrderDetailView:
     gift_grants: tuple[GiftGrantView, ...]
 
 @dataclass(frozen=True, kw_only=True)
-class LegacyOperationResultView:
-    request_id: str
-    legacy_operation: str
-    target_operation: OperationName
-    result_kind: OperationResultKind
-    result_id: int
-    legacy_payload_hash: str
-    migrated_at: datetime
-
-@dataclass(frozen=True, kw_only=True)
 class GymCardSaleResultView:
     order: SaleOrderView
     item: SaleItemView
@@ -1559,6 +1555,7 @@ class EntryView:
 #### 3.1 MemberService
 
 ```python
+# src/services/member_service.py
 class MemberService:
     def create_member(
         self, actor: Actor, data: MemberInput, request_id: str
@@ -1633,6 +1630,7 @@ class MemberService:
 #### 3.2 GymCardProductService
 
 ```python
+# src/services/gym_card_product_service.py
 class GymCardProductService:
     def create_gym_card_product(
         self, actor: Actor, terms: GymCardProductTerms
@@ -1677,6 +1675,7 @@ class GymCardProductService:
 #### 3.3 LessonPackageProductService 与赠卡规则
 
 ```python
+# src/services/lesson_package_product_service.py
 class LessonPackageProductService:
     def create_lesson_package_product(
         self, actor: Actor, terms: LessonPackageProductTerms
@@ -1743,6 +1742,7 @@ class LessonPackageProductService:
 #### 3.4 EntitlementQueryService
 
 ```python
+# src/services/entitlement_query_service.py
 class EntitlementQueryService:
     def get_gym_card(
         self, actor: Actor, gym_card_id: int
@@ -1790,6 +1790,7 @@ class EntitlementQueryService:
 #### 3.5 SalesService
 
 ```python
+# src/services/sales_service.py
 class SalesService:
     def get_sale_order(
         self, actor: Actor, sale_order_id: int
@@ -1892,6 +1893,7 @@ class SalesService:
 #### 3.6 BookingService 和 AttendanceService 对接
 
 ```python
+# src/services/booking_service.py
 class BookingService:
     def book(
         self, actor: Actor, data: BookingInput, request_id: str
@@ -1914,6 +1916,7 @@ class BookingService:
     ) -> Page[BookingView]: ...
 
 
+# src/services/attendance_service.py
 class AttendanceService:
     def check_in(
         self, actor: Actor, booking_id: int
@@ -1968,6 +1971,7 @@ AttendanceService.mark_no_show 执行：
 #### 3.7 AccessService
 
 ```python
+# src/services/access_service.py
 class AccessService:
     def get_today_entry(
         self, actor: Actor, member_id: int
@@ -2631,7 +2635,7 @@ class GymEntryRepository(Protocol):
 `create` 只接受与 `source_kind` 匹配的一个来源编号；Repository 使用参数绑定写入单表，数据库三路 XOR `CHECK` 和复合外键再次验证来源判别与会员归属。
 ### 6. SQL 表、字段、约束和索引
 
-以下为 MySQL 8.4 目标结构。金额统一使用 `DECIMAL(10,2)`，业务时刻使用 UTC `DATETIME(6)`，门店业务日期使用 `DATE`。表和约束按外键依赖顺序建立；v3 影子迁移使用相同列、约束和索引定义，并让影子子表只引用影子父表。
+以下为 MySQL 8.4 目标结构。金额统一使用 `DECIMAL(10,2)`，业务时刻使用 UTC `DATETIME(6)`，门店业务日期使用 `DATE`。表和约束按外键依赖顺序建立。
 
 #### 6.1 会员档案
 
@@ -3257,127 +3261,7 @@ CREATE TABLE lesson_packages (
 
 每张 `gym_cards` 根记录“恰有一个与 kind 匹配的实例子表行”是跨表存在性约束，由发卡事务、迁移校验和结构契约测试保证。数据库已经通过 `kind` 复合外键阻止子表种类错配，并通过根表 `CHECK` 阻止次卡使用赠送来源。
 
-#### 6.11 `course_sessions` 增量变更
-
-以下语句适用于已经顺序执行 `001_initial_schema.sql` 和 `002_query_indexes_and_equipment_location.sql` 的 v2 数据库。执行 DDL 前必须处于停机维护状态，并已创建、回填 `lesson_packages` 和 `v3_entitlement_map`。MySQL DDL 会隐式提交，每条语句执行后以 `information_schema` 核实实际结构。
-
-先验证现有课次时长能够表示为 1～150 的精确整数分钟。查询返回任何记录时停止迁移：
-
-```sql
-SELECT id, starts_at, ends_at
-FROM course_sessions
-WHERE TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at) <= 0
-   OR MOD(
-        TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at),
-        60 * 1000000
-   ) <> 0
-   OR TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at)
-        DIV (60 * 1000000) NOT BETWEEN 1 AND 150;
-```
-
-验证通过后增加并收紧时长快照：
-
-```sql
-ALTER TABLE course_sessions
-    ADD COLUMN duration_minutes INT NULL AFTER kind;
-
-UPDATE course_sessions
-SET duration_minutes =
-    TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at)
-    DIV (60 * 1000000);
-
-SELECT cs.id, cs.course_id, cs.duration_minutes, c.duration_minutes
-FROM course_sessions AS cs
-JOIN courses AS c ON c.id = cs.course_id
-WHERE cs.duration_minutes <> c.duration_minutes;
-
-ALTER TABLE course_sessions
-    MODIFY COLUMN duration_minutes INT NOT NULL,
-    ADD CONSTRAINT ck_course_sessions_duration_minutes
-        CHECK (duration_minutes BETWEEN 1 AND 150),
-    ADD CONSTRAINT ck_course_sessions_duration_exact
-        CHECK (
-            TIMESTAMPDIFF(MICROSECOND, starts_at, ends_at)
-            = duration_minutes * 60 * 1000000
-        );
-```
-
-时长交叉核对查询返回任何记录时停止迁移。课次保存排课时快照，目标结构允许课程模板之后被修改，因此该相等性只在 v3 回填时校验，不建立持续性的跨表约束。
-
-#### 6.12 `bookings` 和 `consumptions` 增量变更
-
-预约与消课先增加可空课包编号，再通过持久映射表回填：
-
-```sql
-ALTER TABLE bookings
-    ADD COLUMN lesson_package_id BIGINT NULL AFTER session_id;
-
-UPDATE bookings AS b
-JOIN v3_entitlement_map AS m
-  ON m.old_membership_id = b.membership_id
-SET b.lesson_package_id = m.lesson_package_id
-WHERE m.lesson_package_id IS NOT NULL;
-
-SELECT b.id, b.member_id, b.membership_id
-FROM bookings AS b
-LEFT JOIN lesson_packages AS lp
-  ON lp.id = b.lesson_package_id
- AND lp.member_id = b.member_id
-WHERE b.lesson_package_id IS NULL
-   OR lp.id IS NULL;
-```
-
-上一个查询返回任何记录时停止迁移。验证通过后建立目标预约约束：
-
-```sql
-ALTER TABLE bookings
-    MODIFY COLUMN lesson_package_id BIGINT NOT NULL,
-    ADD CONSTRAINT uq_booking_owner UNIQUE (id, member_id),
-    ADD CONSTRAINT uq_booking_package UNIQUE (id, lesson_package_id),
-    ADD CONSTRAINT fk_bookings_lesson_package_owner
-        FOREIGN KEY (lesson_package_id, member_id)
-        REFERENCES lesson_packages(id, member_id),
-    RENAME INDEX ix_booking_member_status
-        TO ix_booking_member_status_session;
-
-ALTER TABLE consumptions
-    ADD COLUMN lesson_package_id BIGINT NULL AFTER booking_id;
-
-UPDATE consumptions AS c
-JOIN bookings AS b ON b.id = c.booking_id
-SET c.lesson_package_id = b.lesson_package_id;
-
-SELECT c.id, c.booking_id, c.membership_id
-FROM consumptions AS c
-LEFT JOIN bookings AS b
-  ON b.id = c.booking_id
- AND b.lesson_package_id = c.lesson_package_id
-WHERE c.lesson_package_id IS NULL
-   OR b.id IS NULL;
-```
-
-上一个查询返回任何记录时停止迁移。验证通过后切换消课外键，再删除 v2 关联列：
-
-```sql
-ALTER TABLE consumptions
-    MODIFY COLUMN lesson_package_id BIGINT NOT NULL,
-    ADD CONSTRAINT fk_consumptions_booking_package
-        FOREIGN KEY (booking_id, lesson_package_id)
-        REFERENCES bookings(id, lesson_package_id);
-
-ALTER TABLE consumptions
-    DROP FOREIGN KEY consumptions_ibfk_1,
-    DROP COLUMN membership_id;
-
-ALTER TABLE bookings
-    DROP FOREIGN KEY bookings_ibfk_3,
-    DROP INDEX uq_booking_card,
-    DROP COLUMN membership_id;
-```
-
-`bookings_ibfk_3`、`consumptions_ibfk_1` 和 `uq_booking_card` 是当前 v2 初始化脚本产生的名称。迁移执行器必须先从 `information_schema.TABLE_CONSTRAINTS` 和 `KEY_COLUMN_USAGE` 核实这些名称及列顺序；若实际名称不同，应使用结构指纹中核实出的名称，不得猜测后继续。
-
-#### 6.13 门禁入场记录
+#### 6.11 门禁入场记录
 
 ```sql
 CREATE TABLE gym_entries (
@@ -3446,7 +3330,7 @@ CREATE TABLE gym_entries (
 
 `UNIQUE (member_id, business_date)` 是同一会员同一门店业务日期最多一条入场记录的最终防线。次卡扣减与 `gym_entries` 插入必须在同一服务事务完成；数据库外键和 `CHECK` 只验证来源类型及所有权，不能表达“仅当日首次成功入场扣一次”。
 
-#### 6.14 幂等操作记录
+#### 6.12 幂等操作记录
 
 ```sql
 CREATE TABLE operation_records (
@@ -3456,8 +3340,6 @@ CREATE TABLE operation_records (
     actor_id BIGINT NOT NULL,
     operation VARCHAR(50)
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    payload_version VARCHAR(16)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'v3',
     payload_hash CHAR(64)
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     result_id BIGINT NOT NULL,
@@ -3478,8 +3360,6 @@ CREATE TABLE operation_records (
                 'register_entry'
             )
         ),
-    CONSTRAINT ck_operation_records_payload_version
-        CHECK (payload_version IN ('v3', 'legacy-v2')),
     CONSTRAINT ck_operation_records_payload_hash
         CHECK (payload_hash REGEXP '^[0-9a-f]{64}$'),
     KEY ix_operation_actor_time (actor_id, created_at, id)
@@ -3487,72 +3367,6 @@ CREATE TABLE operation_records (
 ```
 
 `result_id` 是按 `operation` 判别的多态编号，MySQL 外键不能让同一列按行值引用不同目标表。服务写入时必须按固定映射保存结果编号；按请求核实接口和迁移校验必须验证每条记录的目标结果存在且类型匹配。
-
-#### 6.15 跨表最终校验
-
-以下查询均应返回空结果；它们应在影子结构进入 `validated` 阶段前执行：
-
-```sql
-SELECT p.id, p.kind
-FROM gym_card_products AS p
-LEFT JOIN duration_gym_card_products AS d
-  ON d.product_id = p.id
-LEFT JOIN visit_gym_card_products AS v
-  ON v.product_id = p.id
-WHERE (p.kind = 'duration' AND (d.product_id IS NULL OR v.product_id IS NOT NULL))
-   OR (p.kind = 'visit' AND (v.product_id IS NULL OR d.product_id IS NOT NULL));
-
-SELECT c.id, c.kind
-FROM gym_cards AS c
-LEFT JOIN duration_gym_cards AS d
-  ON d.gym_card_id = c.id
-LEFT JOIN visit_gym_cards AS v
-  ON v.gym_card_id = c.id
-WHERE (c.kind = 'duration' AND (d.gym_card_id IS NULL OR v.gym_card_id IS NOT NULL))
-   OR (c.kind = 'visit' AND (v.gym_card_id IS NULL OR d.gym_card_id IS NOT NULL));
-
-SELECT gc.id
-FROM gym_cards AS gc
-WHERE (gc.kind = 'visit' AND gc.gift_grant_id IS NOT NULL)
-   OR (
-        gc.kind = 'duration'
-        AND (gc.purchase_sale_item_id IS NULL)
-            = (gc.gift_grant_id IS NULL)
-   );
-
-SELECT p.id AS payment_id, p.sale_order_id
-FROM payments AS p
-JOIN sale_orders AS so ON so.id = p.sale_order_id
-WHERE p.member_id <> so.member_id
-   OR p.amount <> so.total_amount;
-
-SELECT ge.id
-FROM gym_entries AS ge
-WHERE NOT (
-    (
-        ge.source_kind = 'duration_gym_card'
-        AND ge.duration_gym_card_id IS NOT NULL
-        AND ge.visit_gym_card_id IS NULL
-        AND ge.booking_id IS NULL
-    )
-    OR
-    (
-        ge.source_kind = 'visit_gym_card'
-        AND ge.visit_gym_card_id IS NOT NULL
-        AND ge.duration_gym_card_id IS NULL
-        AND ge.booking_id IS NULL
-    )
-    OR
-    (
-        ge.source_kind = 'booking'
-        AND ge.booking_id IS NOT NULL
-        AND ge.duration_gym_card_id IS NULL
-        AND ge.visit_gym_card_id IS NULL
-    )
-);
-```
-
-最后一组校验与目标 `CHECK` 重复，保留它是为了在影子回填阶段尚未添加最终约束时也能验证数据。
 
 ### 7. 幂等和提交结果未知
 
@@ -3584,8 +3398,6 @@ WHERE NOT (
 #### 7.4 OutcomeUnknownError
 
 事务只在 commit 阶段异常时抛 OutcomeUnknownError，并携带 request_id。界面按照上表调用相应核实接口；核实接口查不到记录时提示结果仍未知，不自动重复写操作。
-
-迁移的 `payload_version='legacy-v2'` 记录由只读接口 `get_legacy_operation_result(actor, request_id) -> LegacyOperationResultView` 核实。该 View 固定返回 `request_id`、旧操作名、目标操作名、目标结果类型、目标结果编号、旧载荷哈希和迁移时间，不重建已经无法证明完整输入的新写入 View。只有原操作者和管理员可查；不存在或越权抛 `NotFoundError`，载荷版本不匹配抛 `ConflictError`，查询不修改数据。
 
 ### 8. 安全和权限
 
@@ -3783,6 +3595,7 @@ class BookingQuery:
 #### 2.1 教练、课程模板与场地管理
 
 ```python
+# src/services/coach_service.py
 class CoachService:
     def create_coach(self, actor: Actor, data: CoachInput) -> CoachView: ...
     def update_coach(
@@ -3796,6 +3609,7 @@ class CoachService:
         self, actor: Actor, coach_id: int, is_active: bool,
     ) -> CoachView: ...
 
+# src/services/course_service.py
 class CourseService:
     def create_course(self, actor: Actor, data: CourseInput) -> CourseView: ...
     def update_course(
@@ -3809,6 +3623,7 @@ class CourseService:
         self, actor: Actor, course_id: int, is_active: bool,
     ) -> CourseView: ...
 
+# src/services/room_service.py
 class RoomService:
     def create_room(self, actor: Actor, data: RoomInput) -> RoomView: ...
     def update_room(
@@ -4095,16 +3910,18 @@ class MeasurementComparison:
 ```
 
 ```python
-def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView: ...
-def get_measurement(
-    self, actor: Actor, measurement_id: int,
-) -> MeasurementView: ...
-def list_measurements(
-    self, actor: Actor, query: MeasurementQuery,
-) -> Page[MeasurementView]: ...
-def compare(
-    self, actor: Actor, before_id: int, after_id: int,
-) -> MeasurementComparison: ...
+# src/services/measurement_service.py
+class MeasurementService:
+    def record(self, actor: Actor, data: MeasurementInput) -> MeasurementView: ...
+    def get_measurement(
+        self, actor: Actor, measurement_id: int,
+    ) -> MeasurementView: ...
+    def list_measurements(
+        self, actor: Actor, query: MeasurementQuery,
+    ) -> Page[MeasurementView]: ...
+    def compare(
+        self, actor: Actor, before_id: int, after_id: int,
+    ) -> MeasurementComparison: ...
 ```
 
 `body_fat_pct=None` 表示未测体脂；仅当两条记录体脂均非空时比较结果非空。身高范围 100.00～250.00 cm，体重范围 30.00～150.00 kg，体脂范围 0.00～100.00%。授权完全基于会员与当前教练之间的预约关系，课包和健身房卡不参与判断。输入、权限或时间顺序错误抛项目异常，体测记录创建后不可修改或删除。
@@ -4159,11 +3976,13 @@ class ReviewQuery:
 ```
 
 ```python
-def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView: ...
-def get_review(self, actor: Actor, review_id: int) -> ReviewView: ...
-def list_reviews(
-    self, actor: Actor, query: ReviewQuery,
-) -> Page[ReviewView]: ...
+# src/services/review_service.py
+class ReviewService:
+    def create_review(self, actor: Actor, data: ReviewInput) -> ReviewView: ...
+    def get_review(self, actor: Actor, review_id: int) -> ReviewView: ...
+    def list_reviews(
+        self, actor: Actor, query: ReviewQuery,
+    ) -> Page[ReviewView]: ...
 ```
 
 #### 7.1 创建评价
@@ -4235,6 +4054,11 @@ class PaymentQuery:
     paging: PageRequest = field(default_factory=PageRequest)
 
 @dataclass(frozen=True, kw_only=True)
+class PaymentTotals:
+    payment_count: int
+    total_amount: Decimal
+
+@dataclass(frozen=True, kw_only=True)
 class RevenueBreakdownView:
     sale_kind: SaleKind
     payment_count: int
@@ -4268,33 +4092,35 @@ class CsvExport:
 #### 8.2 服务方法
 
 ```python
-def get_payment(self, actor: Actor, payment_id: int) -> PaymentView: ...
-def list_payments(
-    self, actor: Actor, query: PaymentQuery,
-) -> Page[PaymentView]: ...
-def revenue(self, actor: Actor, window: DateWindow) -> RevenueView: ...
-def membership_stats(self, actor: Actor) -> MembershipStats: ...
-def session_stats(
-    self, actor: Actor, query: SessionQuery,
-) -> Page[SessionStatsView]: ...
-def coach_stats(
-    self, actor: Actor, window: DateWindow, paging: PageRequest,
-) -> Page[CoachStatsView]: ...
-def export_payments(
-    self, actor: Actor, query: PaymentQuery,
-) -> CsvExport: ...
-def export_revenue(
-    self, actor: Actor, window: DateWindow,
-) -> CsvExport: ...
-def export_memberships(
-    self, actor: Actor, as_of: datetime,
-) -> CsvExport: ...
-def export_sessions(
-    self, actor: Actor, query: SessionQuery,
-) -> CsvExport: ...
-def export_coaches(
-    self, actor: Actor, window: DateWindow,
-) -> CsvExport: ...
+# src/services/report_service.py
+class ReportService:
+    def get_payment(self, actor: Actor, payment_id: int) -> PaymentView: ...
+    def list_payments(
+        self, actor: Actor, query: PaymentQuery,
+    ) -> Page[PaymentView]: ...
+    def revenue(self, actor: Actor, window: DateWindow) -> RevenueView: ...
+    def membership_stats(self, actor: Actor) -> MembershipStats: ...
+    def session_stats(
+        self, actor: Actor, query: SessionQuery,
+    ) -> Page[SessionStatsView]: ...
+    def coach_stats(
+        self, actor: Actor, window: DateWindow, paging: PageRequest,
+    ) -> Page[CoachStatsView]: ...
+    def export_payments(
+        self, actor: Actor, query: PaymentQuery,
+    ) -> CsvExport: ...
+    def export_revenue(
+        self, actor: Actor, window: DateWindow,
+    ) -> CsvExport: ...
+    def export_memberships(
+        self, actor: Actor, as_of: datetime,
+    ) -> CsvExport: ...
+    def export_sessions(
+        self, actor: Actor, query: SessionQuery,
+    ) -> CsvExport: ...
+    def export_coaches(
+        self, actor: Actor, window: DateWindow,
+    ) -> CsvExport: ...
 ```
 
 - 收款通过 `Payment.sale_order_id` 关联销售订单；`PaymentView` 返回 `sale_order_id` 和 `member_id`。
@@ -4390,43 +4216,45 @@ class MaintenanceView:
 ### 14.2 EquipmentService
 
 ```python
-def create_equipment(
-    self, actor: Actor, data: EquipmentInput,
-) -> EquipmentView: ...
-def get_equipment(
-    self, actor: Actor, equipment_id: int,
-) -> EquipmentView: ...
-def list_equipment(
-    self, actor: Actor, query: EquipmentQuery,
-) -> Page[EquipmentView]: ...
-def update_equipment(
-    self, actor: Actor, equipment_id: int, data: EquipmentUpdateInput,
-) -> EquipmentView: ...
-def report_fault(
-    self, actor: Actor, equipment_id: int, description: str,
-) -> MaintenanceView: ...
-def finish_maintenance(
-    self, actor: Actor, maintenance_id: int,
-) -> MaintenanceView: ...
-def retire_equipment(
-    self, actor: Actor, equipment_id: int,
-) -> EquipmentView: ...
-def list_maintenance(
-    self, actor: Actor, equipment_id: int, paging: PageRequest,
-) -> Page[MaintenanceView]: ...
+# src/services/equipment_service.py
+class EquipmentService:
+    def create_equipment(
+        self, actor: Actor, data: EquipmentInput,
+    ) -> EquipmentView: ...
+    def get_equipment(
+        self, actor: Actor, equipment_id: int,
+    ) -> EquipmentView: ...
+    def list_equipment(
+        self, actor: Actor, query: EquipmentQuery,
+    ) -> Page[EquipmentView]: ...
+    def update_equipment(
+        self, actor: Actor, equipment_id: int, data: EquipmentUpdateInput,
+    ) -> EquipmentView: ...
+    def report_fault(
+        self, actor: Actor, equipment_id: int, description: str,
+    ) -> MaintenanceView: ...
+    def finish_maintenance(
+        self, actor: Actor, maintenance_id: int,
+    ) -> MaintenanceView: ...
+    def retire_equipment(
+        self, actor: Actor, equipment_id: int,
+    ) -> EquipmentView: ...
+    def list_maintenance(
+        self, actor: Actor, equipment_id: int, paging: PageRequest,
+    ) -> Page[MaintenanceView]: ...
 ```
 
 创建、修改、完成维修、报废和查看维修明细仅管理员执行。所有已登录角色可查询器械并提交报修。`asset_code` 为 1～50 字且区分大小写；名称和位置为 1～100 字；故障描述为 1～1000 字。
 
 报修锁定器械，要求状态为 `available` 且不存在未完成维修，然后在同一事务创建维修记录并改为 `maintenance`。完成维修先解析器械编号，再按器械、维修记录顺序锁定，同一事务填写完成字段并改为 `available`。报废要求没有未完成维修，将状态永久改为 `retired`。详情不存在抛 `NotFoundError`，重复资产编号或重复未完成维修抛 `ConflictError`，状态不允许时抛 `InvalidState`。
 
-## 15. v3 迁移与实施同步
+## 15. 结构版本与实施同步
 
 ### 15.1 结构版本
 
-v3 由顺序迁移脚本 `sql/003_*.sql` 建立。`CURRENT_SCHEMA_VERSION`、`check_schema`、数据库维护命令和结构契约测试统一要求版本 3。空库初始化执行初始脚本后继续应用迁移到 v3。
+数据库天生即 v3：`sql/001_initial_schema.sql` 一次性按外键依赖建立全部业务表，不经过任何迁移链。`CURRENT_SCHEMA_VERSION`、`check_schema`、数据库维护命令和结构契约测试统一要求版本 3。空库初始化执行初始脚本、建表完成后写入结构版本 3。
 
-`schema_versions` 保存已经完成的结构版本：
+`schema_versions` 保存当前结构版本：
 
 ```sql
 CREATE TABLE schema_versions (
@@ -4435,848 +4263,13 @@ CREATE TABLE schema_versions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-`schema_migration_runs` 独立于业务表切换的依赖闭包，保存可恢复阶段和目标结构指纹：
+初始化在建表事务后写入一条 `version=3`。本项目为全新构建，没有需要迁移的历史 v2 数据；若将来需从真实 v2 部署导入数据，曾规划的停机迁移方案（影子表切换协议 + 新旧编号映射表）归档在 [`docs/archive/schema/v2-to-v3-migration.md`](../docs/archive/schema/v2-to-v3-migration.md)，不属于主线结构。
 
-```sql
-CREATE TABLE schema_migration_runs (
-    target_version INT PRIMARY KEY,
-    phase VARCHAR(16) NOT NULL,
-    structure_fingerprint CHAR(64)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    started_at DATETIME(6) NOT NULL,
-    updated_at DATETIME(6) NOT NULL,
-    CONSTRAINT ck_schema_migration_runs_target
-        CHECK (target_version > 0),
-    CONSTRAINT ck_schema_migration_runs_phase
-        CHECK (phase IN ('prepared', 'validated', 'renamed', 'versioned')),
-    CONSTRAINT ck_schema_migration_runs_fingerprint
-        CHECK (structure_fingerprint REGEXP '^[0-9a-f]{64}$')
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
+### 15.2 历史数据导入（归档）
 
-迁移阶段只允许 `prepared/validated/renamed/versioned`。每次执行 DDL 前先读取 `information_schema`：对象不存在时创建；对象存在且结构指纹一致时继续；同名对象定义不一致时停止迁移。MySQL DDL 可能隐式提交，因此恢复依据是迁移状态、结构指纹、持久映射和数据库实际结构，不依赖跨 DDL 的总事务回滚。
+本项目为全新构建，数据库天生即 v3，**没有需要迁移的历史数据**，因此主线不含迁移脚本或映射表。
 
-### 15.2 数据迁移步骤
-
-v3 采用停机维护切换。执行顺序固定为：停止应用写入，取得项目固定的数据库命名锁，建立可重入影子结构，回填数据，执行完整校验，单条语句切换表名，写入结构版本 3，部署并启动新代码。影子表名和备份表名来自程序内固定白名单，不能由外部输入拼接；普通值继续使用参数绑定。
-
-迁移建立以下持久映射表。映射表在回填时不建立到影子目标表的外键，使 DDL 中断后仍可用于恢复和核对；目标编号通过唯一约束保持一对一：
-
-```sql
-CREATE TABLE v3_member_map (
-    old_member_id BIGINT PRIMARY KEY,
-    member_id BIGINT NOT NULL,
-    CONSTRAINT uq_v3_member_map_target UNIQUE (member_id),
-    CONSTRAINT ck_v3_member_map_old_id CHECK (old_member_id > 0),
-    CONSTRAINT ck_v3_member_map_target_id CHECK (member_id > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_product_map (
-    old_product_id BIGINT PRIMARY KEY,
-    gym_card_product_id BIGINT NULL,
-    lesson_package_product_id BIGINT NULL,
-    historical_gift_rule_id BIGINT NULL,
-    CONSTRAINT uq_v3_product_map_gym_product
-        UNIQUE (gym_card_product_id),
-    CONSTRAINT uq_v3_product_map_lesson_product
-        UNIQUE (lesson_package_product_id),
-    CONSTRAINT uq_v3_product_map_gift_rule
-        UNIQUE (historical_gift_rule_id),
-    CONSTRAINT ck_v3_product_map_old_id
-        CHECK (old_product_id > 0),
-    CONSTRAINT ck_v3_product_map_target_ids
-        CHECK (
-            (gym_card_product_id IS NULL OR gym_card_product_id > 0)
-            AND (
-                lesson_package_product_id IS NULL
-                OR lesson_package_product_id > 0
-            )
-            AND (
-                historical_gift_rule_id IS NULL
-                OR historical_gift_rule_id > 0
-            )
-        ),
-    CONSTRAINT ck_v3_product_map_shape
-        CHECK (
-            (
-                gym_card_product_id IS NOT NULL
-                AND lesson_package_product_id IS NULL
-                AND historical_gift_rule_id IS NULL
-            )
-            OR
-            (
-                gym_card_product_id IS NOT NULL
-                AND lesson_package_product_id IS NOT NULL
-                AND historical_gift_rule_id IS NOT NULL
-            )
-        )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_sale_map (
-    old_membership_id BIGINT PRIMARY KEY,
-    sale_order_id BIGINT NOT NULL,
-    sale_item_id BIGINT NOT NULL,
-    payment_id BIGINT NOT NULL,
-    CONSTRAINT uq_v3_sale_map_order UNIQUE (sale_order_id),
-    CONSTRAINT uq_v3_sale_map_item UNIQUE (sale_item_id),
-    CONSTRAINT uq_v3_sale_map_payment UNIQUE (payment_id),
-    CONSTRAINT ck_v3_sale_map_old_id CHECK (old_membership_id > 0),
-    CONSTRAINT ck_v3_sale_map_order_id CHECK (sale_order_id > 0),
-    CONSTRAINT ck_v3_sale_map_item_id CHECK (sale_item_id > 0),
-    CONSTRAINT ck_v3_sale_map_payment_id CHECK (payment_id > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_entitlement_map (
-    old_membership_id BIGINT PRIMARY KEY,
-    lesson_package_id BIGINT NULL,
-    gift_grant_id BIGINT NULL,
-    gym_card_id BIGINT NOT NULL,
-    CONSTRAINT uq_v3_entitlement_map_lesson_package
-        UNIQUE (lesson_package_id),
-    CONSTRAINT uq_v3_entitlement_map_gift_grant
-        UNIQUE (gift_grant_id),
-    CONSTRAINT uq_v3_entitlement_map_gym_card
-        UNIQUE (gym_card_id),
-    CONSTRAINT ck_v3_entitlement_map_old_id
-        CHECK (old_membership_id > 0),
-    CONSTRAINT ck_v3_entitlement_map_card_id
-        CHECK (gym_card_id > 0),
-    CONSTRAINT ck_v3_entitlement_map_optional_ids
-        CHECK (
-            (lesson_package_id IS NULL OR lesson_package_id > 0)
-            AND (gift_grant_id IS NULL OR gift_grant_id > 0)
-        ),
-    CONSTRAINT ck_v3_entitlement_map_shape
-        CHECK (
-            (
-                lesson_package_id IS NULL
-                AND gift_grant_id IS NULL
-            )
-            OR
-            (
-                lesson_package_id IS NOT NULL
-                AND gift_grant_id IS NOT NULL
-            )
-        )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_operation_map (
-    old_operation_record_id BIGINT PRIMARY KEY,
-    operation_record_id BIGINT NOT NULL,
-    legacy_operation VARCHAR(50) NOT NULL,
-    target_operation VARCHAR(50) NOT NULL,
-    target_result_type VARCHAR(50) NOT NULL,
-    target_result_id BIGINT NOT NULL,
-    legacy_payload_hash CHAR(64)
-        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    payload_version VARCHAR(16) NOT NULL,
-    migrated_at DATETIME(6) NOT NULL,
-    CONSTRAINT uq_v3_operation_map_target
-        UNIQUE (operation_record_id),
-    CONSTRAINT ck_v3_operation_map_old_id
-        CHECK (old_operation_record_id > 0),
-    CONSTRAINT ck_v3_operation_map_target_id
-        CHECK (operation_record_id > 0),
-    CONSTRAINT ck_v3_operation_map_result_id
-        CHECK (target_result_id > 0),
-    CONSTRAINT ck_v3_operation_map_legacy_hash
-        CHECK (legacy_payload_hash REGEXP '^[0-9a-f]{64}$'),
-    CONSTRAINT ck_v3_operation_map_payload_version
-        CHECK (payload_version IN ('v3', 'legacy-v2'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE v3_entry_map (
-    old_gym_entry_id BIGINT PRIMARY KEY,
-    gym_entry_id BIGINT NOT NULL,
-    CONSTRAINT uq_v3_entry_map_target UNIQUE (gym_entry_id),
-    CONSTRAINT ck_v3_entry_map_old_id CHECK (old_gym_entry_id > 0),
-    CONSTRAINT ck_v3_entry_map_target_id CHECK (gym_entry_id > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-映射表保留到 v3 数据验收结束；`v3_operation_map` 长期保留，用于 `get_legacy_operation_result` 核实历史操作。
-
-结构和数据步骤：
-
-1. 确认当前版本为 v2，确认应用写入已经停止，并取得数据库命名锁。预检旧数据的产品类型、次数余额、课节余额、付款和外键归属；任何空值、越界或无法唯一映射的数据都停止切换。
-
-2. 计算目标结构指纹，创建带 `_v3_shadow` 后缀的完整依赖闭包、持久映射表、索引和回填阶段所需的可空目标列。依赖闭包至少覆盖 members、账号关联、产品、规则、订单、项目、付款、赠送、权益、course_sessions、bookings、consumptions、gym_entries、reviews、body_measurements、operation_records 以及其他通过外键引用这些表的结构。影子子表的外键只能引用对应的影子父表。结构准备完成后记录 `prepared` 恢复点；重跑时锁定状态行并核对结构指纹：
-
-```sql
-INSERT INTO schema_migration_runs (
-    target_version,
-    phase,
-    structure_fingerprint,
-    started_at,
-    updated_at
-)
-SELECT
-    3,
-    'prepared',
-    :structure_fingerprint,
-    CURRENT_TIMESTAMP(6),
-    CURRENT_TIMESTAMP(6)
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM schema_migration_runs
-    WHERE target_version = 3
-);
-
-START TRANSACTION;
-
-SELECT
-    target_version,
-    phase,
-    structure_fingerprint,
-    started_at,
-    updated_at
-FROM schema_migration_runs
-WHERE target_version = 3
-FOR UPDATE;
-
-COMMIT;
-```
-
-3. 迁移会员和教练档案，生成 `member_account_links` 和 `coach_account_links`；账号角色、档案和既有一对一关系写入对应映射并进行数量核对。课程和场地保留原编号；旧结构没有 `description` 或 `location` 时回填 `NULL`。
-
-4. 按旧产品种类建立健身房卡判别子类型：旧期限产品写入 `kind='duration'` 的根产品和期限子表；旧 `kind='count'` 产品写入 `kind='visit'` 的根产品和次卡子表，逐值保存 `total_entries=access_uses`。含私教课节的产品同时建立课包产品、历史期限卡产品和停用的历史赠卡规则。count 产品的确定性回填如下：
-
-```sql
-INSERT INTO gym_card_products_v3_shadow (
-    id,
-    kind,
-    name,
-    price,
-    is_sale_enabled,
-    created_at,
-    updated_at
-)
-SELECT
-    p.id,
-    'visit',
-    p.name,
-    p.price,
-    p.is_active,
-    p.created_at,
-    p.updated_at
-FROM card_products AS p
-WHERE p.kind = 'count'
-  AND p.access_uses > 0
-  AND p.private_lesson_credits = 0
-  AND p.valid_days IS NULL
-  AND NOT EXISTS (
-      SELECT 1
-      FROM gym_card_products_v3_shadow AS target
-      WHERE target.id = p.id
-  );
-
-INSERT INTO visit_gym_card_products_v3_shadow (
-    product_id,
-    kind,
-    total_entries
-)
-SELECT
-    p.id,
-    'visit',
-    p.access_uses
-FROM card_products AS p
-JOIN gym_card_products_v3_shadow AS root
-  ON root.id = p.id
- AND root.kind = 'visit'
-WHERE p.kind = 'count'
-  AND p.access_uses > 0
-  AND p.private_lesson_credits = 0
-  AND p.valid_days IS NULL
-  AND NOT EXISTS (
-      SELECT 1
-      FROM visit_gym_card_products_v3_shadow AS target
-      WHERE target.product_id = p.id
-  );
-
-INSERT INTO v3_product_map (
-    old_product_id,
-    gym_card_product_id,
-    lesson_package_product_id,
-    historical_gift_rule_id
-)
-SELECT
-    p.id,
-    p.id,
-    NULL,
-    NULL
-FROM card_products AS p
-JOIN visit_gym_card_products_v3_shadow AS target
-  ON target.product_id = p.id
-WHERE p.kind = 'count'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM v3_product_map AS mapping
-      WHERE mapping.old_product_id = p.id
-  );
-```
-
-5. 为每条旧 `memberships` 生成一笔确定的 `SaleOrder`、一项 `quantity=1` 的 `SaleItem` 和一笔 `Payment`，保留金额、付款方式、购买时刻和操作者。映射表保证重跑得到相同目标编号；已经存在的目标行必须逐字段相等，不能用覆盖更新掩盖差异。
-
-6. 旧期限权益产生 purchased `DurationGymCard`；旧 count 权益产生 purchased `VisitGymCard`，逐值保存 `total_entries=access_uses` 和 `remaining_entries=remaining_accesses`；含私教课的权益产生 `LessonPackage`，并通过历史规则产生 `GiftGrant` 和 gifted `DurationGymCard`。count 权益回填如下：
-
-```sql
-INSERT INTO gym_cards_v3_shadow (
-    id,
-    member_id,
-    product_id,
-    kind,
-    purchase_sale_item_id,
-    gift_grant_id,
-    name,
-    status,
-    created_at,
-    updated_at
-)
-SELECT
-    m.id,
-    member_map.member_id,
-    product_map.gym_card_product_id,
-    'visit',
-    sale_map.sale_item_id,
-    NULL,
-    m.name,
-    m.status,
-    m.created_at,
-    m.updated_at
-FROM memberships AS m
-JOIN v3_member_map AS member_map
-  ON member_map.old_member_id = m.member_id
-JOIN v3_product_map AS product_map
-  ON product_map.old_product_id = m.product_id
-JOIN v3_sale_map AS sale_map
-  ON sale_map.old_membership_id = m.id
-JOIN gym_card_sale_items_v3_shadow AS sale_item
-  ON sale_item.sale_item_id = sale_map.sale_item_id
- AND sale_item.member_id = member_map.member_id
- AND sale_item.gym_card_product_id = product_map.gym_card_product_id
-WHERE m.kind = 'count'
-  AND m.access_uses > 0
-  AND m.remaining_accesses BETWEEN 0 AND m.access_uses
-  AND NOT EXISTS (
-      SELECT 1
-      FROM gym_cards_v3_shadow AS target
-      WHERE target.id = m.id
-  );
-
-INSERT INTO visit_gym_cards_v3_shadow (
-    gym_card_id,
-    member_id,
-    kind,
-    total_entries,
-    remaining_entries
-)
-SELECT
-    m.id,
-    member_map.member_id,
-    'visit',
-    m.access_uses,
-    m.remaining_accesses
-FROM memberships AS m
-JOIN v3_member_map AS member_map
-  ON member_map.old_member_id = m.member_id
-JOIN gym_cards_v3_shadow AS root
-  ON root.id = m.id
- AND root.member_id = member_map.member_id
- AND root.kind = 'visit'
-WHERE m.kind = 'count'
-  AND m.access_uses > 0
-  AND m.remaining_accesses BETWEEN 0 AND m.access_uses
-  AND NOT EXISTS (
-      SELECT 1
-      FROM visit_gym_cards_v3_shadow AS target
-      WHERE target.gym_card_id = m.id
-  );
-
-INSERT INTO v3_entitlement_map (
-    old_membership_id,
-    lesson_package_id,
-    gift_grant_id,
-    gym_card_id
-)
-SELECT
-    m.id,
-    NULL,
-    NULL,
-    m.id
-FROM memberships AS m
-JOIN visit_gym_cards_v3_shadow AS target
-  ON target.gym_card_id = m.id
-WHERE m.kind = 'count'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM v3_entitlement_map AS mapping
-      WHERE mapping.old_membership_id = m.id
-  );
-```
-
-7. 给预约和消课影子结构回填 `lesson_package_id`。每条预约通过旧 `membership_id` 映射到课包；每条消课同时核对 `(booking_id, lesson_package_id)`，再校验总课节、剩余课节和占用课节与旧数据一致。课次时长仅在微秒差值能被 `60 * 1000000` 整除且与关联课程模板时长一致时回填。
-
-8. 将旧入场记录回填到单表 `gym_entries`。旧表只保存 `membership_id`，没有预约来源字段，因此迁移只采用可审计的权益来源：count 权益写 `visit_gym_card`，月卡、季卡和年卡权益写其历史 `duration_gym_card`，`booking_id` 写 `NULL`。不得根据预约时间、状态或课次日期推测历史预约来源。只有其他数据源存在明确、唯一且可审计的旧预约关联字段时，才允许单独迁移为 booking 来源。
-
-```sql
-INSERT INTO gym_entries_v3_shadow (
-    id,
-    member_id,
-    source_kind,
-    duration_gym_card_id,
-    visit_gym_card_id,
-    booking_id,
-    business_date,
-    entered_at,
-    operator_id
-)
-SELECT
-    old_entry.id,
-    member_map.member_id,
-    CASE
-        WHEN old_membership.kind = 'count'
-            THEN 'visit_gym_card'
-        ELSE 'duration_gym_card'
-    END,
-    CASE
-        WHEN old_membership.kind IN ('monthly', 'quarterly', 'yearly')
-            THEN entitlement_map.gym_card_id
-        ELSE NULL
-    END,
-    CASE
-        WHEN old_membership.kind = 'count'
-            THEN entitlement_map.gym_card_id
-        ELSE NULL
-    END,
-    NULL,
-    old_entry.business_date,
-    old_entry.entered_at,
-    old_entry.operator_id
-FROM gym_entries AS old_entry
-JOIN memberships AS old_membership
-  ON old_membership.id = old_entry.membership_id
- AND old_membership.member_id = old_entry.member_id
-JOIN v3_member_map AS member_map
-  ON member_map.old_member_id = old_entry.member_id
-JOIN v3_entitlement_map AS entitlement_map
-  ON entitlement_map.old_membership_id = old_membership.id
-WHERE (
-        old_membership.kind = 'count'
-        AND old_entry.accesses_used = 1
-      )
-   OR (
-        old_membership.kind IN ('monthly', 'quarterly', 'yearly')
-        AND old_entry.accesses_used = 0
-      );
-
-INSERT INTO v3_entry_map (
-    old_gym_entry_id,
-    gym_entry_id
-)
-SELECT
-    old_entry.id,
-    target.id
-FROM gym_entries AS old_entry
-JOIN gym_entries_v3_shadow AS target
-  ON target.id = old_entry.id;
-```
-
-回填后要求 `v3_entry_map`、旧 `gym_entries` 和目标 `gym_entries_v3_shadow` 数量完全一致；旧 count 入场必须满足 `accesses_used=1`，旧混合权益入场必须满足 `accesses_used=0`。
-
-9. 迁移旧 `operation_records`：`sell_product` 根据产品映射转换为 `sell_gym_card` 或 `sell_lesson_package`，结果编号指向对应订单；旧预约、取消、排课和入场操作映射到目标结果编号。能够完整重建输入的记录生成当前 `payload_hash`；字段不足的记录保存 `payload_version='legacy-v2'` 和旧规范化载荷哈希。
-
-10. 逐表核对源记录数、映射记录数、金额总额、课节总额、占用总额、付款数量、权益数量、入场数量和操作记录数量。以下校验中的违规查询必须返回零或空结果，对应源/目标汇总必须相等。
-
-产品与卡的判别子类型校验：
-
-```sql
-SELECT COUNT(*) AS invalid_gym_card_product_subtype_count
-FROM gym_card_products_v3_shadow AS root
-LEFT JOIN duration_gym_card_products_v3_shadow AS duration_product
-  ON duration_product.product_id = root.id
-LEFT JOIN visit_gym_card_products_v3_shadow AS visit_product
-  ON visit_product.product_id = root.id
-WHERE
-    (duration_product.product_id IS NOT NULL)
-    + (visit_product.product_id IS NOT NULL) <> 1
- OR (root.kind = 'duration' AND duration_product.product_id IS NULL)
- OR (root.kind = 'visit' AND visit_product.product_id IS NULL)
- OR (root.kind = 'duration' AND visit_product.product_id IS NOT NULL)
- OR (root.kind = 'visit' AND duration_product.product_id IS NOT NULL);
-
-SELECT COUNT(*) AS invalid_gym_card_subtype_count
-FROM gym_cards_v3_shadow AS root
-LEFT JOIN duration_gym_cards_v3_shadow AS duration_card
-  ON duration_card.gym_card_id = root.id
-LEFT JOIN visit_gym_cards_v3_shadow AS visit_card
-  ON visit_card.gym_card_id = root.id
-WHERE
-    (duration_card.gym_card_id IS NOT NULL)
-    + (visit_card.gym_card_id IS NOT NULL) <> 1
- OR (root.kind = 'duration' AND duration_card.gym_card_id IS NULL)
- OR (root.kind = 'visit' AND visit_card.gym_card_id IS NULL)
- OR (root.kind = 'duration' AND visit_card.gym_card_id IS NOT NULL)
- OR (root.kind = 'visit' AND duration_card.gym_card_id IS NOT NULL);
-```
-
-旧 count 产品、实例和余额校验：
-
-```sql
-SELECT
-    source.id AS old_product_id,
-    source.access_uses AS source_total_entries,
-    target.total_entries AS target_total_entries
-FROM card_products AS source
-LEFT JOIN v3_product_map AS mapping
-  ON mapping.old_product_id = source.id
-LEFT JOIN visit_gym_card_products_v3_shadow AS target
-  ON target.product_id = mapping.gym_card_product_id
-WHERE source.kind = 'count'
-  AND (
-      mapping.lesson_package_product_id IS NOT NULL
-      OR mapping.historical_gift_rule_id IS NOT NULL
-      OR target.product_id IS NULL
-      OR target.total_entries <> source.access_uses
-  );
-
-SELECT
-    COUNT(*) AS source_count_product_count,
-    COALESCE(SUM(source.access_uses), 0) AS source_total_entries,
-    COUNT(target.product_id) AS target_visit_product_count,
-    COALESCE(SUM(target.total_entries), 0) AS target_total_entries
-FROM card_products AS source
-LEFT JOIN v3_product_map AS mapping
-  ON mapping.old_product_id = source.id
-LEFT JOIN visit_gym_card_products_v3_shadow AS target
-  ON target.product_id = mapping.gym_card_product_id
-WHERE source.kind = 'count';
-
-SELECT
-    source.id AS old_membership_id,
-    source.access_uses AS source_total_entries,
-    target.total_entries AS target_total_entries,
-    source.remaining_accesses AS source_remaining_entries,
-    target.remaining_entries AS target_remaining_entries
-FROM memberships AS source
-LEFT JOIN v3_entitlement_map AS mapping
-  ON mapping.old_membership_id = source.id
-LEFT JOIN visit_gym_cards_v3_shadow AS target
-  ON target.gym_card_id = mapping.gym_card_id
-WHERE source.kind = 'count'
-  AND (
-      mapping.lesson_package_id IS NOT NULL
-      OR mapping.gift_grant_id IS NOT NULL
-      OR target.gym_card_id IS NULL
-      OR target.total_entries <> source.access_uses
-      OR target.remaining_entries <> source.remaining_accesses
-  );
-
-SELECT
-    COUNT(*) AS source_count_membership_count,
-    COALESCE(SUM(source.access_uses), 0) AS source_total_entries,
-    COALESCE(SUM(source.remaining_accesses), 0)
-        AS source_remaining_entries,
-    COUNT(target.gym_card_id) AS target_visit_card_count,
-    COALESCE(SUM(target.total_entries), 0) AS target_total_entries,
-    COALESCE(SUM(target.remaining_entries), 0)
-        AS target_remaining_entries
-FROM memberships AS source
-LEFT JOIN v3_entitlement_map AS mapping
-  ON mapping.old_membership_id = source.id
-LEFT JOIN visit_gym_cards_v3_shadow AS target
-  ON target.gym_card_id = mapping.gym_card_id
-WHERE source.kind = 'count';
-```
-
-入场来源、子类型和会员归属校验：
-
-```sql
-SELECT COUNT(*) AS invalid_entry_xor_count
-FROM gym_entries_v3_shadow AS entry_record
-WHERE
-    (entry_record.duration_gym_card_id IS NOT NULL)
-    + (entry_record.visit_gym_card_id IS NOT NULL)
-    + (entry_record.booking_id IS NOT NULL) <> 1
- OR (
-      entry_record.source_kind = 'duration_gym_card'
-      AND (
-          entry_record.duration_gym_card_id IS NULL
-          OR entry_record.visit_gym_card_id IS NOT NULL
-          OR entry_record.booking_id IS NOT NULL
-      )
-    )
- OR (
-      entry_record.source_kind = 'visit_gym_card'
-      AND (
-          entry_record.visit_gym_card_id IS NULL
-          OR entry_record.duration_gym_card_id IS NOT NULL
-          OR entry_record.booking_id IS NOT NULL
-      )
-    )
- OR (
-      entry_record.source_kind = 'booking'
-      AND (
-          entry_record.booking_id IS NULL
-          OR entry_record.duration_gym_card_id IS NOT NULL
-          OR entry_record.visit_gym_card_id IS NOT NULL
-      )
-    )
- OR entry_record.source_kind NOT IN (
-      'duration_gym_card',
-      'visit_gym_card',
-      'booking'
-    );
-
-SELECT COUNT(*) AS invalid_entry_owner_or_subtype_count
-FROM gym_entries_v3_shadow AS entry_record
-LEFT JOIN duration_gym_cards_v3_shadow AS duration_card
-  ON duration_card.gym_card_id = entry_record.duration_gym_card_id
-LEFT JOIN visit_gym_cards_v3_shadow AS visit_card
-  ON visit_card.gym_card_id = entry_record.visit_gym_card_id
-LEFT JOIN bookings_v3_shadow AS booking_record
-  ON booking_record.id = entry_record.booking_id
-WHERE
-    (
-        entry_record.source_kind = 'duration_gym_card'
-        AND (
-            duration_card.gym_card_id IS NULL
-            OR duration_card.member_id <> entry_record.member_id
-        )
-    )
- OR (
-        entry_record.source_kind = 'visit_gym_card'
-        AND (
-            visit_card.gym_card_id IS NULL
-            OR visit_card.member_id <> entry_record.member_id
-        )
-    )
- OR (
-        entry_record.source_kind = 'booking'
-        AND (
-            booking_record.id IS NULL
-            OR booking_record.member_id <> entry_record.member_id
-        )
-    );
-
-SELECT
-    (SELECT COUNT(*) FROM gym_entries) AS source_entry_count,
-    (SELECT COUNT(*) FROM v3_entry_map) AS entry_map_count,
-    (SELECT COUNT(*) FROM gym_entries_v3_shadow) AS target_entry_count,
-    (
-        SELECT COUNT(*)
-        FROM gym_entries_v3_shadow
-        WHERE source_kind = 'duration_gym_card'
-    ) AS duration_source_count,
-    (
-        SELECT COUNT(*)
-        FROM gym_entries_v3_shadow
-        WHERE source_kind = 'visit_gym_card'
-    ) AS visit_source_count,
-    (
-        SELECT COUNT(*)
-        FROM gym_entries_v3_shadow
-        WHERE source_kind = 'booking'
-    ) AS booking_source_count;
-```
-
-付款、订单、课包和卡来源校验：
-
-```sql
-SELECT
-    (SELECT COUNT(*) FROM memberships) AS source_membership_count,
-    (SELECT COUNT(*) FROM payments) AS source_payment_count,
-    (SELECT COUNT(*) FROM v3_sale_map) AS sale_map_count,
-    (SELECT COUNT(*) FROM sale_orders_v3_shadow) AS target_order_count,
-    (SELECT COUNT(*) FROM sale_items_v3_shadow) AS target_sale_item_count,
-    (SELECT COUNT(*) FROM payments_v3_shadow) AS target_payment_count,
-    (SELECT COUNT(*) FROM v3_entitlement_map) AS entitlement_map_count,
-    (SELECT COUNT(*) FROM gym_cards_v3_shadow) AS target_gym_card_count,
-    (
-        SELECT COUNT(*)
-        FROM memberships
-        WHERE private_lesson_credits > 0
-    ) AS source_mixed_membership_count,
-    (SELECT COUNT(*) FROM lesson_packages_v3_shadow)
-        AS target_lesson_package_count,
-    (SELECT COUNT(*) FROM gift_grants_v3_shadow)
-        AS target_gift_grant_count;
-
-SELECT
-    (SELECT COALESCE(SUM(amount), 0.00) FROM payments)
-        AS source_payment_amount,
-    (SELECT COALESCE(SUM(total_amount), 0.00) FROM sale_orders_v3_shadow)
-        AS target_order_amount,
-    (SELECT COALESCE(SUM(amount), 0.00) FROM payments_v3_shadow)
-        AS target_payment_amount;
-
-SELECT COUNT(*) AS invalid_payment_order_count
-FROM payments_v3_shadow AS payment_record
-LEFT JOIN sale_orders_v3_shadow AS order_record
-  ON order_record.id = payment_record.sale_order_id
-WHERE order_record.id IS NULL
-   OR order_record.member_id <> payment_record.member_id
-   OR order_record.total_amount <> payment_record.amount;
-
-SELECT COUNT(*) AS order_without_exactly_one_payment_count
-FROM sale_orders_v3_shadow AS order_record
-LEFT JOIN payments_v3_shadow AS payment_record
-  ON payment_record.sale_order_id = order_record.id
-GROUP BY order_record.id
-HAVING COUNT(payment_record.id) <> 1;
-
-SELECT COUNT(*) AS invalid_lesson_package_source_count
-FROM lesson_packages_v3_shadow AS package_record
-LEFT JOIN lesson_package_sale_items_v3_shadow AS source_item
-  ON source_item.sale_item_id = package_record.purchase_sale_item_id
-WHERE source_item.sale_item_id IS NULL
-   OR source_item.member_id <> package_record.member_id
-   OR source_item.lesson_package_product_id <> package_record.product_id;
-
-SELECT COUNT(*) AS invalid_gym_card_source_count
-FROM gym_cards_v3_shadow AS card_record
-LEFT JOIN gym_card_sale_items_v3_shadow AS purchase_item
-  ON purchase_item.sale_item_id = card_record.purchase_sale_item_id
-LEFT JOIN gift_grants_v3_shadow AS gift_record
-  ON gift_record.id = card_record.gift_grant_id
-WHERE
-    (card_record.purchase_sale_item_id IS NOT NULL)
-    + (card_record.gift_grant_id IS NOT NULL) <> 1
- OR (
-      card_record.purchase_sale_item_id IS NOT NULL
-      AND (
-          purchase_item.sale_item_id IS NULL
-          OR purchase_item.member_id <> card_record.member_id
-          OR purchase_item.gym_card_product_id <> card_record.product_id
-      )
-    )
- OR (
-      card_record.gift_grant_id IS NOT NULL
-      AND (
-          gift_record.id IS NULL
-          OR gift_record.member_id <> card_record.member_id
-          OR gift_record.reward_gym_card_product_id <> card_record.product_id
-          OR card_record.kind <> 'duration'
-      )
-    )
- OR (
-      card_record.kind = 'visit'
-      AND card_record.gift_grant_id IS NOT NULL
-    );
-```
-
-11. 在影子结构上添加最终 `NOT NULL`、复合外键、`CHECK` 和唯一约束，执行结构契约测试和只读业务核对。全部校验通过后复核结构指纹，并将阶段推进到 `validated`：
-
-```sql
-UPDATE schema_migration_runs
-SET phase = 'validated',
-    updated_at = CURRENT_TIMESTAMP(6)
-WHERE target_version = 3
-  AND phase = 'prepared'
-  AND structure_fingerprint = :structure_fingerprint;
-```
-
-12. 确认 `phase='validated'`，确认全部正式旧表、影子表和目标备份名称处于预期状态，并确认影子子表外键只指向影子父表。随后使用一条 `RENAME TABLE` 切换整个依赖闭包，不能拆分：
-
-```sql
-RENAME TABLE
-    members TO members_v2_backup,
-    members_v3_shadow TO members,
-    coaches TO coaches_v2_backup,
-    coaches_v3_shadow TO coaches,
-    courses TO courses_v2_backup,
-    courses_v3_shadow TO courses,
-    rooms TO rooms_v2_backup,
-    rooms_v3_shadow TO rooms,
-    member_account_links_v3_shadow TO member_account_links,
-    coach_account_links_v3_shadow TO coach_account_links,
-    card_products TO card_products_v2_backup,
-    gym_card_products_v3_shadow TO gym_card_products,
-    duration_gym_card_products_v3_shadow TO duration_gym_card_products,
-    visit_gym_card_products_v3_shadow TO visit_gym_card_products,
-    lesson_package_products_v3_shadow TO lesson_package_products,
-    lesson_package_gift_rules_v3_shadow TO lesson_package_gift_rules,
-    sale_orders_v3_shadow TO sale_orders,
-    sale_items_v3_shadow TO sale_items,
-    gym_card_sale_items_v3_shadow TO gym_card_sale_items,
-    lesson_package_sale_items_v3_shadow TO lesson_package_sale_items,
-    memberships TO memberships_v2_backup,
-    payments TO payments_v2_backup,
-    payments_v3_shadow TO payments,
-    gift_grants_v3_shadow TO gift_grants,
-    gym_cards_v3_shadow TO gym_cards,
-    duration_gym_cards_v3_shadow TO duration_gym_cards,
-    visit_gym_cards_v3_shadow TO visit_gym_cards,
-    lesson_packages_v3_shadow TO lesson_packages,
-    course_sessions TO course_sessions_v2_backup,
-    course_sessions_v3_shadow TO course_sessions,
-    bookings TO bookings_v2_backup,
-    bookings_v3_shadow TO bookings,
-    consumptions TO consumptions_v2_backup,
-    consumptions_v3_shadow TO consumptions,
-    gym_entries TO gym_entries_v2_backup,
-    gym_entries_v3_shadow TO gym_entries,
-    reviews TO reviews_v2_backup,
-    reviews_v3_shadow TO reviews,
-    body_measurements TO body_measurements_v2_backup,
-    body_measurements_v3_shadow TO body_measurements,
-    operation_records TO operation_records_v2_backup,
-    operation_records_v3_shadow TO operation_records;
-```
-
-换名成功后立即将阶段推进到 `renamed`，并验证正式子表没有外键指向 `_v2_backup` 或 `_v3_shadow`：
-
-```sql
-UPDATE schema_migration_runs
-SET phase = 'renamed',
-    updated_at = CURRENT_TIMESTAMP(6)
-WHERE target_version = 3
-  AND phase = 'validated';
-
-SELECT
-    constraint_name,
-    table_name,
-    referenced_table_name
-FROM information_schema.referential_constraints
-WHERE constraint_schema = DATABASE()
-  AND table_name NOT LIKE '%\\_v2\\_backup' ESCAPE '\\'
-  AND table_name NOT LIKE '%\\_v3\\_shadow' ESCAPE '\\'
-  AND (
-      referenced_table_name LIKE '%\\_v3\\_shadow' ESCAPE '\\'
-      OR referenced_table_name LIKE '%\\_v2\\_backup' ESCAPE '\\'
-  );
-```
-
-13. 再次核对正式结构指纹、映射数量、金额、权益余额和外键目标。通过后在一个普通 DML 事务内登记结构版本 3，并将阶段推进到 `versioned`；该事务只负责版本记录和阶段更新，不承担回滚此前 DDL 的职责：
-
-```sql
-START TRANSACTION;
-
-INSERT INTO schema_versions (version, applied_at)
-SELECT 3, CURRENT_TIMESTAMP(6)
-WHERE EXISTS (
-    SELECT 1
-    FROM schema_migration_runs
-    WHERE target_version = 3
-      AND phase = 'renamed'
-)
-  AND NOT EXISTS (
-    SELECT 1
-    FROM schema_versions
-    WHERE version = 3
-);
-
-UPDATE schema_migration_runs
-SET phase = 'versioned',
-    updated_at = CURRENT_TIMESTAMP(6)
-WHERE target_version = 3
-  AND phase = 'renamed';
-
-COMMIT;
-```
-
-随后部署 v3 代码并启动应用。启动结构检查通过后释放命名锁并开放写入。检测到 `renamed` 时只复核正式结构和数据并完成版本登记；检测到 `versioned` 时迁移直接返回已完成。
-
-每一步都先查映射表和 `information_schema`。定义和数据已符合目标时记录完成并继续；部分完成时从数据库实际状态补齐。无法唯一映射、数量或金额不相等、约束创建失败时停止切换并保持应用停写。DDL 结果不明时抛 `MigrationError`，包含已确认步骤和失败步骤；再次执行先重新核验实际结构。
+曾规划的 v2→v3 停机迁移方案（命名锁、可重入影子结构、新旧编号映射表 `v3_*_map`、进度记录表 `schema_migration_runs`、回填与原子切换步骤）已归档在 [`docs/archive/schema/v2-to-v3-migration.md`](../docs/archive/schema/v2-to-v3-migration.md)，仅供将来万一需要从真实 v2 部署导入数据时参考。
 
 ### 15.3 实现同步顺序
 

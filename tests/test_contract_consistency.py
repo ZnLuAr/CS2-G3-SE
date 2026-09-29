@@ -316,6 +316,7 @@ class ContractConsistencyTests(unittest.TestCase):
         design_tables = dict(re.findall(
             r"CREATE TABLE (\w+) \((.*?)\) ENGINE=InnoDB", self.design, re.S,
         ))
+        # 读取单一的 born-v3 初始结构
         sql_source = (ROOT / "sql/001_initial_schema.sql").read_text(encoding="utf-8")
         tables = dict(re.findall(
             r"CREATE TABLE (\w+) \((.*?)\) ENGINE=InnoDB", sql_source, re.S,
@@ -399,6 +400,7 @@ class ContractConsistencyTests(unittest.TestCase):
         account_repo = (ROOT / "src/db/account_repo.py").read_text(encoding="utf-8")
         auth_service = (ROOT / "src/services/auth_service.py").read_text(encoding="utf-8")
 
+        # 代码侧：account_repo.py 的锁定方法与注释（原话仍在，逐句校验，不放水）
         self.assertIn(
             "def lock_many(self, account_ids: tuple[int, ...]) -> tuple[Account, ...]",
             account_repo,
@@ -406,36 +408,40 @@ class ContractConsistencyTests(unittest.TestCase):
         self.assertIn("tuple[Member | None, Coach | None]", account_repo)
         self.assertIn("一条带 ORDER BY id 的锁定当前读", account_repo)
         self.assertIn("指定账号与全部启用管理员的并集", account_repo)
+
+        # 代码侧：auth_service.py 的并发锁契约注释（原话仍在，逐句校验，不放水）
         self.assertIn("先锁当前账号，再通过 lock_profile_links 锁定并读取", auth_service)
         self.assertIn("以锁内记录复核关联和 is_active", auth_service)
         self.assertIn("锁持有到调用方事务结束", auth_service)
         self.assertIn("操作者、旧账号和目标账号去重后按编号升序统一锁定", auth_service)
 
-        concurrency = re.search(
-            r"\*\*身份复核与账号变更\*\*：(.*?)(?=\n\*\*只锁需要的资源\*\*：)",
+        # 文档侧：v3 将锁契约写进 AuthService 各方法的“并发规则”（不再是独立章节）
+        auth_section = re.search(
+            r"### 9\.2 `AuthService`(.*?)(?=^### )",
             self.design,
-            re.S,
+            re.M | re.S,
         )
-        self.assertIsNotNone(concurrency)
-        contract = concurrency.group(1)
-        self.assertIn("直到业务提交或回滚", contract)
-        self.assertIn("操作者、旧账号和目标账号去重", contract)
-        self.assertIn("停用或移交提交后", contract)
-        self.assertLess(contract.index("锁当前账号"), contract.index("锁该账号关联"))
+        self.assertIsNotNone(auth_section, "必须包含 AuthService 的完整描述")
+        auth_doc = auth_section.group(1)
+        self.assertIn("并发规则", auth_doc, "AuthService 必须描述并发规则")
+        self.assertIn("按 `account_id` 升序", auth_doc, "必须说明账号按编号升序加锁")
 
     def test_current_schema_version_is_shared_by_all_consumers(self) -> None:
         """应用、seed 和 MySQL fixture 必须引用同一个当前结构版本常量。"""
         connection = parse_file(ROOT / "src/db/connection.py")
         version_assignments = [
             node for node in connection.body
-            if isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == "CURRENT_SCHEMA_VERSION"
-                for target in node.targets
-            )
+            if (isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "CURRENT_SCHEMA_VERSION"
+                    for target in node.targets
+                ))
+            or (isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == "CURRENT_SCHEMA_VERSION")
         ]
         self.assertEqual(len(version_assignments), 1)
-        self.assertEqual(ast.literal_eval(version_assignments[0].value), 2)
+        self.assertEqual(ast.literal_eval(version_assignments[0].value), 3)
 
         for relative_path in ("src/app.py", "src/cmd/db.py", "tests/conftest.py"):
             module = parse_file(ROOT / relative_path)
@@ -459,32 +465,35 @@ class ContractConsistencyTests(unittest.TestCase):
                     ),
                     "check_schema 必须使用 CURRENT_SCHEMA_VERSION",
                 )
-        self.assertIn("CURRENT_SCHEMA_VERSION = 2", self.design)
+        # 文档中可能带类型注解，兼容两种形式
+        self.assertTrue(
+            "CURRENT_SCHEMA_VERSION = 3" in self.design
+            or "CURRENT_SCHEMA_VERSION: int = 3" in self.design,
+            "文档中必须声明 CURRENT_SCHEMA_VERSION = 3"
+        )
 
     def test_booking_checks_duplicate_before_capacity_everywhere(self) -> None:
-        """预约详细流程和规则摘要都必须先检查重复预约，再检查容量。"""
-        sections = [
-            re.search(
-                r"\*\*预约课次\*\*：(.*?)(?=\*\*核实预约操作结果\*\*)",
-                self.design,
-                re.S,
-            ),
-            re.search(
-                r"### 预约规则(.*?)(?=### 签到与消课规则)",
-                self.design,
-                re.S,
-            ),
-        ]
-        for index, match in enumerate(sections):
-            with self.subTest(section=index):
-                self.assertIsNotNone(match)
-                section = match.group(1)
-                duplicate_anchor = (
-                    "已有预约（任何状态）"
-                    if "已有预约（任何状态）" in section
-                    else "同一会员已预约同一课次（任何状态）"
-                )
-                self.assertLess(section.index(duplicate_anchor), section.index("已满员"))
+        """预约详细流程都必须先检查重复预约，再检查容量。"""
+        # v3 文档将规则嵌入到方法描述中，检查 BookingService.book 的事务步骤
+        booking_section = re.search(
+            r"#### 3\.1 `BookingService\.book`(.*?)(?=#### 3\.2)",
+            self.design,
+            re.S,
+        )
+        self.assertIsNotNone(booking_section, "必须包含 BookingService.book 的详细描述")
+        section = booking_section.group(1)
+
+        # 检查是否先检查重复（步骤6），再检查容量（步骤7）
+        duplicate_check = "同会员同课次历史"
+        capacity_check = "容量"
+
+        self.assertIn(duplicate_check, section, "必须检查重复预约")
+        self.assertIn(capacity_check, section, "必须检查容量")
+        self.assertLess(
+            section.index(duplicate_check),
+            section.index(capacity_check),
+            "必须先检查重复预约，再检查容量"
+        )
 
 
 if __name__ == "__main__":

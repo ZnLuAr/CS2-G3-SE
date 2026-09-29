@@ -7,11 +7,9 @@ from typing import TYPE_CHECKING
 
 from src.models.contracts import (
     CoachInput,
-    CoachUpdateInput,
     CoachView,
     CourseInput,
     CourseKind,
-    CourseQuery,
     CourseView,
     DateWindow,
     NamedQuery,
