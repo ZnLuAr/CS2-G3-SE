@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Literal
 
-from src.models.contracts import GymCardStatus
+from src.models.contracts import GymCardKind, GymCardStartPolicy, GymCardStatus
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -15,7 +16,7 @@ class GymCard:
     id: int
     member_id: int
     product_id: int
-    kind: str
+    kind: GymCardKind
     purchase_sale_item_id: int | None
     gift_grant_id: int | None
     name: str
@@ -30,9 +31,9 @@ class DurationGymCard:
 
     gym_card_id: int
     member_id: int
-    kind: str
+    kind: Literal["duration"]
     valid_days: int
-    start_policy: str
+    start_policy: GymCardStartPolicy
     valid_from: date
     valid_until: date
 
@@ -43,6 +44,15 @@ class VisitGymCard:
 
     gym_card_id: int
     member_id: int
-    kind: str
+    kind: Literal["visit"]
     total_entries: int
     remaining_entries: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class GymCardAggregate:
+    """健身房卡根记录及其唯一匹配的类型详情。"""
+
+    card: GymCard
+    duration: DurationGymCard | None
+    visit: VisitGymCard | None

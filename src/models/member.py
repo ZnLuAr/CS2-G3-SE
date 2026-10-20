@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from src.models.contracts import MemberStatus
+
 
 @dataclass(frozen=True, kw_only=True)
 class Member:
@@ -13,7 +15,7 @@ class Member:
     id: int
     name: str
     phone: str | None
-    status: str
+    status: MemberStatus
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime

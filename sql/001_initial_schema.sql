@@ -1,4 +1,4 @@
--- v3 初始结构脚本。数据库天生即 v3；按外键依赖顺序建表，版本记录由初始化命令写入。
+-- v4 初始结构脚本。数据库天生即 v4；按外键依赖顺序建表，版本记录由初始化命令写入。
 
 
 -- ==================== 版本记录 ====================
@@ -62,7 +62,7 @@ CREATE TABLE members (
     KEY ix_member_profile_name_id (name, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE members COMMENT='会员档案表：v3 账号关联移至 member_account_links';
+ALTER TABLE members COMMENT='会员档案表：保存姓名、联系方式和档案状态';
 
 
 CREATE TABLE coaches (
@@ -82,7 +82,7 @@ CREATE TABLE coaches (
     KEY ix_coach_active_name_id (is_active, name, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE coaches COMMENT='教练档案表：v3 账号关联移至 coach_account_links';
+ALTER TABLE coaches COMMENT='教练档案表：保存姓名、联系方式和启用状态';
 
 
 -- ==================== 账号-档案关联 ====================
@@ -144,6 +144,20 @@ CREATE TABLE courses (
 ALTER TABLE courses COMMENT='课程模板表：定义课程类型和时长，当前只支持私教课';
 
 
+CREATE TABLE course_tags (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    course_id BIGINT NOT NULL,
+    tag VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT uq_course_tag UNIQUE (course_id, tag),
+    CONSTRAINT fk_course_tags_course
+        FOREIGN KEY (course_id) REFERENCES courses(id),
+    CONSTRAINT ck_course_tags_format
+        CHECK (tag REGEXP '^[a-z][a-z0-9_-]{0,31}$'),
+    KEY ix_course_tags_tag_course (tag, course_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
 CREATE TABLE rooms (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(100) NOT NULL,
@@ -164,7 +178,7 @@ CREATE TABLE rooms (
     KEY ix_room_active_name_id (is_active, name, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE rooms COMMENT='场地表：v3 用 location 替代 capacity（私教容量固定为1）';
+ALTER TABLE rooms COMMENT='场地表：保存名称、位置和启用状态';
 
 
 CREATE TABLE course_sessions (
@@ -199,10 +213,34 @@ ALTER TABLE course_sessions MODIFY COLUMN capacity INT NOT NULL COMMENT '容量�
 ALTER TABLE course_sessions MODIFY COLUMN status VARCHAR(16) NOT NULL DEFAULT 'scheduled' COMMENT '状态：scheduled=已排课, completed=已完成, cancelled=已取消';
 
 
--- ==================== 器械、维修、体测（本次重构范围外）====================
--- 归属：equipment / maintenance_records 由 Tuao SONG 负责（EQ-01~EQ-07）；
---       body_measurements 由 Tuao SONG、Mingjin LI 负责（MEASURE-01~03）。
--- 本次「课程与会员卡」契约重构未改动这三张表，保留完整结构供各负责人填充实现。
+CREATE TABLE notifications (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    member_id BIGINT NOT NULL,
+    session_id BIGINT NULL,
+    kind VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    title VARCHAR(100) NOT NULL,
+    body VARCHAR(500) NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    read_at DATETIME(6) NULL,
+    CONSTRAINT fk_notifications_member
+        FOREIGN KEY (member_id) REFERENCES members(id),
+    CONSTRAINT fk_notifications_session
+        FOREIGN KEY (session_id) REFERENCES course_sessions(id)
+        ON DELETE SET NULL,
+    CONSTRAINT ck_notifications_kind
+        CHECK (kind IN ('waitlist_promoted', 'waitlist_closed')),
+    CONSTRAINT ck_notifications_title
+        CHECK (CHAR_LENGTH(TRIM(title)) BETWEEN 1 AND 100),
+    CONSTRAINT ck_notifications_body
+        CHECK (CHAR_LENGTH(TRIM(body)) BETWEEN 1 AND 500),
+    CONSTRAINT ck_notifications_read_time
+        CHECK (read_at IS NULL OR read_at >= created_at),
+    KEY ix_notification_member_unread (member_id, read_at, id),
+    KEY ix_notification_session (session_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- ==================== 器械、维修、体测 ====================
 
 
 CREATE TABLE equipment (
@@ -298,7 +336,8 @@ CREATE TABLE operation_records (
                 'cancel_session',
                 'book',
                 'cancel_booking',
-                'register_entry'
+                'register_entry',
+                'join_waitlist'
             )
         ),
     CONSTRAINT ck_operation_records_payload_hash
@@ -510,6 +549,8 @@ CREATE TABLE gift_grants (
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     CONSTRAINT uq_gift_grant_sequence UNIQUE (trigger_sale_item_id, gift_rule_id, sequence),
     CONSTRAINT uq_gift_grant_card_origin UNIQUE (id, member_id, reward_gym_card_product_id),
+    CONSTRAINT fk_gift_grant_trigger_sale_item FOREIGN KEY (trigger_sale_item_id, member_id, trigger_product_id) REFERENCES lesson_package_sale_items(sale_item_id, member_id, lesson_package_product_id),
+    CONSTRAINT fk_gift_grant_rule_version FOREIGN KEY (gift_rule_id, trigger_product_id, reward_gym_card_product_id, gift_rule_version) REFERENCES lesson_package_gift_rules(id, trigger_product_id, reward_gym_card_product_id, version),
     CONSTRAINT fk_gift_grant_member FOREIGN KEY (member_id) REFERENCES members(id),
     CONSTRAINT ck_gift_grant_version CHECK (gift_rule_version > 0),
     CONSTRAINT ck_gift_grant_activation_policy CHECK (activation_policy IN ('immediate', 'append')),
@@ -541,6 +582,7 @@ CREATE TABLE gym_cards (
     CONSTRAINT uq_gym_card_owner_kind UNIQUE (id, member_id, kind),
     CONSTRAINT fk_gym_cards_member FOREIGN KEY (member_id) REFERENCES members(id),
     CONSTRAINT fk_gym_cards_product_kind FOREIGN KEY (product_id, kind) REFERENCES gym_card_products(id, kind),
+    CONSTRAINT fk_gym_cards_purchase_origin FOREIGN KEY (purchase_sale_item_id, member_id, product_id) REFERENCES gym_card_sale_items(sale_item_id, member_id, gym_card_product_id),
     CONSTRAINT fk_gym_cards_gift_origin FOREIGN KEY (gift_grant_id, member_id, product_id) REFERENCES gift_grants(id, member_id, reward_gym_card_product_id),
     CONSTRAINT ck_gym_cards_kind CHECK (kind IN ('duration', 'visit')),
     CONSTRAINT ck_gym_cards_name CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
@@ -605,6 +647,7 @@ CREATE TABLE lesson_packages (
     CONSTRAINT uq_lesson_package_owner UNIQUE (id, member_id),
     CONSTRAINT fk_lesson_packages_member FOREIGN KEY (member_id) REFERENCES members(id),
     CONSTRAINT fk_lesson_packages_product FOREIGN KEY (product_id) REFERENCES lesson_package_products(id),
+    CONSTRAINT fk_lesson_packages_purchase_origin FOREIGN KEY (purchase_sale_item_id, member_id, product_id) REFERENCES lesson_package_sale_items(sale_item_id, member_id, lesson_package_product_id),
     CONSTRAINT ck_lesson_packages_name CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 100),
     CONSTRAINT ck_lesson_packages_total CHECK (total_lessons > 0),
     CONSTRAINT ck_lesson_packages_balances CHECK (reserved_lessons >= 0 AND reserved_lessons <= remaining_lessons AND remaining_lessons <= total_lessons),
@@ -654,6 +697,57 @@ ALTER TABLE bookings MODIFY COLUMN checked_in_at DATETIME(6) NULL COMMENT '签�
 ALTER TABLE bookings MODIFY COLUMN closed_at DATETIME(6) NULL COMMENT '结束时刻：cancelled/no_show/completed 状态的结束时间';
 
 
+CREATE TABLE consumption_records (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    booking_id BIGINT NOT NULL,
+    lesson_package_id BIGINT NOT NULL,
+    lessons_used INT NOT NULL,
+    completed_at DATETIME(6) NOT NULL,
+    operator_id BIGINT NOT NULL,
+    CONSTRAINT uq_consumption_booking UNIQUE (booking_id),
+    CONSTRAINT fk_consumption_booking_package
+        FOREIGN KEY (booking_id, lesson_package_id)
+        REFERENCES bookings(id, lesson_package_id),
+    CONSTRAINT fk_consumption_operator
+        FOREIGN KEY (operator_id) REFERENCES accounts(id),
+    CONSTRAINT ck_consumption_lessons CHECK (lessons_used = 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE waitlist_entries (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    member_id BIGINT NOT NULL,
+    session_id BIGINT NOT NULL,
+    lesson_package_id BIGINT NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    booking_id BIGINT NULL,
+    joined_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    closed_at DATETIME(6) NULL,
+    CONSTRAINT uq_waitlist_booking UNIQUE (booking_id),
+    CONSTRAINT fk_waitlist_member
+        FOREIGN KEY (member_id) REFERENCES members(id),
+    CONSTRAINT fk_waitlist_session
+        FOREIGN KEY (session_id) REFERENCES course_sessions(id),
+    CONSTRAINT fk_waitlist_package_owner
+        FOREIGN KEY (lesson_package_id, member_id)
+        REFERENCES lesson_packages(id, member_id),
+    CONSTRAINT fk_waitlist_booking_owner
+        FOREIGN KEY (booking_id, member_id)
+        REFERENCES bookings(id, member_id),
+    CONSTRAINT ck_waitlist_status
+        CHECK (status IN ('waiting', 'promoted', 'cancelled', 'closed')),
+    CONSTRAINT ck_waitlist_state
+        CHECK (
+            (status = 'waiting' AND closed_at IS NULL AND booking_id IS NULL)
+            OR (status = 'promoted' AND closed_at IS NOT NULL AND booking_id IS NOT NULL)
+            OR (status IN ('cancelled', 'closed')
+                AND closed_at IS NOT NULL AND booking_id IS NULL)
+        ),
+    KEY ix_waitlist_session_queue (session_id, status, joined_at, id),
+    KEY ix_waitlist_member_status (member_id, status, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
 CREATE TABLE gym_entries (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     member_id BIGINT NOT NULL COMMENT '会员ID',
@@ -685,9 +779,7 @@ CREATE TABLE gym_entries (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='门禁入场记录';
 
 
--- ==================== 评价（本次重构范围外）====================
--- 归属：reviews 由 Yihao QIAN 负责（REVIEW-01、REVIEW-02）。
--- 本次「课程与会员卡」契约重构未改动此表，保留完整结构供负责人填充实现。
+-- ==================== 评价 ====================
 
 
 CREATE TABLE reviews (

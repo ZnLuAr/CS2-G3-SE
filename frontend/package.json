@@ -1,0 +1,34 @@
+{
+  "name": "gym-management-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "^20.19.0 || ^22.12.0 || >=24.0.0" },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:list": "playwright test --list"
+  },
+  "dependencies": {
+    "@tanstack/vue-query": "5.104.5",
+    "axios": "1.20.0",
+    "pinia": "3.0.4",
+    "vue": "3.5.44",
+    "vue-router": "4.6.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.57.0",
+    "@types/node": "22.19.3",
+    "@vitejs/plugin-vue": "6.0.3",
+    "@vue/test-utils": "2.4.6",
+    "jsdom": "27.4.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.12",
+    "vue-tsc": "3.2.2"
+  }
+}

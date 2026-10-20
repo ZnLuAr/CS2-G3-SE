@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from src.models.contracts import EntrySourceKind
+from src.models.booking import Booking
+from src.models.gym_card import DurationGymCard, VisitGymCard
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,4 +30,6 @@ class EntryAggregate:
     """入场记录聚合，包含入场记录及关联数据。"""
 
     entry: GymEntry
-    # 其他关联数据字段待补充
+    duration_gym_card: DurationGymCard | None
+    visit_gym_card: VisitGymCard | None
+    booking: Booking | None

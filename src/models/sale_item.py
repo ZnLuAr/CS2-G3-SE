@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Literal
 
 from src.models.contracts import SaleItemKind
 
@@ -28,7 +29,7 @@ class GymCardSaleItem:
 
     sale_item_id: int
     member_id: int
-    kind: str
+    kind: Literal["gym_card"]
     gym_card_product_id: int
 
 
@@ -38,5 +39,5 @@ class LessonPackageSaleItem:
 
     sale_item_id: int
     member_id: int
-    kind: str
+    kind: Literal["lesson_package"]
     lesson_package_product_id: int

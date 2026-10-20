@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from src.models.contracts import Actor
-from src.services.review_service import ReviewService
+from src.logic.review_logic import ReviewLogic
 
 
 class ReviewHandler:
@@ -17,13 +17,13 @@ class ReviewHandler:
 
     def __init__(
         self,
-        service: ReviewService,
+        logic: ReviewLogic,
         get_actor: Callable[[], Actor],
         *,
         timezone_name: str,
     ) -> None:
         """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
-        self._service = service
+        self._logic = logic
         self._get_actor = get_actor
         self._timezone_name = timezone_name
 

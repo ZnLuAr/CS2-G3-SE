@@ -60,12 +60,6 @@ class GymEntryRepository:
         返回：GymEntry | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("GymEntryRepository.get 尚未实现")
 
-    def get_view(self, entry_id: int) -> GymEntry | None:
-        """查询入场记录视图；未找到返回 None，由服务转成异常。
-
-        返回：GymEntry | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("GymEntryRepository.get_view 尚未实现")
-
     def get_by_booking(
         self, booking_id: int
     ) -> EntryAggregate | None:

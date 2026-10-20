@@ -12,7 +12,7 @@ from src.models.contracts import (
     PurchasedDurationGymCardCreate,
     PurchasedVisitGymCardCreate,
 )
-from src.models.gym_card import DurationGymCard, GymCard, VisitGymCard
+from src.models.gym_card import DurationGymCard, GymCard, GymCardAggregate, VisitGymCard
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -30,32 +30,32 @@ class GymCardRepository:
 
     def create_purchased_duration(
         self, data: PurchasedDurationGymCardCreate
-    ) -> DurationGymCard:
+    ) -> GymCardAggregate:
         """创建购买的期限型健身房卡；不自行提交。
 
-        返回：DurationGymCard；当前仅占位，调用抛 NotImplementedError。"""
+        返回：GymCardAggregate；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("GymCardRepository.create_purchased_duration 尚未实现")
 
     def create_purchased_visit(
         self, data: PurchasedVisitGymCardCreate
-    ) -> VisitGymCard:
+    ) -> GymCardAggregate:
         """创建购买的次卡型健身房卡；不自行提交。
 
-        返回：VisitGymCard；当前仅占位，调用抛 NotImplementedError。"""
+        返回：GymCardAggregate；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("GymCardRepository.create_purchased_visit 尚未实现")
 
     def create_gifted_duration(
         self, data: GiftedDurationGymCardCreate
-    ) -> DurationGymCard:
+    ) -> GymCardAggregate:
         """创建赠送的期限型健身房卡；不自行提交。
 
-        返回：DurationGymCard；当前仅占位，调用抛 NotImplementedError。"""
+        返回：GymCardAggregate；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("GymCardRepository.create_gifted_duration 尚未实现")
 
-    def get(self, gym_card_id: int) -> GymCard | None:
-        """查询健身房卡详情；未找到返回 None，由服务转成异常。
+    def get(self, gym_card_id: int) -> GymCardAggregate | None:
+        """查询健身房卡及对应类型详情；未找到返回 None，由服务转成异常。
 
-        返回：GymCard | None；当前仅占位，调用抛 NotImplementedError。"""
+        返回：GymCardAggregate | None；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("GymCardRepository.get 尚未实现")
 
     def lock(self, gym_card_id: int) -> GymCard | None:
@@ -104,10 +104,10 @@ class GymCardRepository:
 
     def list(
         self, query: GymCardQuery
-    ) -> tuple[list[GymCard], int]:
+    ) -> tuple[list[GymCardAggregate], int]:
         """按条件查询并返回健身房卡列表和总数。
 
-        返回：tuple[list[GymCard], int]；当前仅占位，调用抛 NotImplementedError。"""
+        返回：tuple[list[GymCardAggregate], int]；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("GymCardRepository.list 尚未实现")
 
     def list_eligible_ids(

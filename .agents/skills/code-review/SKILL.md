@@ -24,9 +24,9 @@ description: 代码审计——在 PR/合并前对代码改动进行全方位检
 
 明确标注且尚未进入本轮交付范围的 `NotImplementedError` 视为占位状态。已实现入口依赖该占位方法而无法完成本轮承诺流程时，报告为集成阻塞项，并指出应由哪个依赖交付解决。
 
-**审计范围**：业务服务层（services）、数据访问层（repositories）、数据模型（models）、CLI 界面。
+**审计范围**：用例编排（logic）、领域服务（services）、仓储（db）、数据模型（models）、CLI/TUI、Web API、浏览器前端及相关文档。
 
-**测试统一后续进行**：本项目测试在后续统一编写，代码审计不包含测试维度。
+**验证范围**：检查相关契约、单元、API 和浏览器测试的实际结果；数据库、事务和并发使用专用 MySQL 测试入口，按实际环境记录验证状态。
 
 ---
 
@@ -76,7 +76,7 @@ git diff --stat
    - 示例：
      - Agent 1: 审计 `src/services/member_service.py`
      - Agent 2: 审计 `src/services/product_service.py`
-     - Agent 3: 审计 `src/db/repositories/member_repo.py`
+     - Agent 3: 审计 `src/db/member_repo.py`
 
 2. **文档比对 agent**（1-2 个）：
    - Agent A: 检查 `docs/architecture.md` 是否同步改动
@@ -124,7 +124,7 @@ git diff --stat
   检查改动中的异常类型是否选对，不要用通用 `Exception` 或 `ValueError`。
 
 - [ ] **事务管理规范**
-  - 在**业务服务层**（`*_service.py`）提交或回滚事务
+  - 在**用例层**（`*_logic.py`）通过 `src/db/connection.py` 的 `transaction` 提交或回滚事务
   - **数据访问层**（`*_repo.py`）**禁止**提交事务
   ```bash
   # 检查 repo 文件是否违规提交
@@ -132,7 +132,7 @@ git diff --stat
   ```
   
   - 一个业务操作涉及多个表时，必须在同一个事务中完成
-  - 使用 `with session.begin():` 管理事务边界
+  - Service 显式接收同一 Session；Repository 执行参数绑定、SQL 和锁定读取，Logic 统一释放资源
 
 - [ ] **字段类型正确性**
   - ID 和编号：`int` 或 `str`（UUID）
@@ -162,18 +162,18 @@ git diff --stat
   参考 [architecture.md](../../../docs/architecture.md) 中的业务规则章节，检查：
   
   **产品规则**：
-  - 私教课产品续购是否正确接续（查询最晚到期日）
-  - 次卡是否从今天生效（不参与接续）
-  - 课节初始化是否正确（remaining = 赠课数，reserved = 0）
+  - 可接续期限健身房卡是否按最晚到期日确定生效期
+  - 次卡是否只维护入场余额
+  - 课包初始化是否正确（remaining_lessons = 购买课节数，reserved_lessons = 0）
   
   **门禁规则**：
   - 同一会员同一天是否去重（按 member_id + business_date 唯一）
-  - 私教课产品入场是否不扣次（accesses_used = 0）
-  - 次卡入场是否扣次（accesses_used = 1）
+  - 当日有效预约入场是否使用明确的预约来源
+  - 次卡入场是否只扣入场余额；期限卡来源是否按业务日期有效
   
   **预约规则**：
-  - 次卡是否禁止预约私教课
-  - 产品日期资格检查是否正确（valid_from <= 上课日期 < valid_until）
+  - 预约是否明确使用本人私教课包
+  - 课包日期资格是否正确（valid_from <= 上课日期，valid_until 可空，非空时上课日期 < valid_until）
   - 课节余额计算是否正确（available = remaining - reserved）
   - 时间冲突检查是否使用前含后不含区间（[start, end)）
   - 重复预约检查是否包括所有状态（含已取消）
@@ -190,7 +190,7 @@ git diff --stat
     - 会员：只能操作自己的数据
     - 教练：只能操作自己的课次和有权限的会员
     - 前台：可以代办会员业务
-    - 管理员：全部权限
+    - 管理员：按领域合同管理；个人体测明细仅会员本人及授权教练可见
   - 会员查询别人的数据是否返回 `NotFoundError`（不暴露是否存在）？
 
 - [ ] **防重复提交机制**
@@ -392,7 +392,8 @@ git diff --stat
   - 说不清楚就是味道
 
 - [ ] **职责划分是否清晰**
-  - Service 层：业务逻辑、权限校验、事务管理
+  - Logic 层：用例编排、Session 生命周期和共享事务
+  - Service 层：领域规则、权限与数据范围校验
   - Repository 层：数据库操作、查询构造
   - Model 层：数据结构定义、字段验证
   
@@ -482,7 +483,7 @@ git diff --stat
 需要全面检查文档与代码的一致性，使用 `/doc-audit` skill：
 
 - **`/doc-audit`**：全面审计架构文档与代码的双向一致性
-  - 逐节比对 docs/architecture.md 与实际代码
+  - 逐节比对 docs/architecture.md、docs/architecture/backend.md、docs/architecture/frontend.md 与实际代码
   - 检查类型定义、函数签名、业务规则的匹配性
   - 使用 sub-agent 并行审计各模块，生成详细报告
   - 适用于：Phase 验收、大规模重构后、文档更新后的验证
@@ -505,7 +506,7 @@ git diff --stat
 
 - Agent 1: src/services/member_service.py
 - Agent 2: src/services/product_service.py
-- Agent 3: src/db/repositories/member_repo.py
+- Agent 3: src/db/member_repo.py
 - Agent 4: docs/architecture.md（文档比对）
 
 ### 汇总结果
@@ -517,7 +518,7 @@ git diff --stat
 
 **需修正**：
 - 业务逻辑：`member_service.py:142` 返回了 `None`，应抛出 `NotFoundError`
-- 事务管理：`member_repo.py:88` 违规提交事务，应由 service 层控制
+- 事务管理：`member_repo.py:88` 违规提交事务，应由 Logic 层控制
 - 并发控制：`booking_service.py:210` 未在锁内重新读取课次容量
 
 **设计优雅度建议**（可选，不阻塞提交）：
@@ -528,7 +529,7 @@ git diff --stat
 
 **阻塞项**：
 - 安全性：`auth_service.py:65` 密码使用明文存储，必须使用哈希算法
-- 业务逻辑：`booking_service.py:180` 次卡可以预约私教课，违反业务规则
+- 业务逻辑：`booking_service.py:180` 使用不属于该会员的课包预约，违反归属规则
 ```
 
 **提交策略：**
@@ -553,7 +554,6 @@ git diff --stat
   
   <body>
   
-  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
   ```
   
   type: feat / fix / docs / style / refactor / test / chore  
@@ -616,6 +616,8 @@ git diff | grep -nE "(^\+.*\bprint\()|TODO|FIXME"
 
 ##  项目特定参考
 
-- [architecture.md](../../../docs/architecture.md) — 完整的系统设计与业务规则
+- [architecture.md](../../../docs/architecture.md) — 系统架构总览
+- [backend.md](../../../docs/architecture/backend.md) — 后端合同与业务规则
+- [frontend.md](../../../docs/architecture/frontend.md) — 浏览器端交互合同
 - [project-standards.md](../../../docs/project-standards.md) — 项目开发规范
 - [AGENTS.md](../../../AGENTS.md) — 协作与说明要求

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from src.models.contracts import Actor
-from src.services.auth_service import AuthService
+from src.logic.auth_logic import AuthLogic
 
 
 class AuthHandler:
@@ -17,14 +17,14 @@ class AuthHandler:
 
     def __init__(
         self,
-        service: AuthService,
+        logic: AuthLogic,
         get_actor: Callable[[], Actor],
         set_actor: Callable[[Actor], None],
         logout: Callable[[], None],
         *, timezone_name: str,
     ) -> None:
         """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
-        self._service = service
+        self._logic = logic
         self._get_actor = get_actor
         self._set_actor = set_actor
         self._logout = logout

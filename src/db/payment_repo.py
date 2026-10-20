@@ -40,6 +40,10 @@ class PaymentRepository:
         """按销售订单读取唯一收款。"""
         raise NotImplementedError("PaymentRepository.get_by_order 尚未实现")
 
+    def get(self, payment_id: int) -> Payment | None:
+        """按收款编号读取记录；不存在返回 None，由服务转换异常。"""
+        raise NotImplementedError("PaymentRepository.get 尚未实现")
+
     def list(self, query: PaymentQuery) -> tuple[list[Payment], int]:
         """按时间、会员和方式筛选，再按 paid_at、id 降序稳定分页，返回（当页记录, 总数）。"""
         raise NotImplementedError("PaymentRepository.list 尚未实现")

@@ -31,7 +31,7 @@ class ConsumptionRepository:
         self,
         *,
         booking_id: int,
-        membership_id: int,
+        lesson_package_id: int,
         lessons_used: int,
         completed_at: datetime,
         operator_id: int,

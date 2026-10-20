@@ -1,4 +1,4 @@
-"""数据库错误的类型。当前仅声明字段与签名，方法尚未实现。"""
+"""数据库错误与提交结果核实信息。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from src.errors.base import GymError
 
 
 class StorageError(GymError):
-    """数据库操作失败，由服务负责清理本次事务和资源。"""
+    """数据库操作失败；业务事务和会话由调用方 Logic 管理。"""
 
 
 class OutcomeUnknownError(StorageError):
@@ -42,26 +42,5 @@ class InitializationError(StorageError):
     ) -> None:
         super().__init__(message)
         self.completed_tables = completed_tables
-        self.failed_step = failed_step
-        self.outcome_unknown = outcome_unknown
-
-
-class MigrationError(StorageError):
-    """数据库迁移失败，保存已经确认完成的步骤和结果状态。"""
-
-    completed_steps: tuple[str, ...]
-    failed_step: str
-    outcome_unknown: bool
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        completed_steps: tuple[str, ...],
-        failed_step: str,
-        outcome_unknown: bool = False,
-    ) -> None:
-        super().__init__(message)
-        self.completed_steps = completed_steps
         self.failed_step = failed_step
         self.outcome_unknown = outcome_unknown
