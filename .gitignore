@@ -10,8 +10,11 @@ htmlcov/
 dist/
 build/
 
-# ---- Node / 前端（如后续用到） ----
+# ---- Node / 前端 ----
 node_modules/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
 
 # ---- IDE ----
 .idea/
@@ -31,6 +34,7 @@ tmp/
 # ---- 环境变量与密钥（严禁提交） ----
 .env
 .env.*
+!frontend/.env.example
 config.json
 config.test.json
 !config.json.example
@@ -43,3 +47,4 @@ CLAUDE.md
 # ---- 内部文档 ----
 docs/archive/
 docs/internal/
+docs/design-drafts/

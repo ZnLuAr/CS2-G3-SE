@@ -7,6 +7,70 @@
 
 ## 测试思路与策略
 
+### [2026-10-20] 架构、骨架与全文档最终审计
+
+- **范围与方法**：按 `code-review` 分模块检查后端领域与基础设施、浏览器代码，按 `doc-audit` 双向比较总览、前后端分册、公开签名、数据字段和实际文件，再按 `doc-writing` 修正参与指引。新增功能均有入口与合同，业务占位和真实执行结果分别记录。
+- **发现与修复**：补三个新仓储、内部预约与通知协作、统一候补结束时刻、消课持久化及四个销售来源复合外键；修正旧卡字段、停用限制、归档与关联说明。健身房卡详情与列表改用根记录和类型子表聚合，连接层缺表检查加入回归覆盖。补会员资料订单、签到和结束课次入口；修复退出迟到覆盖新会话、大整数编号丢精度、默认 HTTP 404/405 错误格式与空版本表错误转换。
+- **后端验证**：仓库根目录执行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`，93 项通过、1 项 MySQL 用例排除，其中 API 22 项、合同 10 项。另执行 `python -B -X utf8 -m unittest discover -s tests/contracts -p test_backend_contracts.py -v`，9 项通过。测试覆盖来源外键、35 表初始化声明、HTTP 大编号/非法编号/统一错误、Worker 默认启停及超时重试、快照交换期间刷新请求保留、聚合数据类字段和连接层缺表处理。
+- **前端验证**：`frontend/` 下 `npm test` 56 项通过、`npm run build` 通过。启动 `npm run dev` 后，在另一终端设置 `PLAYWRIGHT_CHANNEL=msedge` 并执行 `npm run test:e2e -- --workers=1`，5 项通过且进程以 0 退出；认证响应使用模拟数据。浏览器端尚未覆盖身份恢复重试成功后的导航，业务认证仍未与真实后端联调。
+- **静态验证**：Python `compileall` 通过。24 份 Markdown、173 处本地文件及标题链接通过，包含总览按负责人定位与后端会员建档查阅路径；CSV 223 项、12 列、ID 唯一、引用有效、依赖无环。清除 `AGENTS.md` 行尾空格后 `git diff --check` 通过。本地设计草稿不纳入提交。
+- **环境提示与限制**：FastAPI TestClient 提示 HTTPX 兼容方式弃用，pytest 缓存目录权限警告均未影响断言结果。真实 MySQL DDL、CHECK/外键执行、事务回滚、锁与并发、真实登录和领域端到端流程尚未验证；生产反向代理配置明确为待部署验证示例。
+
+### [2026-10-20] 测试迁移与认证回归
+
+- **后端分类回归**：使用 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`，契约、单元和 API 共 72 项通过，1 项 MySQL 专用用例按默认模式排除。使用 `python -B -X utf8 -m unittest discover -s tests/contracts -p test_backend_contracts.py -v`，9 项契约测试通过。
+- **JWT 回归发现**：补齐 FastAPI、PyJWT、HTTPX 后，原认证测试中正常会员令牌的 `/me` 返回 401。PyJWT `require` 对 `member_id` 或 `coach_id` 的 null 值视作缺失；代码合同要求声明存在但允许合法空档案值。
+- **修复与覆盖**：JWT 必填集合只包含非空声明，应用层检查两个档案声明都存在，再按角色校验正整数或 null。API 测试现覆盖会员、教练、前台、管理员令牌往返及档案声明缺失，`tests/api` 共 10 项通过。
+- **其他检查**：Python `compileall` 通过；`git diff --check` 仅报告既有 `AGENTS.md:23` 行尾空格。真实 MySQL 未连接。
+- **验证边界**：API 使用 Logic 替身验证 HTTP/JWT 行为；认证 Logic 仍是占位。浏览器测试不代替真实业务 API 联调；MySQL 初始化、事务及并发用例尚未执行。
+
+### [2026-10-20] 浏览器骨架构建与路由回归
+
+- **安装**：在 `frontend/` 执行 `npm ci --cache ../tmp/npm-cache`，安装完成后 npm 报告 0 项漏洞；Node 支持范围与 jsdom、Vitest 要求统一。
+- **构建与单元测试**：执行 `npm run build`，TypeScript 检查及 Vite 生产构建通过；执行 `npm test -- --reporter=dot`，5 个测试文件、33 项通过。
+- **浏览器测试**：在一个终端执行 `npm run dev`，另一个终端设置 `PLAYWRIGHT_CHANNEL=msedge` 并执行 `npm run test:e2e -- --workers=1`；5 项 Edge 浏览器测试通过，测试进程正常退出并复用 Vite 服务。
+- **发现与修复**：空 API 基址回退到同源 `/api`；令牌恢复请求遇到 `action=exit` 时，路由守卫优先保留服务不可用页面；退出错误也清除凭据并保留安全提示。新增对应单元和浏览器用例。
+- **验证边界**：浏览器认证路由使用模拟响应，认证 Logic 和业务页仍为占位；真实后端登录、业务 API、MySQL 与并发验收未运行。
+
+### [2026-10-20] requirements 分组迁移检查
+
+- **检查范围**：`requirements/core.txt`、`web.txt`、`dev.txt`、`all.txt` 的组间引用，以及文档和测试入口中的安装路径。
+- **依赖结构检查**：`all.txt` 组合 `core.txt` 与 `web.txt`；各被引用文件均存在；`web.txt` 只声明 Web 运行依赖，需和 `core.txt` 一起安装；`dev.txt` 只声明测试工具。
+- **路径检查**：仓库内未发现旧根目录依赖文件路径的实际引用。
+- **回归结果**：默认单元测试 62 项通过、1 项跳过、1 项排除；`compileall` 通过；`git diff --check` 除既有 `AGENTS.md` 行尾空格外无新增问题。
+
+### [2026-10-19] Web API 与周期 Worker 骨架回归
+
+- **检查范围**：新增 Web 登录/身份/退出路由、JWT 解析、App ASGI 生命周期、周期调度、配置解析和既有 CLI/Logic 骨架。
+- **默认单元测试**：仓库根目录执行 `python -B -X utf8 -m src.cmd.test unit`，62 项通过、1 项跳过、1 项 MySQL 专用用例按模式排除。直接运行 `pytest` 会触发 MySQL fixture 的显式模式检查，不作为默认测试入口。
+- **语法检查**：`python -B -X utf8 -m compileall -q main.py src tests` 通过。
+- **API 测试状态**：`tests/test_web_api.py` 因环境缺少 FastAPI 与 PyJWT 而跳过；HTTPX 已安装。API 路由、令牌签发和 ASGI 生命周期尚未在当前环境执行。
+- **验证限制**：未连接 MySQL，未验证真实 ASGI 服务、数据库启动关闭、并发或领域流程。
+
+### [2026-10-19] 后端文档审计修正回归
+
+- **检查范围**：Logic 注解名称、候补历史约束、候补系统 Service 签名、App/Worker 生命周期状态和源码文档引用。
+- **审计与修复**：审计确认 119 个用户 Logic 签名、现有 Service 合同和 v4 版本声明一致；发现五个 Logic 模块缺类型导入、候补历史唯一约束固定了未确认规则、递补操作缺 Service 合同，以及生命周期描述超前于代码。已补齐导入和系统方法占位、移除唯一约束，并把 API/Worker 标为目标合同。
+- **契约测试**：`python -B -X utf8 -m unittest discover -s tests -p test_contract_consistency.py -v`，9 项通过。新增检查确保 Logic 注解引用可解析，且 DDL 与后端分册都不以 `(member_id, session_id)` 唯一索引决定候补历史规则。
+- **单元和语法检查**：`python -B -X utf8 -m src.cmd.test unit`，55 项通过，1 项 MySQL 专用用例排除；`python -B -m compileall -q main.py src tests` 通过。
+- **验证限制**：未连接 MySQL，未验证 v4 DDL 执行、事务和并发；Web API、Worker、TUI 及真实业务流程仍未实现。
+
+### [2026-10-19] v4 与 Logic 骨架同步回归
+
+- **检查范围**：后端合同中的公共类型、Service/Repository 签名、Logic 映射、SQL 字段与版本；CLI 资源释放和基础交互格式化。
+- **契约测试**：仓库根目录执行 `python -B -X utf8 -m unittest discover -s tests -p test_contract_consistency.py -v`，7 项全部通过。检查覆盖 16 个 Service 的 Session 参数、Logic 入口映射、v4 SQL 和公共类型。
+- **单元测试**：执行 `python -B -X utf8 -m src.cmd.test unit`，53 项通过，1 项需显式 MySQL 模式的用例按测试入口规则排除。
+- **静态检查**：`python -B -m compileall -q main.py src tests` 通过；格式化器所读 View 字段与 `contracts.py` 声明核对无缺失。
+- **验证限制**：未连接真实 MySQL。DDL、外键、CHECK、事务隔离、锁竞争和业务流程需在独立 MySQL 测试库验证。直接运行完整 `pytest tests` 会触发 MySQL fixture 的显式模式保护；应使用 `python -m src.cmd.test unit` 或带配置的 `mysql/all` 模式。
+
+### [2026-10-19] 架构分册迁入后的合同基线
+
+- **检查范围**：后端分册接口与 SQL、前端功能 ID 和权限入口、CSV 编号及依赖、项目 Markdown 本地链接、契约测试文档路径。
+- **清单结果**：`feature-list.csv` 共 223 行数据、12 列、223 个唯一 ID；类别分别为后端业务 96、前端 98、工程 17、测试 9、扩展 3。独立审计核对原有 100 个 ID 的负责人和状态均保留或可追溯，依赖无环。
+- **文档结果**：后端 16 段 SQL 代码块迁入后保持原文；前端引用的功能 ID 均存在。17 份项目 Markdown 的本地文件和标题链接检查通过。
+- **契约测试**：仓库根目录执行 `python -B -X utf8 -m unittest discover -s tests -p test_contract_consistency.py -v`，7 项运行、4 个测试方法通过、3 个测试方法中共 19 个断言失败。差异涉及新增 Logic 与领域数据类、`join_waitlist` 和 `waitlist_entry` 操作值、Service 的 Session 参数以及 v4 SQL 尚未进入源码。预约重复检查顺序、身份锁合同、结构版本消费者和当前导航测试通过；未删减这些断言。
+- **其他检查**：`python -B -X utf8 -m compileall -q main.py src tests` 通过。当前 SQL 仍为结构版本 3；未连接 MySQL，未执行 v4 建表、事务、并发或业务流程验证。
+
 ### [2026-09-28] 契约测试从 10 个断言失败修复到 7/7 全通过
 
 - **起点**：09-25 记录的基线——文档已是 v3、代码仍是 v2，`test_contract_consistency.py` 出现 10 个断言失败。本轮目标是让代码追上文档，把 7 个测试方法全部修绿。

@@ -6,7 +6,7 @@ version: 1.0.0
 
 # 文档审计 Skill
 
-全面审计架构文档（docs/architecture.md）与实际代码的一致性。**不追求速度，追求全面和准确**。
+全面审计架构总览（docs/architecture.md）、后端分册（docs/architecture/backend.md）、前端分册（docs/architecture/frontend.md）与实际代码的一致性。**不追求速度，追求全面和准确**。
 
 ## 审计目标
 
@@ -33,7 +33,7 @@ version: 1.0.0
 ## 审计流程
 
 ### 1. 准备阶段
-- 读取完整的 docs/architecture.md
+- 读取架构总览和前后端分册，区分目标合同、占位骨架与已实现行为
 - 识别所有模块章节
 - 提取每个模块的接口定义（类、函数、类型）
 
@@ -52,7 +52,7 @@ version: 1.0.0
   - 方法文档字符串是否描述了相同的业务规则
 
 - **异常检查**：
-  - 文档中提到的异常类型是否在 src/errors/exceptions.py 中定义
+  - 文档中提到的异常类型是否在 src/errors/ 中定义并导出
   - 抛出条件是否在代码注释中说明
 
 - **业务规则检查**：
@@ -67,7 +67,7 @@ version: 1.0.0
 
 #### 2.2 代码 → 文档方向
 - **公共接口检查**：
-  - src/services/ 中所有公共方法是否在文档中说明
+  - src/logic/、src/services/、src/db/、src/web/ 和 frontend/src/ 的公共合同是否在对应分册中说明
   - src/models/contracts.py 中所有导出类型是否在文档中提及
 
 - **遗漏检查**：
