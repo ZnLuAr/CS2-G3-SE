@@ -16,10 +16,12 @@ T = TypeVar("T")
 _WORDS = {
     "member": "会员", "coach": "教练", "receptionist": "前台", "admin": "管理员",
     "monthly": "月产品", "quarterly": "季产品", "yearly": "年产品", "count": "入场次卡",
-    "active": "未作废", "void": "已作废", "private": "私教", "scheduled": "已排课",
+    "active": "有效", "archived": "已归档", "void": "已作废", "private": "私教", "scheduled": "已排课",
     "completed": "已完成", "cancelled": "已取消", "reserved": "已预约", "checked_in": "已签到",
     "no_show": "缺席", "available": "可用", "maintenance": "维修中", "retired": "已报废",
-    "cash": "现金", "card": "刷卡", "transfer": "转账",
+    "cash": "现金", "card": "刷卡", "transfer": "转账", "gym_card": "健身房卡",
+    "lesson_package": "私教课包", "duration_gym_card": "期限卡", "visit_gym_card": "入场次卡",
+    "booking": "私教预约",
 }
 
 
@@ -79,36 +81,45 @@ def format_member(member: MemberView, *, timezone_name: str) -> str:
     """返回中文展示文本。"""
     details = _lines([
         ("编号", member.id),
-        ("账号编号", member.account_id),
         ("名称", member.name),
         ("电话", _phone(member.phone)),
-        ("启用", member.is_active),
+        ("状态", _WORDS[member.status]),
+        ("归档时刻", member.archived_at),
+        ("创建时刻", member.created_at),
+        ("更新时间", member.updated_at),
     ], timezone_name)
     return details
 
 
 def format_entry(view: EntryView, *, timezone_name: str) -> str:
     """返回中文展示文本。"""
-    details = _lines([
+    source = view.authorization
+    source_id = getattr(source, "gym_card_id", None)
+    if source_id is None:
+        source_id = getattr(source, "booking_id", None)
+    values = [
         ("编号", view.id),
         ("会员编号", view.member_id),
-        ("会员卡编号", view.membership_id),
         ("入场日期", view.business_date),
         ("首次入场时刻", view.entered_at),
-        ("当日扣次", view.accesses_used),
+        ("入场来源", _WORDS[source.kind]),
+        ("来源编号", source_id),
         ("操作人编号", view.operator_id),
-    ], timezone_name)
-    return details
+    ]
+    if source.kind == "visit_gym_card":
+        values.insert(-1, ("剩余入场次数", source.remaining_entries))
+    return _lines(values, timezone_name)
 
 
 def format_coach(view: CoachView, *, timezone_name: str) -> str:
     """返回中文展示文本。"""
     details = _lines([
         ("编号", view.id),
-        ("账号编号", view.account_id),
         ("名称", view.name),
-        ("专长", view.specialty),
+        ("电话", _phone(view.phone)),
         ("启用", view.is_active),
+        ("创建时刻", view.created_at),
+        ("更新时间", view.updated_at),
     ], timezone_name)
     return details
 
@@ -130,8 +141,10 @@ def format_room(view: RoomView, *, timezone_name: str) -> str:
     details = _lines([
         ("编号", view.id),
         ("名称", view.name),
-        ("容量", view.capacity),
+        ("位置", view.location),
         ("启用", view.is_active),
+        ("创建时刻", view.created_at),
+        ("更新时间", view.updated_at),
     ], timezone_name)
     return details
 
@@ -140,13 +153,14 @@ def format_session(view: SessionView, *, timezone_name: str) -> str:
     """返回中文展示文本。"""
     details = _lines([
         ("编号", view.id),
-        ("课程编号", view.course_id),
+        ("课程编号", view.course.id),
         ("课程", view.course_name),
         ("类型", _WORDS[view.kind]),
-        ("教练编号", view.coach_id),
-        ("教练", view.coach_name),
-        ("场地编号", view.room_id),
-        ("场地", view.room_name),
+        ("时长（分钟）", view.duration_minutes),
+        ("教练编号", view.coach.id),
+        ("教练", view.coach.name),
+        ("场地编号", view.room.id),
+        ("场地", view.room.name),
         ("开始时刻", view.starts_at),
         ("结束时刻", view.ends_at),
         ("容量", view.capacity),
@@ -163,7 +177,7 @@ def format_booking(view: BookingView, *, timezone_name: str) -> str:
         ("编号", view.id),
         ("会员编号", view.member_id),
         ("会员", view.member_name),
-        ("会员卡编号", view.membership_id),
+        ("私教课包编号", view.lesson_package_id),
         ("状态", _WORDS[view.status]),
         ("预约时刻", view.booked_at),
         ("签到时刻", view.checked_in_at),
@@ -240,7 +254,7 @@ def format_payment(view: PaymentView, *, timezone_name: str) -> str:
     """返回中文展示文本。"""
     details = _lines([
         ("编号", view.id),
-        ("会员卡编号", view.membership_id),
+        ("销售单编号", view.sale_order_id),
         ("会员编号", view.member_id),
         ("金额", view.amount),
         ("收款方式", _WORDS[view.method]),
@@ -255,23 +269,39 @@ def format_revenue(view: RevenueView, *, timezone_name: str) -> str:
     details = _lines([
         ("起始时刻（含）", view.window.start),
         ("结束时刻（不含）", view.window.end),
-        ("收款笔数", view.payment_count),
+        ("收款笔数", view.total_payment_count),
         ("总金额", view.total_amount),
     ], timezone_name)
-    return details
+    breakdowns = "\n".join(
+        f"{_WORDS[item.sale_kind]}：{item.payment_count} 笔，{_value(item.total_amount, timezone_name)} 元"
+        for item in view.breakdowns
+    )
+    return details + ("\n" + breakdowns if breakdowns else "")
 
 
 def format_membership_stats(view: MembershipStats, *, timezone_name: str) -> str:
     """返回中文展示文本。"""
     details = _lines([
         ("统计时刻", view.as_of),
-        ("启用会员", view.active_members),
-        ("停用会员", view.inactive_members),
-        ("有效卡", view.valid_cards),
-        ("到期卡", view.expired_cards),
-        ("未来生效卡", view.future_cards),
-        ("作废卡", view.void_cards),
-        ("用尽次卡", view.exhausted_cards),
+        ("统计日期", view.business_date),
+        ("有效会员档案", view.active_member_profiles),
+        ("已归档会员档案", view.archived_member_profiles),
+        ("有效期限卡", view.valid_duration_gym_card_count),
+        ("可用入场次卡", view.usable_visit_gym_card_count),
+        ("有门禁资格的会员", view.members_with_gym_access),
+        ("未生效期限卡", view.future_duration_gym_cards),
+        ("过期期限卡", view.expired_duration_gym_cards),
+        ("用尽入场次卡", view.exhausted_visit_gym_cards),
+        ("作废健身房卡", view.void_gym_cards),
+        ("剩余入场次数", view.remaining_visit_entries),
+        ("有效私教课包", view.active_lesson_package_count),
+        ("未生效课包", view.future_lesson_packages),
+        ("过期课包", view.expired_lesson_packages),
+        ("作废课包", view.void_lesson_packages),
+        ("用尽课包", view.exhausted_lesson_packages),
+        ("剩余课节", view.remaining_lessons),
+        ("可用课节", view.available_lessons),
+        ("已预约课节", view.reserved_lessons),
     ], timezone_name)
     return details
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from src.models.contracts import GiftActivationPolicy
+
 
 @dataclass(frozen=True, kw_only=True)
 class LessonPackageGiftRule:
@@ -15,7 +17,7 @@ class LessonPackageGiftRule:
     active_trigger_product_id: int | None
     reward_gym_card_product_id: int
     reward_quantity: int
-    activation_policy: str
+    activation_policy: GiftActivationPolicy
     version: int
     is_active: bool
     created_at: datetime

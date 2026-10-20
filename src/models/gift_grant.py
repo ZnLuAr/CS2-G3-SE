@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from src.models.contracts import GiftActivationPolicy
+from src.models.gym_card import GymCardAggregate
+
 
 @dataclass(frozen=True, kw_only=True)
 class GiftGrant:
@@ -17,7 +20,7 @@ class GiftGrant:
     member_id: int
     reward_gym_card_product_id: int
     gift_rule_version: int
-    activation_policy: str
+    activation_policy: GiftActivationPolicy
     reward_product_name: str
     reward_valid_days: int
     sequence: int
@@ -30,4 +33,4 @@ class GiftGrantAggregate:
     """赠送记录聚合，包含赠送记录及关联的健身房卡信息。"""
 
     grant: GiftGrant
-    # 其他关联数据字段待补充
+    gym_card: GymCardAggregate

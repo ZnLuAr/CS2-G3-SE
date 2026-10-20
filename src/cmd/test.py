@@ -106,7 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 1
     try:
         if importlib.util.find_spec("pytest") is None:
-            raise InvalidInputError("请先安装测试依赖：python -m pip install -r requirements-dev.txt")
+            raise InvalidInputError(
+                "请先安装测试依赖：python -m pip install -r requirements/all.txt -r requirements/dev.txt"
+            )
         env = os.environ.copy()
         for key in ("DB_PASSWORD", "GYM_TEST_CONFIG", "GYM_TEST_MODE", "GYM_TEST_LOCK_OWNER"):
             env.pop(key, None)

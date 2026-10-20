@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from src.models.contracts import Actor
-from src.services.attendance_service import AttendanceService
+from src.logic.attendance_logic import AttendanceLogic
 
 
 class AttendanceHandler:
@@ -17,13 +17,13 @@ class AttendanceHandler:
 
     def __init__(
         self,
-        service: AttendanceService,
+        logic: AttendanceLogic,
         get_actor: Callable[[], Actor],
         *,
         timezone_name: str,
     ) -> None:
         """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
-        self._service = service
+        self._logic = logic
         self._get_actor = get_actor
         self._timezone_name = timezone_name
 
@@ -45,13 +45,13 @@ class AttendanceHandler:
     def complete(self) -> None:
         """组织 AttendanceService.complete 的交互步骤。
 
-        展示课次和本次扣 1 节，确认“结算后首版不支持更正”再调用服务；成功展示消费记录。
+        展示课次和扣除的一节课，确认结算后再调用服务；成功展示消费记录。
         异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
         raise NotImplementedError("AttendanceHandler.complete 尚未实现")
 
     def mark_no_show(self) -> None:
         """组织 AttendanceService.mark_no_show 的交互步骤。
 
-        展示课次并说明不扣节数，确认“标记缺席后首版不能补签”再调用服务。
+        展示课次并说明不扣节数，确认标记缺席后再调用服务。
         异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
         raise NotImplementedError("AttendanceHandler.mark_no_show 尚未实现")

@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
+
+from src.models.contracts import GymCardKind, GymCardStartPolicy
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -12,7 +15,7 @@ class GymCardProduct:
     """对应 gym_card_products 表的存储字段；尚未配置 ORM 映射。"""
 
     id: int
-    kind: str
+    kind: GymCardKind
     name: str
     price: Decimal
     is_sale_enabled: bool
@@ -25,9 +28,9 @@ class DurationGymCardProduct:
     """对应 duration_gym_card_products 表的存储字段；尚未配置 ORM 映射。"""
 
     product_id: int
-    kind: str
+    kind: Literal["duration"]
     valid_days: int
-    start_policy: str
+    start_policy: GymCardStartPolicy
     is_gift_enabled: bool
 
 
@@ -36,5 +39,5 @@ class VisitGymCardProduct:
     """对应 visit_gym_card_products 表的存储字段；尚未配置 ORM 映射。"""
 
     product_id: int
-    kind: str
+    kind: Literal["visit"]
     total_entries: int

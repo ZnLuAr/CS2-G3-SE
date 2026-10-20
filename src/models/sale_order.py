@@ -7,6 +7,11 @@ from datetime import datetime
 from decimal import Decimal
 
 from src.models.contracts import SaleKind
+from src.models.gift_grant import GiftGrant
+from src.models.gym_card import GymCardAggregate
+from src.models.lesson_package import LessonPackage
+from src.models.payment import Payment
+from src.models.sale_item import SaleItem
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -27,4 +32,8 @@ class SaleOrderAggregate:
     """销售订单聚合，包含订单及其关联的销售项目、付款等信息。"""
 
     order: SaleOrder
-    # 其他关联数据字段待补充
+    items: tuple[SaleItem, ...]
+    payment: Payment
+    gym_cards: tuple[GymCardAggregate, ...]
+    lesson_packages: tuple[LessonPackage, ...]
+    gift_grants: tuple[GiftGrant, ...]

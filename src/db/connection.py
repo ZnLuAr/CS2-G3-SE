@@ -13,7 +13,19 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-CURRENT_SCHEMA_VERSION: int = 3
+CURRENT_SCHEMA_VERSION: int = 4
+REQUIRED_SCHEMA_TABLES: tuple[str, ...] = (
+    "schema_versions", "accounts", "members", "coaches",
+    "member_account_links", "coach_account_links",
+    "courses", "course_tags", "rooms", "course_sessions", "notifications",
+    "equipment", "maintenance_records", "body_measurements", "operation_records",
+    "gym_card_products", "duration_gym_card_products", "visit_gym_card_products",
+    "lesson_package_products", "lesson_package_gift_rules",
+    "sale_orders", "sale_items", "gym_card_sale_items", "lesson_package_sale_items",
+    "payments", "gift_grants",
+    "gym_cards", "duration_gym_cards", "visit_gym_cards", "lesson_packages",
+    "bookings", "consumption_records", "waitlist_entries", "gym_entries", "reviews",
+)
 
 
 def create_engine(settings: AppSettings) -> Engine:
@@ -81,27 +93,14 @@ def check_connection(engine: Engine) -> None:
         raise StorageError("数据库连接失败") from exc
 
 
-def check_schema(engine: Engine, required_version: int = 3) -> None:
-    """核对结构版本；版本不符时拒绝普通启动，不自动改表。"""
+def check_schema(engine: Engine, required_version: int = CURRENT_SCHEMA_VERSION) -> None:
+    """核对必需表与结构版本；不符合时拒绝普通启动，不自动改表。"""
     from sqlalchemy import text
     from src.errors.business import InvalidState
     from src.errors.storage import StorageError
 
     try:
         with engine.connect() as conn:
-            # v3 的 31 张表（与 cmd/db.py 的 expected_tables 保持一致）
-            required_tables = {
-                "schema_versions", "accounts", "members", "coaches",
-                "member_account_links", "coach_account_links",
-                "courses", "rooms", "course_sessions",
-                "equipment", "maintenance_records", "body_measurements", "operation_records",
-                "gym_card_products", "duration_gym_card_products", "visit_gym_card_products",
-                "lesson_package_products", "lesson_package_gift_rules",
-                "sale_orders", "sale_items", "gym_card_sale_items", "lesson_package_sale_items",
-                "payments", "gift_grants",
-                "gym_cards", "duration_gym_cards", "visit_gym_cards", "lesson_packages",
-                "bookings", "gym_entries", "reviews",
-            }
             result = conn.execute(
                 text(
                     """
@@ -117,7 +116,7 @@ def check_schema(engine: Engine, required_version: int = 3) -> None:
                 raise InvalidState(
                     "数据库未初始化，请先运行：python -m src.cmd.db init"
                 )
-            missing = sorted(required_tables - actual)
+            missing = sorted(set(REQUIRED_SCHEMA_TABLES) - actual)
             if missing:
                 raise InvalidState(f"数据库结构不完整，缺少：{', '.join(missing)}")
 
@@ -134,7 +133,7 @@ def check_schema(engine: Engine, required_version: int = 3) -> None:
                 if current_version < required_version:
                     raise InvalidState(
                         f"数据库版本过低：当前 {current_version}，需要 {required_version}；"
-                        "请先运行 python -m src.cmd.db migrate"
+                        "请使用符合目标结构版本的数据库"
                     )
                 raise InvalidState(
                     f"数据库版本不匹配：当前 {current_version}，需要 {required_version}"

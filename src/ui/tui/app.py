@@ -1,25 +1,25 @@
-"""可选 TUI 的入口签名。当前仅声明字段与签名，方法尚未实现。"""
+"""可选终端界面的入口合同，方法为占位。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from src.app import ServiceBundle
+from src.logic import LogicBundle
 from src.models.contracts import Actor
 
 
 class GymTUI:
-    """通过共用业务服务实现可选界面，后续按时间安排页面。"""
+    """可选终端界面，共用 Logic 用例入口；页面与操作为占位。"""
 
     def __init__(
         self,
-        services: ServiceBundle,
+        logic_bundle: LogicBundle,
         get_actor: Callable[[], Actor],
         set_actor: Callable[[Actor], None],
         logout: Callable[[], None],
         *, timezone_name: str,
     ) -> None:
-        """接收共用服务和身份回调；当前不导入任何 TUI 库。"""
+        """接收共用用例入口、身份回调与时区配置。"""
         raise NotImplementedError("GymTUI.__init__ 尚未实现")
 
     def run(self) -> int:

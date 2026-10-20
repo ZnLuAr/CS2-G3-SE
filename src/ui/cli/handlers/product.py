@@ -1,8 +1,4 @@
-"""产品、销售与入场相关的 CLI 交互接口。构造函数已实现，业务操作仍为占位。
-
-v3 将 v2 的 ProductService 拆成健身房卡产品、私教课包产品、销售、权益查询和门禁
-五个服务。本 handler 持有这些 v3 服务的引用，方法仍为占位。
-"""
+"""产品、销售与入场相关的 CLI 交互接口；业务操作仍为占位。"""
 
 from __future__ import annotations
 
@@ -12,15 +8,14 @@ from typing import TYPE_CHECKING
 from src.models.contracts import Actor
 
 if TYPE_CHECKING:
-    from src.services.access_service import AccessService
-    from src.services.entitlement_query_service import EntitlementQueryService
-    from src.services.gym_card_product_service import GymCardProductService
-    from src.services.lesson_package_product_service import LessonPackageProductService
-    from src.services.sales_service import SalesService
+    from src.logic.access_logic import AccessLogic
+    from src.logic.entitlement_logic import EntitlementLogic
+    from src.logic.product_logic import ProductLogic
+    from src.logic.sales_logic import SalesLogic
 
 
 class ProductHandler:
-    """收集输入、确认操作、调用业务服务并展示结果。
+    """收集输入、确认操作、调用 Logic 用例并展示结果。
 
     get_actor 每次取得当前身份；不接收数据库会话，不实现业务规则。
     各操作返回 None 表示交互完成；当前只声明接口，调用即报未实现。
@@ -28,21 +23,19 @@ class ProductHandler:
 
     def __init__(
         self,
-        gym_card_products: GymCardProductService,
-        lesson_package_products: LessonPackageProductService,
-        sales: SalesService,
-        entitlements: EntitlementQueryService,
-        access: AccessService,
+        product_logic: ProductLogic,
+        sales_logic: SalesLogic,
+        entitlement_logic: EntitlementLogic,
+        access_logic: AccessLogic,
         get_actor: Callable[[], Actor],
         *,
         timezone_name: str,
     ) -> None:
-        """接收 v3 拆分后的各服务、身份回调及 App 提供的门店时区。"""
-        self._gym_card_products = gym_card_products
-        self._lesson_package_products = lesson_package_products
-        self._sales = sales
-        self._entitlements = entitlements
-        self._access = access
+        """接收产品、销售、权益与门禁用例、身份回调及门店时区。"""
+        self._product_logic = product_logic
+        self._sales_logic = sales_logic
+        self._entitlement_logic = entitlement_logic
+        self._access_logic = access_logic
         self._get_actor = get_actor
         self._timezone_name = timezone_name
 

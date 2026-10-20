@@ -1,10 +1,24 @@
-"""应用资源、服务装配与登录身份管理。"""
+"""应用资源、用例入口装配与登录身份管理。"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from src.config import AppSettings
+from src.logic import LogicBundle
+from src.logic.access_logic import AccessLogic
+from src.logic.attendance_logic import AttendanceLogic
+from src.logic.auth_logic import AuthLogic
+from src.logic.course_logic import CourseLogic
+from src.logic.entitlement_logic import EntitlementLogic
+from src.logic.equipment_logic import EquipmentLogic
+from src.logic.measurement_logic import MeasurementLogic
+from src.logic.member_logic import MemberLogic
+from src.logic.notification_logic import NotificationLogic
+from src.logic.product_logic import ProductLogic
+from src.logic.recommendation_logic import RecommendationLogic
+from src.logic.report_logic import ReportLogic
+from src.logic.reservation_logic import ReservationLogic
+from src.logic.review_logic import ReviewLogic
+from src.logic.sales_logic import SalesLogic
 from src.models.contracts import Actor
 from src.services.access_service import AccessService
 from src.services.attendance_service import AttendanceService
@@ -18,36 +32,14 @@ from src.services.gym_card_product_service import GymCardProductService
 from src.services.lesson_package_product_service import LessonPackageProductService
 from src.services.measurement_service import MeasurementService
 from src.services.member_service import MemberService
+from src.services.notification_service import NotificationService
+from src.services.recommendation_service import RecommendationService
+from src.services.recommendation_snapshot import RecommendationSnapshotStore
 from src.services.report_service import ReportService
 from src.services.review_service import ReviewService
 from src.services.room_service import RoomService
 from src.services.sales_service import SalesService
-
-
-@dataclass(frozen=True, kw_only=True)
-class ServiceBundle:
-    """应用创建的各业务服务，交互层按职责取用。
-
-    v3 将 v2 的 ProductService 拆成健身房卡产品、私教课包产品、销售、权益查询、门禁；
-    并将课程域拆成教练、课程、场地三个服务。
-    """
-
-    auth: AuthService
-    members: MemberService
-    gym_card_products: GymCardProductService
-    lesson_package_products: LessonPackageProductService
-    sales: SalesService
-    entitlements: EntitlementQueryService
-    access: AccessService
-    coaches: CoachService
-    courses: CourseService
-    rooms: RoomService
-    bookings: BookingService
-    attendance: AttendanceService
-    reviews: ReviewService
-    equipment: EquipmentService
-    measurements: MeasurementService
-    reports: ReportService
+from src.services.waitlist_service import WaitlistService
 
 
 class App:
@@ -57,12 +49,13 @@ class App:
         """保存部署配置；资源在 start 中创建。"""
         self.settings = settings
         self._engine = None
-        self._services: ServiceBundle | None = None
+        self._logic_bundle: LogicBundle | None = None
         self._cli = None
         self._actor: Actor | None = None
+        self._worker = None
 
-    def start(self) -> None:
-        """检查数据库结构并装配服务和 CLI。"""
+    def start(self, *, with_worker: bool = True) -> None:
+        """检查结构并装配服务与 CLI，默认同时启动候补核对和推荐刷新。"""
         from src.db.connection import (
             CURRENT_SCHEMA_VERSION,
             check_connection,
@@ -81,40 +74,91 @@ class App:
         check_schema(self._engine, required_version=CURRENT_SCHEMA_VERSION)
         factory = create_session_factory(self._engine)
         zone = self.settings.timezone_name
-        auth = AuthService(factory, log_config=self.settings.log)
-        services = ServiceBundle(
-            auth=auth, members=MemberService(factory, auth),
-            gym_card_products=GymCardProductService(factory, auth),
-            lesson_package_products=LessonPackageProductService(factory, auth),
-            sales=SalesService(factory, auth),
-            entitlements=EntitlementQueryService(factory, auth),
-            access=AccessService(factory, auth),
-            coaches=CoachService(factory, auth),
-            courses=CourseService(factory, auth),
-            rooms=RoomService(factory, auth),
-            bookings=BookingService(factory, auth, timezone_name=zone),
-            attendance=AttendanceService(factory, auth), reviews=ReviewService(factory, auth),
-            equipment=EquipmentService(factory, auth), measurements=MeasurementService(factory, auth),
-            reports=ReportService(factory, auth, timezone_name=zone),
+        auth = AuthService(log_config=self.settings.log)
+        members = MemberService(auth)
+        gym_card_products = GymCardProductService(auth)
+        lesson_package_products = LessonPackageProductService(auth)
+        sales = SalesService(auth)
+        entitlements = EntitlementQueryService(auth)
+        access = AccessService(auth)
+        coaches = CoachService(auth)
+        courses = CourseService(auth)
+        rooms = RoomService(auth)
+        bookings = BookingService(auth, timezone_name=zone)
+        attendance = AttendanceService(auth)
+        reviews = ReviewService(auth)
+        equipment = EquipmentService(auth)
+        measurements = MeasurementService(auth)
+        reports = ReportService(auth, timezone_name=zone)
+        notifications = NotificationService(auth)
+        waitlists = WaitlistService(auth)
+        recommendation_snapshots = RecommendationSnapshotStore()
+        recommendations = RecommendationService(auth, recommendation_snapshots)
+        logic = LogicBundle(
+            auth=AuthLogic(factory, auth),
+            members=MemberLogic(factory, members),
+            products=ProductLogic(factory, gym_card_products, lesson_package_products),
+            sales=SalesLogic(factory, sales),
+            entitlements=EntitlementLogic(factory, entitlements),
+            access=AccessLogic(factory, access),
+            courses=CourseLogic(factory, coaches, courses, rooms),
+            reservations=ReservationLogic(factory, bookings, courses, notifications, waitlists),
+            attendance=AttendanceLogic(factory, attendance),
+            reviews=ReviewLogic(factory, reviews),
+            equipment=EquipmentLogic(factory, equipment),
+            measurements=MeasurementLogic(factory, measurements),
+            reports=ReportLogic(factory, reports),
+            notifications=NotificationLogic(factory, notifications),
+            recommendations=RecommendationLogic(factory, recommendations, recommendation_snapshots),
         )
-        self._services = services
+        self._logic_bundle = logic
         handlers = menus.CliHandlers(
-            auth=menus.AuthHandler(auth, self.get_actor, self.set_actor, self.logout, timezone_name=zone),
-            member=menus.MemberHandler(services.members, self.get_actor, timezone_name=zone),
+            auth=menus.AuthHandler(
+                logic.auth, self.get_actor, self.set_actor, self.logout,
+                timezone_name=zone,
+            ),
+            member=menus.MemberHandler(logic.members, self.get_actor, timezone_name=zone),
             product=menus.ProductHandler(
-                services.gym_card_products, services.lesson_package_products,
-                services.sales, services.entitlements, services.access,
+                logic.products, logic.sales, logic.entitlements, logic.access,
                 self.get_actor, timezone_name=zone,
             ),
-            course=menus.CourseHandler(services.courses, self.get_actor, timezone_name=zone),
-            booking=menus.BookingHandler(services.bookings, self.get_actor, services.courses, services.entitlements, timezone_name=zone),
-            attendance=menus.AttendanceHandler(services.attendance, self.get_actor, timezone_name=zone),
-            review=menus.ReviewHandler(services.reviews, self.get_actor, timezone_name=zone),
-            equipment=menus.EquipmentHandler(services.equipment, self.get_actor, timezone_name=zone),
-            measurement=menus.MeasurementHandler(services.measurements, self.get_actor, timezone_name=zone),
-            report=menus.ReportHandler(services.reports, self.get_actor, timezone_name=zone),
+            course=menus.CourseHandler(logic.courses, self.get_actor, timezone_name=zone),
+            booking=menus.BookingHandler(
+                logic.reservations, self.get_actor, logic.courses, logic.entitlements,
+                timezone_name=zone,
+            ),
+            attendance=menus.AttendanceHandler(logic.attendance, self.get_actor, timezone_name=zone),
+            review=menus.ReviewHandler(logic.reviews, self.get_actor, timezone_name=zone),
+            equipment=menus.EquipmentHandler(logic.equipment, self.get_actor, timezone_name=zone),
+            measurement=menus.MeasurementHandler(logic.measurements, self.get_actor, timezone_name=zone),
+            report=menus.ReportHandler(logic.reports, self.get_actor, timezone_name=zone),
+            notification=menus.NotificationHandler(
+                logic.notifications, self.get_actor, timezone_name=zone,
+            ),
+            recommendation=menus.RecommendationHandler(
+                logic.recommendations, self.get_actor, timezone_name=zone,
+            ),
         )
         self._cli = GymCLI(handlers, self.get_actor, self.logout)
+        if with_worker:
+            from src.tasks.worker import PeriodicTask, PeriodicWorker
+
+            worker = PeriodicWorker(
+                (
+                    PeriodicTask(
+                        name="waitlist_reconciliation",
+                        interval_seconds=300,
+                        callback=logic.reservations.reconcile_waitlists,
+                    ),
+                    PeriodicTask(
+                        name="recommendation_refresh",
+                        interval_seconds=30,
+                        callback=logic.recommendations.refresh_snapshot,
+                    ),
+                )
+            )
+            self._worker = worker
+            worker.start()
 
     def run(self, *, tui: bool = False) -> int:
         """按模式启动交互；默认 CLI 不导入可选 TUI 库。"""
@@ -128,16 +172,29 @@ class App:
         return self._cli.run()
 
     def close(self) -> None:
-        """清除交互状态并关闭资源；关闭失败保留引擎，允许再次清理。"""
+        """先停止后台任务，再清除交互状态并关闭数据库资源。"""
         from src.db.connection import close_engine
 
+        worker = self._worker
+        if worker is not None:
+            worker.stop(timeout=30)
+            self._worker = None
         self.logout()
         self._cli = None
-        self._services = None
+        self._logic_bundle = None
         engine = self._engine
         if engine is not None:
             close_engine(engine)
             self._engine = None
+
+    @property
+    def logic_bundle(self) -> LogicBundle:
+        """返回已装配的用例入口；应用未启动时抛 InvalidState。"""
+        from src.errors.business import InvalidState
+
+        if self._logic_bundle is None:
+            raise InvalidState("请先启动应用")
+        return self._logic_bundle
 
     def get_actor(self) -> Actor:
         """读取当前可信操作者；未登录抛 AuthenticationError。"""

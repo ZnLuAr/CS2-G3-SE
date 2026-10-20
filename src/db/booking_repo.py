@@ -67,7 +67,7 @@ class BookingRepository:
     def list_open_for_session(self, session_id: int) -> tuple[Booking, ...]:
         """读取课次的 reserved/checked_in 预约，供取消课次比较候选快照。
 
-        按 member_id、membership_id、id 升序返回，不加锁、不提交。当前仅占位。"""
+        按 member_id、lesson_package_id、id 升序返回，不加锁、不提交。当前仅占位。"""
         raise NotImplementedError("BookingRepository.list_open_for_session 尚未实现")
 
     def has_open_for_session(self, session_id: int) -> bool:

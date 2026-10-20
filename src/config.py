@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -38,12 +39,26 @@ class LogConfig:
 
 
 @dataclass(frozen=True, kw_only=True)
+class WebConfig:
+    """Web API 监听、跨域和访问令牌配置。"""
+
+    host: str = "127.0.0.1"
+    port: int = 8000
+    allowed_origins: tuple[str, ...] = ()
+    issuer: str = "cs2-group3-se"
+    audience: str = "cs2-group3-se-web"
+    token_lifetime_seconds: int = 7200
+    jwt_secret_env_var: str = "GYM_JWT_SECRET"
+
+
+@dataclass(frozen=True, kw_only=True)
 class AppSettings:
     """应用配置；包含数据库、时区和日志配置。"""
 
     database: DatabaseConfig
     timezone_name: str = "Asia/Shanghai"
     log: LogConfig = field(default_factory=LogConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
 
 def _reject_unknown(mapping: dict[str, object], allowed: set[str], prefix: str) -> None:
@@ -126,6 +141,42 @@ def _parse_log(data: object, config_path: Path) -> LogConfig:
     )
 
 
+def _parse_web(data: object) -> WebConfig:
+    """解析 Web API 配置；签名密钥只从指定环境变量读取。"""
+    if not isinstance(data, dict):
+        raise ValueError("web 配置必须是对象")
+    _reject_unknown(
+        data,
+        {
+            "host", "port", "allowed_origins", "issuer", "audience",
+            "token_lifetime_seconds", "jwt_secret_env_var",
+        },
+        "web",
+    )
+    origins = data.get("allowed_origins", [])
+    if not isinstance(origins, list) or any(
+        not isinstance(origin, str) or not origin.strip() for origin in origins
+    ):
+        raise ValueError("web.allowed_origins 必须是来源字符串数组")
+    secret_name = _required_text(data.get("jwt_secret_env_var", "GYM_JWT_SECRET"), "web.jwt_secret_env_var")
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", secret_name) is None:
+        raise ValueError("web.jwt_secret_env_var 必须是有效的环境变量名")
+    return WebConfig(
+        host=_required_text(data.get("host", "127.0.0.1"), "web.host"),
+        port=_integer(data.get("port", 8000), "web.port", 1, 65535),
+        allowed_origins=tuple(origin.strip() for origin in origins),
+        issuer=_required_text(data.get("issuer", "cs2-group3-se"), "web.issuer"),
+        audience=_required_text(data.get("audience", "cs2-group3-se-web"), "web.audience"),
+        token_lifetime_seconds=_integer(
+            data.get("token_lifetime_seconds", 7200),
+            "web.token_lifetime_seconds",
+            60,
+            86400,
+        ),
+        jwt_secret_env_var=secret_name,
+    )
+
+
 def _read_config(path: Path) -> object:
     """读取 UTF-8 JSON；只在安全提示中展示路径和行号。"""
     import json
@@ -151,7 +202,7 @@ def _parse_settings(data: object, path: Path, password: str | None) -> AppSettin
     try:
         if not isinstance(data, dict):
             raise ValueError("配置文件根节点必须是对象")
-        _reject_unknown(data, {"database", "timezone_name", "log"}, "配置文件")
+        _reject_unknown(data, {"database", "timezone_name", "log", "web"}, "配置文件")
         database = _parse_database(data.get("database"), password)
         timezone_name = _required_text(data.get("timezone_name", "Asia/Shanghai"), "timezone_name")
         try:
@@ -159,9 +210,10 @@ def _parse_settings(data: object, path: Path, password: str | None) -> AppSettin
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError("timezone_name 不是有效时区") from exc
         log = _parse_log(data.get("log", {}), path)
+        web = _parse_web(data.get("web", {}))
     except ValueError as exc:
         raise InvalidInputError(str(exc)) from exc
-    return AppSettings(database=database, timezone_name=timezone_name, log=log)
+    return AppSettings(database=database, timezone_name=timezone_name, log=log, web=web)
 
 
 def load_config(config_path: str | None = None) -> AppSettings:
