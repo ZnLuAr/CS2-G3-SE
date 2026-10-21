@@ -7,6 +7,15 @@
 
 ## 测试思路与策略
 
+### [2026-10-21] 体测、收款和报表迁移回归
+
+- **环境与命令**：Windows、Python 3.13.14，在仓库根目录安装 `requirements/all.txt` 与 `requirements/dev.txt` 后，执行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`：273 项通过、7 项 MySQL 用例按模式排除。FastAPI/Starlette TestClient 的 HTTPX 弃用提示为 1 条依赖警告。
+- **新增覆盖**：体测 57 项、当前身份复核 43 项、CLI 36 项、收款与报表 SQL 17 项、报表服务与会话 27 项，共新增 180 项。SQLite 用真实表和查询验证授课截止、再次预约、互斥权益分类、教练课次去重、筛选分页及当前账号关联变化。CLI 测试覆盖取消、确认、翻页、权限菜单和导出文件失败。
+- **导出与事务**：验证实际 SQL 跨 500 行批次保持筛选，10,000 行成功与 10,001 行拒绝，空数据只含表头，中文与 UTF-8 BOM、文本公式前缀及负数金额、编码失败、读取错误转换和 Session 关闭释放。
+- **发现与修复**：修正导出读取失败的异常类型、当前权益导出的历史时刻输入、超大分页导致驱动溢出，以及时间转换超出 UTC/MySQL 范围。体测还验证回滚与提交结果未知携带原记录编号；日志写入失败保留已提交的体测结果并给出安全提示。
+- **MySQL 验证准备**：`tests/integration/test_measurements.py` 增加 2 项，`test_reports.py` 增加 4 项，覆盖体测授权和行锁、付款与订单回滚、每订单唯一付款及跨批次一致性快照。单独收集这两份文件得到 6 项显式跳过，提示使用专用测试入口。当前缺少 `config.test.json` 和专用 `_test` 数据库，真实 MySQL 尚未运行。
+- **后续执行前提**：准备按 `config.test.json.example` 创建的专用测试配置与 `TEST_DB_PASSWORD`，在仓库根目录运行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test mysql --config config.test.json`；预期专用用例实际执行并回收测试表，配置或连接失败时先检查测试库后缀、标记与凭据。真实登录、销售与日志依赖接入后再记录完整 CLI 主流程结果。
+
 ### [2026-10-20] 架构、骨架与全文档最终审计
 
 - **范围与方法**：按 `code-review` 分模块检查后端领域与基础设施、浏览器代码，按 `doc-audit` 双向比较总览、前后端分册、公开签名、数据字段和实际文件，再按 `doc-writing` 修正参与指引。新增功能均有入口与合同，业务占位和真实执行结果分别记录。

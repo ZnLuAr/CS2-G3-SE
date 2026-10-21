@@ -1,4 +1,4 @@
-"""服务内部的数据访问接口。当前仅声明字段与签名，方法尚未实现。"""
+"""会员数据访问；体测所用的会员锁定已实现，其余方法保留待实现签名。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class MemberRepository:
 
     def __init__(self, session: Session) -> None:
         """接收业务服务当前事务所用的数据库会话。"""
-        raise NotImplementedError("MemberRepository.__init__ 尚未实现")
+        self._session = session
 
     def create(self, data: MemberInput) -> Member:
         """新增会员档案并返回领域模型；不自行提交。"""
@@ -33,7 +33,26 @@ class MemberRepository:
 
     def lock(self, member_id: int) -> Member | None:
         """锁定并读取最新会员记录；用于服务事务。"""
-        raise NotImplementedError("MemberRepository.lock 尚未实现")
+        from datetime import timezone
+
+        from sqlalchemy import DateTime, Integer, String, column, select, table
+
+        members = table(
+            "members", column("id", Integer), column("name", String), column("phone", String),
+            column("status", String), column("archived_at", DateTime),
+            column("created_at", DateTime), column("updated_at", DateTime),
+        )
+        row = self._session.execute(
+            select(members).where(members.c.id == member_id).with_for_update(),
+        ).mappings().first()
+        if row is None:
+            return None
+        values = dict(row)
+        for key in ("archived_at", "created_at", "updated_at"):
+            value = values[key]
+            if value is not None:
+                values[key] = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return Member(**values)
 
     def list(self, query: MemberQuery) -> tuple[list[Member], int]:
         """按 id 升序稳定分页，返回（当页记录, 总数）；权限范围由服务在 query 中约束。"""

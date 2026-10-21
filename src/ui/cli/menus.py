@@ -108,17 +108,47 @@ def equipment_menu(handler: EquipmentHandler) -> list[MenuItem]:
 
 
 def measurement_menu(handler: MeasurementHandler) -> list[MenuItem]:
-    """构造本模块的已实现菜单入口。
-
-    只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    return []
+    """会员和教练可查体测；教练额外显示录入入口。"""
+    role = handler.current_role
+    if role not in {"member", "coach"}:
+        return []
+    items = [
+        MenuItem(key="1", label="体测详情", operation="measurement.get", action=handler.get_measurement),
+        MenuItem(key="2", label="体测历史", operation="measurement.list", action=handler.list_measurements),
+        MenuItem(key="3", label="体测对比", operation="measurement.compare", action=handler.compare),
+    ]
+    if role == "coach":
+        items.append(MenuItem(
+            key="4", label="录入体测", operation="measurement.record", action=handler.record,
+        ))
+    return items
 
 
 def report_menu(handler: ReportHandler) -> list[MenuItem]:
-    """构造本模块的已实现菜单入口。
-
-    只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    return []
+    """前台显示收款查询；管理员增加统计及五类导出。"""
+    role = handler.current_role
+    if role not in {"admin", "receptionist"}:
+        return []
+    items = [
+        MenuItem(key="1", label="收款详情", operation="report.get_payment", action=handler.get_payment),
+        MenuItem(key="2", label="收款查询", operation="report.list_payments", action=handler.list_payments),
+    ]
+    if role == "admin":
+        items.extend([
+            MenuItem(key="3", label="实收统计", operation="report.revenue", action=handler.revenue),
+            MenuItem(key="4", label="会员与权益统计", operation="report.membership_stats", action=handler.membership_stats),
+            MenuItem(key="5", label="课次出勤统计", operation="report.session_stats", action=handler.session_stats),
+            MenuItem(key="6", label="教练统计", operation="report.coach_stats", action=handler.coach_stats),
+            MenuItem(key="7", label="导出收款", operation="report.export_payments", action=handler.export_payments),
+            MenuItem(key="8", label="导出实收", operation="report.export_revenue", action=handler.export_revenue),
+            MenuItem(
+                key="9", label="导出会员与权益",
+                operation="report.export_memberships", action=handler.export_memberships,
+            ),
+            MenuItem(key="10", label="导出课次", operation="report.export_sessions", action=handler.export_sessions),
+            MenuItem(key="11", label="导出教练", operation="report.export_coaches", action=handler.export_coaches),
+        ])
+    return items
 
 
 def notification_menu(handler: NotificationHandler) -> list[MenuItem]:

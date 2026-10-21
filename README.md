@@ -79,7 +79,7 @@
 │   ├── errors/                     # 异常定义与统一处理
 │   ├── models/                     # 数据模型与类型定义
 │   │   └── contracts.py            # 公共类型：Input、View、Page
-│   ├── logic/                      # 用例层骨架：跨服务编排、Session 与事务
+│   ├── logic/                      # 用例层：跨服务编排、Session 与事务
 │   ├── services/                   # 领域服务：权限、数据范围与业务规则
 │   │   ├── auth_service.py         # 账号与权限
 │   │   ├── member_service.py       # 会员档案
@@ -131,7 +131,9 @@
 
 `__init__.py` 标识 Python 包，异常包还统一导出公共类型。共用的数据类型在 [contracts.py](./src/models/contracts.py)；[会员档案服务](./src/services/member_service.py)展示公开方法签名和中文说明的写法。后端测试分类与运行步骤见 [tests/README.md](./tests/README.md)，浏览器应用与测试见 [frontend/README.md](./frontend/README.md)。
 
-**当前状态**：SYS 基础层、v4 数据库初始化与检查、Service/Logic、CLI 装配、Web 认证路由和 Worker 骨架已接入。浏览器端 `frontend/` 已建立登录表单、角色导航、身份恢复、API 客户端与测试入口；领域方法、CLI 操作和浏览器业务页仍为占位，真实 MySQL 建表和业务联调待验证。架构入口见 `docs/architecture.md`，详细合同分别见前后端分册。`--help` 和 `python -m src.cmd.test` 不连接 MySQL；正式业务流程需完成身份及业务方法实现。
+**当前状态**：SYS 基础层、v4 数据库初始化与检查、CLI 装配、Web 认证路由和 Worker 骨架已接入。体测、收款查询、经营报表及五类 CSV 导出的仓储、服务、用例层（Logic）和 CLI 菜单已实现，会员与权益报表统计当前读取快照。当前身份复核，以及体测所需的账号、档案锁定和预约授权查询已实现。相关规则、SQL 结果、交互和资源释放已有单元测试，真实 MySQL 的事务、锁和模块联调待验证。
+
+登录、销售订单查询与销售事务等业务方法仍为占位；CLI 的完整登录与业务流程待相关负责人接入。浏览器端 `frontend/` 已建立登录表单、角色导航、身份恢复、API 客户端与测试入口，业务页待实现。架构入口见 `docs/architecture.md`，详细合同分别见前后端分册。`--help` 和 `python -m src.cmd.test` 不连接 MySQL。
 
 默认 CLI 与 Web API 都会启动候补核对和推荐刷新的周期任务；关闭应用时先等待任务退出，再释放数据库连接池。任务调用的领域方法仍为占位。
 

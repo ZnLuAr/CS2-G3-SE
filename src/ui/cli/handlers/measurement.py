@@ -1,19 +1,18 @@
-"""按业务划分的 CLI 交互接口。构造函数已实现，业务操作仍为占位。"""
+"""体测输入、确认与结果展示；授权和事务由 Logic 与服务处理。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
+from decimal import Decimal
 
-from src.models.contracts import Actor
 from src.logic.measurement_logic import MeasurementLogic
+from src.models.contracts import Actor, DateWindow, MeasurementInput, MeasurementQuery, Role
+from src.ui.cli import formatters, prompts
 
 
 class MeasurementHandler:
-    """收集输入、确认操作、调用业务服务并展示结果。
-
-    get_actor 每次取得当前身份；不接收数据库会话，不实现业务规则。
-    各操作返回 None 表示交互完成；当前只声明接口，调用即报未实现。
-    """
+    """采集体测表单并调用用例；取消或拒绝确认时结束交互。"""
 
     def __init__(
         self,
@@ -22,35 +21,80 @@ class MeasurementHandler:
         *,
         timezone_name: str,
     ) -> None:
-        """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
+        """接收用例入口、当前身份回调及门店时区。"""
         self._logic = logic
         self._get_actor = get_actor
         self._timezone_name = timezone_name
 
-    def record(self) -> None:
-        """组织 MeasurementService.record 的交互步骤。
+    @property
+    def current_role(self) -> Role:
+        """取得菜单展示使用的当前角色，实际权限由服务复核。"""
+        return self._get_actor().role
 
-        输入由 prompts 采集；成功结果交给 formatters 展示。
-        异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
-        raise NotImplementedError("MeasurementHandler.record 尚未实现")
+    def record(self) -> None:
+        """确认完整表单后录入；输入 q 或拒绝确认不调用写用例。"""
+        actor = self._get_actor()
+        member_id = prompts.prompt_member_id()
+        measured_at = prompts.prompt_datetime(
+            "测量时刻（YYYY-MM-DD HH:MM，q 取消）：",
+            timezone_name=self._timezone_name,
+        )
+        height = prompts.prompt_decimal("身高（厘米）：", minimum=Decimal("0"))
+        weight = prompts.prompt_decimal("体重（千克）：", minimum=Decimal("0"))
+        body_fat = None
+        if prompts.prompt_confirm("填写体脂率？"):
+            body_fat = prompts.prompt_decimal("体脂率（%）：", minimum=Decimal("0"))
+        data = MeasurementInput(
+            member_id=member_id,
+            measured_at=measured_at,
+            height_cm=height,
+            weight_kg=weight,
+            body_fat_pct=body_fat,
+        )
+        if not prompts.prompt_confirm("确认保存这次体测？"):
+            return
+        view = self._logic.record(actor, data)
+        print(formatters.format_measurement(view, timezone_name=self._timezone_name))
 
     def get_measurement(self) -> None:
-        """组织 MeasurementService.get_measurement 的交互步骤。
-
-        输入由 prompts 采集；成功结果交给 formatters 展示。
-        异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
-        raise NotImplementedError("MeasurementHandler.get_measurement 尚未实现")
+        """按体测编号查看详情；越权和不存在由服务统一处理。"""
+        actor = self._get_actor()
+        measurement_id = prompts.prompt_int("体测编号（q 取消）：", minimum=1)
+        view = self._logic.get_measurement(actor, measurement_id)
+        print(formatters.format_measurement(view, timezone_name=self._timezone_name))
 
     def list_measurements(self) -> None:
-        """组织 MeasurementService.list_measurements 的交互步骤。
+        """按会员和可选时间范围分页浏览；会员默认使用本人编号。"""
+        from src.ui.cli.menus import browse_pages
 
-        输入由 prompts 采集；成功结果交给 formatters 展示。
-        异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
-        raise NotImplementedError("MeasurementHandler.list_measurements 尚未实现")
+        actor = self._get_actor()
+        member_id = (
+            actor.member_id
+            if actor.role == "member" and actor.member_id is not None
+            else prompts.prompt_member_id()
+        )
+        window = None
+        if prompts.prompt_confirm("限定测量时间范围？"):
+            window = DateWindow(
+                start=prompts.prompt_datetime(
+                    "开始时刻（含，YYYY-MM-DD HH:MM）：",
+                    timezone_name=self._timezone_name,
+                ),
+                end=prompts.prompt_datetime(
+                    "结束时刻（不含，YYYY-MM-DD HH:MM）：",
+                    timezone_name=self._timezone_name,
+                ),
+            )
+        query = MeasurementQuery(member_id=member_id, window=window)
+        browse_pages(
+            lambda paging: self._logic.list_measurements(actor, replace(query, paging=paging)),
+            lambda page: formatters.format_measurements(page, timezone_name=self._timezone_name),
+        )
 
     def compare(self) -> None:
-        """组织 MeasurementService.compare 的交互步骤。
-
-        输入由 prompts 采集；成功结果交给 formatters 展示。
-        异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
-        raise NotImplementedError("MeasurementHandler.compare 尚未实现")
+        """按先后两个编号展示变化；可见性和先后顺序由服务校验。"""
+        actor = self._get_actor()
+        before_id = prompts.prompt_int("对比前体测编号（q 取消）：", minimum=1)
+        after_id = prompts.prompt_int("对比后体测编号（q 取消）：", minimum=1)
+        view = self._logic.compare(actor, before_id, after_id)
+        print(formatters.format_measurement_comparison(view, timezone_name=self._timezone_name))

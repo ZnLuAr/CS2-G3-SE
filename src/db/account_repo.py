@@ -1,8 +1,11 @@
-"""服务内部的数据访问接口。当前仅声明字段与签名，方法尚未实现。"""
+"""账号数据访问；身份复核使用的账号与档案锁定已实现。"""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+
+from sqlalchemy import text
 
 from src.models.account import Account
 from src.models.contracts import AccountView, Actor, NamedQuery, Page, Role
@@ -13,6 +16,14 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+def _utc(value: datetime | str | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 class AccountRepository:
     """账号数据访问；只使用传入会话，不提交、不输出提示。
 
@@ -21,7 +32,7 @@ class AccountRepository:
 
     def __init__(self, session: Session) -> None:
         """接收业务服务当前事务所用的数据库会话。"""
-        raise NotImplementedError("AccountRepository.__init__ 尚未实现")
+        self._session = session
 
     def get(self, account_id: int) -> Account | None:
         """按编号读取账号；包含密码哈希，仅供服务内部使用。
@@ -33,8 +44,18 @@ class AccountRepository:
         """在当前事务锁定账号并读取最新 Account，不存在返回 None。
 
         单账号流程使用本方法；多账号流程使用 lock_many 一次性取得完整锁集合。
-        不提交。当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("AccountRepository.lock 尚未实现")
+        不提交，锁持有到调用方事务结束。"""
+        statement = text("SELECT * FROM accounts WHERE id = :id")
+        if self._session.get_bind().dialect.name != "sqlite":
+            statement = text(str(statement) + " FOR UPDATE")
+        row = self._session.execute(statement, {"id": account_id}).mappings().first()
+        if row is None:
+            return None
+        return Account(
+            id=row["id"], username=row["username"], password_hash=row["password_hash"],
+            role=row["role"], is_active=bool(row["is_active"]),
+            created_at=_utc(row["created_at"]), updated_at=_utc(row["updated_at"]),
+        )
 
     def lock_many(self, account_ids: tuple[int, ...]) -> tuple[Account, ...]:
         """去重后按账号编号升序锁定指定账号，并读取最新 Account。
@@ -72,8 +93,32 @@ class AccountRepository:
 
         先锁会员行再锁教练行，并将锁持有到调用方事务结束。
         返回：(member, coach)；未关联项为 None，调用方据此复核关联和 is_active。
-        当前仅占位。"""
-        raise NotImplementedError("AccountRepository.lock_profile_links 尚未实现")
+        账号关联与档案状态均使用锁定当前读。"""
+        # 账号行先锁定，关联移交也须先锁该账号；再按会员、教练顺序锁档案。
+        member_sql = (
+            "SELECT m.* FROM members m JOIN member_account_links l ON l.member_id = m.id "
+            "WHERE l.account_id = :id"
+        )
+        coach_sql = (
+            "SELECT c.* FROM coaches c JOIN coach_account_links l ON l.coach_id = c.id "
+            "WHERE l.account_id = :id"
+        )
+        if self._session.get_bind().dialect.name != "sqlite":
+            member_sql += " FOR UPDATE"
+            coach_sql += " FOR UPDATE"
+        member_row = self._session.execute(text(member_sql), {"id": account_id}).mappings().first()
+        coach_row = self._session.execute(text(coach_sql), {"id": account_id}).mappings().first()
+        member = None if member_row is None else Member(
+            id=member_row["id"], name=member_row["name"], phone=member_row["phone"],
+            status=member_row["status"], archived_at=_utc(member_row["archived_at"]),
+            created_at=_utc(member_row["created_at"]), updated_at=_utc(member_row["updated_at"]),
+        )
+        coach = None if coach_row is None else Coach(
+            id=coach_row["id"], name=coach_row["name"], phone=coach_row["phone"],
+            is_active=bool(coach_row["is_active"]),
+            created_at=_utc(coach_row["created_at"]), updated_at=_utc(coach_row["updated_at"]),
+        )
+        return member, coach
 
     def create(self, *, username: str, password_hash: str, role: Role) -> Account:
         """保存已哈希密码和角色；不自行提交。

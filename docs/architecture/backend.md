@@ -4,7 +4,7 @@
 
 开发一个业务功能时，先在本分册找到对应的 Input、View 或 Page、权限和事务边界，再沿“交互入口 → Logic → Service → DB”实现。数据库操作使用调用方传入的 Session；Logic 统一管理一次用例的会话与提交。列表返回 `Page[T]`，详情返回固定 View，失败抛项目异常。
 
-本分册定义后端合同。当前代码已建立 Service、Logic、数据库工具、CLI 装配、Web 登录路由和周期 Worker 骨架；业务方法仍以 `NotImplementedError` 占位。浏览器业务路由与 TUI 的当前状态见总架构与功能清单。数据库脚本、初始化和结构检查使用 v4；真实 MySQL 建表与业务流程仍需验证。
+本分册定义后端合同。当前已实现体测、收款查询、经营统计与 CSV 导出的 CLI、Logic、Service 和仓储，以及这些入口使用的身份复核、会员锁定和授课关系检查。登录、销售编排及其余领域按各文件与功能清单标记实现状态。数据库脚本、初始化和结构检查使用 v4；真实 MySQL 建表、锁与业务联调待验证。浏览器业务路由与 TUI 的当前状态见总架构与功能清单。
 
 ## 后端目录
 
@@ -812,6 +812,8 @@ def invoke_action(
 ```
 
 Handler 构造接收对应 Logic，以及当前身份的读取、设置、退出回调和展示时区。业务方法、分页回调和结果核实统一调用 Logic。
+
+体测与报表 Handler 的只读 `current_role` 属性供菜单选择入口：会员可查本人体测，教练可录入及查询授权体测，前台可查收款，管理员可查收款及经营统计并导出。CSV 由 Handler 展示建议文件名，取得保存路径和确认后以独占创建方式写入；文件已存在或输出失败抛 `ResourceError`。
 
 `invoke_action` 执行一个 Handler 操作。成功或主动取消返回 `ErrorResult(message="", action="continue")`；项目异常和未知异常交给 `handle_error`；EOF 和 Ctrl+C 继续传播。
 
@@ -2826,6 +2828,10 @@ class PaymentRepository(Protocol):
         self, query: PaymentQuery
     ) -> tuple[list[Payment], int]: ...
 
+    def list_batch(
+        self, query: PaymentQuery, *, after_id: int = 0, limit: int = 500,
+    ) -> list[Payment]: ...
+
     def aggregate(
         self,
         window: DateWindow,
@@ -2834,6 +2840,8 @@ class PaymentRepository(Protocol):
 ```
 
 `Payment` 只引用 `SaleOrder`。Repository 不接受 `gym_card_id` 或 `lesson_package_id`。
+
+`list_batch` 供导出内部使用，保留时间、会员和收款方式筛选，以 `id > after_id`、主键升序和 `limit` 读取。调用方传入的 UI 页码与页大小由分页列表使用，导出批次由服务单独控制。
 
 #### 12.5.10 GiftGrantRepository
 
@@ -4253,6 +4261,27 @@ class MeasurementService:
 
 课次取消、预约取消和缺席通过 `closed_at` 收紧截止时间；后续再次与同一教练建立有效预约时，新的较晚截止时间自动恢复更广历史范围。
 
+#### 13.6.3 体测仓储
+
+```python
+# src/db/measurement_repo.py
+class MeasurementRepository:
+    def __init__(self, session: Session) -> None: ...
+    def get(
+        self, measurement_id: int, *, scope_member_id: int | None,
+        scope_coach_id: int | None, as_of: datetime,
+    ) -> MeasurementView | None: ...
+    def list(
+        self, query: MeasurementQuery, *, scope_member_id: int | None,
+        scope_coach_id: int | None, as_of: datetime,
+    ) -> Page[MeasurementView]: ...
+    def create(
+        self, data: MeasurementInput, coach_id: int, *, created_at: datetime,
+    ) -> MeasurementView: ...
+```
+
+查询必须恰好传入一种可信身份范围：会员编号限制归属，教练编号通过预约范围限制 `created_at`。查询条件中的会员编号只能进一步缩小范围。列表按 `measured_at DESC, id DESC` 稳定分页；详情不存在或不可见时由 Service 将仓储的 `None` 转换为 `NotFoundError`。新增时传入服务在会员锁内生成的 `created_at`，提交由 Logic 负责。
+
 ### 13.7 评价
 
 ```python
@@ -4430,12 +4459,38 @@ class ReportService:
 
 - 收款通过 `Payment.sale_order_id` 关联销售订单；`PaymentView` 返回 `sale_order_id` 和 `member_id`。
 - 收入统计按 `paid_at` 和 `[start, end)` 汇总每笔实际付款，并按 `Payment -> SaleOrder.kind` 分类；订单内同时产生课包与赠卡也只计一笔课包付款，赠卡不产生额外收入。
-- `ReportLogic.membership_stats` 在同一个 REPEATABLE READ 读取事务内生成 `as_of` 和门店 `business_date`，分别聚合两个权益表。
+- `ReportLogic.membership_stats` 管理同一个 REPEATABLE READ 读取事务；`ReportService` 生成 `as_of` 和门店 `business_date`，分别聚合两个权益表。`export_memberships` 的 `as_of` 参数接收带时区的调用时刻提示，输出使用服务生成的当前统计时刻；CLI 自动传入当前 UTC 时间。
 - 课次统计按预约当前状态分组；仅课次结束且没有开放预约时，按 `completed / (completed + no_show)` 计算到课率，分母为 0 时返回 `None`。
 - 教练统计按已完成课次和 `completed` 预约统计；私教预约使用哪个课包不改变教练业绩口径。
 - 报表详情和列表失败均抛统一业务异常，不返回临时字典、裸列表或 `None`。
 
-五个导出方法均仅管理员使用，全部返回 `CsvExport`。支付和课次导出复用对应列表筛选，但列表页大小不作为导出上限；每次导出由 `ReportLogic` 创建一个 REPEATABLE READ 读取事务，固定同一 `as_of` 或查询窗口，并按主键游标分批读取。超过 10,000 行抛 `InvalidInputError`，不得截断；无权限抛 `PermissionDenied`；编码、快照或输出资源失败抛 `ResourceError`。无数据时仍返回固定表头和 `row_count=0`。`export_memberships` 表头与 `MembershipStats` 字段一致；所有文本列对以 `= + - @` 开头的值加单引号防止 CSV 公式注入。
+五个导出方法均仅管理员使用，全部返回 `CsvExport`。支付和课次导出复用对应列表筛选，但列表页大小不作为导出上限；每次导出由 `ReportLogic` 创建一个 REPEATABLE READ 读取事务，固定同一 `as_of` 或查询窗口。收款、课次和教练按主键游标分批读取，收入和权益返回有界的聚合结果。超过 10,000 行抛 `InvalidInputError`，不得截断；无权限抛 `PermissionDenied`；编码、快照或输出资源失败抛 `ResourceError`。无数据时仍返回固定表头和 `row_count=0`。`export_memberships` 表头与 `MembershipStats` 字段一致；所有文本列对以 `= + - @` 开头的值加单引号防止 CSV 公式注入。
+
+#### 13.8.3 报表仓储
+
+报表仓储复用调用方 Session。公开业务列表返回 `Page`，导出内部批次返回固定类型列表；收入与权益查询返回固定统计对象。数据库失败映射为 `StorageError`，由导出服务转换为 `ResourceError`。
+
+```python
+# src/db/report_repo.py
+class ReportRepository:
+    def __init__(self, session: Session) -> None: ...
+    def revenue(self, window: DateWindow) -> RevenueView: ...
+    def membership_stats(
+        self, as_of: datetime, *, business_date: date,
+    ) -> MembershipStats: ...
+    def session_stats(self, query: SessionQuery) -> Page[SessionStatsView]: ...
+    def coach_stats(
+        self, window: DateWindow, paging: PageRequest,
+    ) -> Page[CoachStatsView]: ...
+    def session_stats_batch(
+        self, query: SessionQuery, *, after_id: int = 0, limit: int = 500,
+    ) -> list[SessionStatsView]: ...
+    def coach_stats_batch(
+        self, window: DateWindow, *, after_id: int = 0, limit: int = 500,
+    ) -> list[CoachStatsView]: ...
+```
+
+课次批次保留全部 `SessionQuery` 筛选，以课次编号升序读取；教练批次以教练编号升序读取。服务每批最多取 500 行，读取第 10,001 行即报超限。课次到课率使用服务写入 `session.info["report_as_of"]` 的统一时刻，跨批次读取保持相同的统计口径和事务快照。
 
 ### 13.9 权限、安全与隐私
 

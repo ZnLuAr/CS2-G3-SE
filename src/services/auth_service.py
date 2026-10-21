@@ -1,10 +1,12 @@
-"""账号与权限服务接口。构造函数已实现，业务操作仍为占位。"""
+"""账号与权限服务；当前身份复核已实现，登录与账号管理保留待实现签名。"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from src.config import LogConfig
+from src.db.account_repo import AccountRepository
+from src.errors.business import AuthenticationError
 
 from src.models.contracts import (
     AccountInput,
@@ -28,7 +30,7 @@ class AuthService:
 
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
     输入字段见 models/contracts.py；实现后遵守 docs/architecture/backend.md 的返回、异常、权限和事务约定。
-    构造函数保存依赖；业务方法仍为占位。
+    当前身份复核读取账号及档案关联；其他操作的实现状态见各方法。
     """
 
     def __init__(
@@ -118,7 +120,33 @@ class AuthService:
         以锁内记录复核账号与教练的启用状态；归档会员仍可返回可信身份。
         锁持有到调用方 Logic 结束事务。
         账号停用或档案移交一旦提交，旧 Actor 的后续复核抛 AuthenticationError。"""
-        raise NotImplementedError("AuthService.verify_actor 尚未实现")
+        if (
+            not isinstance(actor, Actor) or type(actor.account_id) is not int
+            or not 1 <= actor.account_id <= 2**63 - 1
+            or actor.role not in ("admin", "receptionist", "member", "coach")
+            or any(value is not None and (type(value) is not int or not 1 <= value <= 2**63 - 1)
+                   for value in (actor.member_id, actor.coach_id))
+        ):
+            raise AuthenticationError("当前登录身份已失效，请重新登录")
+        repository = AccountRepository(session)
+        account = repository.lock(actor.account_id)
+        if account is None or not account.is_active or account.role != actor.role:
+            raise AuthenticationError("当前登录身份已失效，请重新登录")
+        member, coach = repository.lock_profile_links(actor.account_id)
+        if account.role == "member":
+            valid = member is not None and coach is None
+        elif account.role == "coach":
+            valid = coach is not None and coach.is_active and member is None
+        else:
+            valid = member is None and coach is None
+        current = Actor(
+            account_id=account.id, role=account.role,
+            member_id=None if member is None else member.id,
+            coach_id=None if coach is None else coach.id,
+        )
+        if not valid or current != actor:
+            raise AuthenticationError("当前登录身份已失效，请重新登录")
+        return current
 
     def open_log_snapshot(self, session: Session, actor: Actor) -> LogSnapshot:
         """取得管理员本次日志浏览使用的固定快照。
