@@ -1,4 +1,4 @@
-"""服务内部的数据访问接口。当前仅声明字段与签名，方法尚未实现。"""
+"""预约数据访问；体测所用的当前授课关系检查已实现。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class BookingRepository:
 
     def __init__(self, session: Session) -> None:
         """接收业务服务当前事务所用的数据库会话。"""
-        raise NotImplementedError("BookingRepository.__init__ 尚未实现")
+        self._session = session
 
     def get(self, booking_id: int) -> BookingView | None:
         """查询预约详情；未找到返回 None。
@@ -117,8 +117,33 @@ class BookingRepository:
         调用方已经持有会员行锁；实现须在该事务中锁定匹配预约并重读状态。
         要求预约 reserved/checked_in、课次 scheduled，且 booked_at <= at < ends_at。
         返回固定 bool，不写数据；历史体测查看不用此条件，按架构“体测权限规则”保留截止。
-        当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.has_current_coaching_booking 尚未实现")
+        """
+        from datetime import timezone
+
+        from sqlalchemy import DateTime, Integer, String, column, select, table
+
+        bookings = table(
+            "bookings", column("id", Integer), column("member_id", Integer),
+            column("session_id", Integer), column("status", String),
+            column("booked_at", DateTime), column("closed_at", DateTime),
+        )
+        sessions = table(
+            "course_sessions", column("id", Integer), column("coach_id", Integer),
+            column("status", String), column("ends_at", DateTime),
+        )
+        at = at.astimezone(timezone.utc).replace(tzinfo=None)
+        statement = (
+            select(bookings.c.id)
+            .select_from(bookings.join(sessions, sessions.c.id == bookings.c.session_id))
+            .where(
+                bookings.c.member_id == member_id, sessions.c.coach_id == coach_id,
+                bookings.c.status.in_(("reserved", "checked_in")),
+                sessions.c.status == "scheduled", bookings.c.booked_at <= at,
+                sessions.c.ends_at > at, bookings.c.closed_at.is_(None),
+            )
+            .order_by(sessions.c.id, bookings.c.id).limit(1).with_for_update()
+        )
+        return self._session.execute(statement).first() is not None
 
     def lock(self, booking_id: int) -> Booking | None:
         """锁定并读取最新预约记录。
