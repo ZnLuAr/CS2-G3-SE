@@ -17,6 +17,8 @@ from src.ui.cli.handlers.course import CourseHandler
 from src.ui.cli.handlers.equipment import EquipmentHandler
 from src.ui.cli.handlers.measurement import MeasurementHandler
 from src.ui.cli.handlers.member import MemberHandler
+from src.ui.cli.handlers.notification import NotificationHandler
+from src.ui.cli.handlers.recommendation import RecommendationHandler
 from src.ui.cli.handlers.report import ReportHandler
 from src.ui.cli.handlers.review import ReviewHandler
 
@@ -45,6 +47,8 @@ class CliHandlers:
     equipment: EquipmentHandler
     measurement: MeasurementHandler
     report: ReportHandler
+    notification: NotificationHandler
+    recommendation: RecommendationHandler
 
 
 def auth_menu(handler: AuthHandler) -> list[MenuItem]:
@@ -114,6 +118,16 @@ def report_menu(handler: ReportHandler) -> list[MenuItem]:
     """构造本模块的已实现菜单入口。
 
     只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
+    return []
+
+
+def notification_menu(handler: NotificationHandler) -> list[MenuItem]:
+    """构造站内通知菜单；具体操作随通知功能实现接入。"""
+    return []
+
+
+def recommendation_menu(handler: RecommendationHandler) -> list[MenuItem]:
+    """构造课程推荐菜单；具体操作随推荐功能实现接入。"""
     return []
 
 

@@ -1,4 +1,4 @@
-"""接口共用的数据格式，依据 docs/architecture.md“公共类型定义”。
+"""接口共用的数据格式，依据 docs/architecture/backend.md“公共接口约定”。
 
 数据类只声明字段，不校验业务；计算属性尚未实现。
 服务只能返回约定的 View 或 Page，失败抛异常，不返回临时字典。
@@ -25,10 +25,15 @@ GiftActivationPolicy = Literal["immediate", "append"]
 GymCardKind = Literal["duration", "visit"]
 EntrySourceKind = Literal["duration_gym_card", "visit_gym_card", "booking"]
 EquipmentStatus = Literal["available", "maintenance", "retired"]
+WaitlistStatus = Literal["waiting", "promoted", "cancelled", "closed"]
+NotificationKind = Literal["waitlist_promoted", "waitlist_closed"]
 EntitlementOriginKind = Literal["purchase", "gift"]
 SaleKind = Literal["gym_card", "lesson_package"]
 SaleItemKind = Literal["gym_card", "lesson_package"]
-OperationResultKind = Literal["member", "sale_order", "course_session", "booking", "gym_entry"]
+OperationResultKind = Literal[
+    "member", "sale_order", "course_session", "booking", "gym_entry",
+    "waitlist_entry",
+]
 OperationName = Literal[
     "create_member",
     "sell_gym_card",
@@ -38,6 +43,7 @@ OperationName = Literal[
     "book",
     "cancel_booking",
     "register_entry",
+    "join_waitlist",
 ]
 ErrorAction = Literal["continue", "login", "exit", "verify"]
 
@@ -960,4 +966,98 @@ class LogQuery:
     actor_id: int | None = None  # 操作人编号
     request_id: str | None = None  # 请求编号
     paging: PageRequest = field(default_factory=PageRequest)
+
+
+@dataclass(frozen=True, kw_only=True)
+class NotificationQuery:
+    unread_only: bool = False
+    paging: PageRequest = field(default_factory=PageRequest)
+
+
+@dataclass(frozen=True, kw_only=True)
+class NotificationView:
+    id: int
+    member_id: int
+    session_id: int | None
+    kind: NotificationKind
+    title: str
+    body: str
+    created_at: datetime
+    read_at: datetime | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class NotificationReadResultView:
+    member_id: int
+    updated_count: int
+    read_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class WaitlistInput:
+    member_id: int
+    session_id: int
+    lesson_package_id: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class WaitlistQuery:
+    member_id: int | None = None
+    session_id: int | None = None
+    status: WaitlistStatus | None = None
+    paging: PageRequest = field(default_factory=PageRequest)
+
+
+@dataclass(frozen=True, kw_only=True)
+class WaitlistView:
+    id: int
+    member_id: int
+    session_id: int
+    lesson_package_id: int
+    status: WaitlistStatus
+    booking_id: int | None
+    joined_at: datetime
+    closed_at: datetime | None
+    queue_position: int | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class WaitlistSummaryView:
+    session_id: int
+    waiting_count: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class CourseTagInput:
+    course_id: int
+    tag: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class CourseTagView:
+    course_id: int
+    tag: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class CourseTagRemovalView:
+    course_id: int
+    tag: str
+    removed: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class RecommendationQuery:
+    member_id: int
+    top_n: int = 3
+
+
+@dataclass(frozen=True, kw_only=True)
+class RecommendedCourseView:
+    course_id: int
+    course_name: str
+    score: float
+    reason: str
+    upcoming_sessions: tuple[SessionView, ...]
 

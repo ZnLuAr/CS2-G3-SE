@@ -7,11 +7,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from src.models.contracts import Actor
-from src.services.booking_service import BookingService
-from src.services.course_service import CourseService
 
 if TYPE_CHECKING:
-    from src.services.entitlement_query_service import EntitlementQueryService
+    from src.logic.course_logic import CourseLogic
+    from src.logic.entitlement_logic import EntitlementLogic
+    from src.logic.reservation_logic import ReservationLogic
 
 
 class BookingHandler:
@@ -23,17 +23,17 @@ class BookingHandler:
 
     def __init__(
         self,
-        service: BookingService,
+        logic: ReservationLogic,
         get_actor: Callable[[], Actor],
-        course_service: CourseService,
-        entitlements: EntitlementQueryService,
+        course_logic: CourseLogic,
+        entitlement_logic: EntitlementLogic,
         *, timezone_name: str,
     ) -> None:
         """接收服务、身份回调及 App 提供的门店时区；预约需要查询会员课包权益。"""
-        self._service = service
+        self._logic = logic
         self._get_actor = get_actor
-        self._course_service = course_service
-        self._entitlements = entitlements
+        self._course_logic = course_logic
+        self._entitlement_logic = entitlement_logic
         self._timezone_name = timezone_name
 
     def book(self) -> None:

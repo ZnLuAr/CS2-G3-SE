@@ -22,12 +22,12 @@
 |--------|--------|
 | 查看阅读顺序与参与步骤 | [`docs/README.md` 的参与指引](./docs/README.md#从这里开始)（阅读顺序、任务分工、开发与验收示例） |
 | 了解作业要求、截止时间 | [`docs/project-introduction.md`](./docs/project-introduction.md)（Practical 1 讲义中文翻译） |
-| 查看负责模块的设计及与其他模块的衔接 | [系统设计详细目录](./docs/architecture.md#目录)（数据格式、SQL、服务接口、CLI 与异常处理） |
+| 查看负责模块的设计及与其他模块的衔接 | [系统架构总览](./docs/architecture.md)、[后端架构](./docs/architecture/backend.md)、[前端架构](./docs/architecture/frontend.md) |
 | 查看代码规范和质量要求 | [`docs/project-standards.md`](./docs/project-standards.md) |
 | **记录开发过程（给报告攒素材）** | [`docs/dev-materials-for-report/`](./docs/dev-materials-for-report/)，四选一：设计决策 / 开发日志 / 测试笔记 / 会议记录 |
 | 学习怎么用 Git / PR 协作 | 本 README 的[小组协作规范](#小组协作规范) |
-| 查看功能细项与暂定分工 | [`docs/feature-list.csv`](./docs/feature-list.csv) |
-| 了解技术栈 | 本 README 后部的[技术栈](#技术栈)（Python、MySQL，默认 CLI、可选 TUI） |
+| 查看功能细项与分工 | [`docs/feature-list.csv`](./docs/feature-list.csv) |
+| 了解技术栈 | 本 README 后部的[技术栈](#技术栈)（Python、MySQL、FastAPI 和 Vue，默认 CLI、可选 TUI） |
 
 > ⚠️ **报告素材（决策记录、开发日志、测试笔记、会议记录）应该边开发边写**，不应拖到 ddl 才回忆。课程评分看的是**过程**——素材从哪积累、最终报告就有多少话可说。
 
@@ -43,9 +43,9 @@
 
 ## 小组成员（排名不分先后）
 
-暂定分工（2026-09-20）：
+当前分工：
 
-| 姓名 | 暂定负责部分 | GitHub ID |
+| 姓名 | 负责部分 | GitHub ID |
 |------|----------|-----------|
 | MINGJIN LI | 体测、收款、报表 | Matthew-0223 |
 | XINGZHOU PENG | 会员、会员卡 | xing-520 |
@@ -55,53 +55,72 @@
 | WEIJIE ZHOU | 教练、课程、预约 | Q123422 |
 | YUXI ZHU | 课程、预约 | shaun070119 |
 | Guanyu ZHOU | 文档报告编写 | - |
-| Lvzhen ZHOU | 其余部分 | ZnLuAr |
+| Lvzhen ZHOU | 浏览器前端、整体测试与其余部分 | ZnLuAr |
 
 ## 仓库结构
 
-下面展示主要文件，省略各包的 `__init__.py` 和同类业务文件；分层职责见[系统设计](./docs/architecture.md#2-分层架构)。
+下面展示主要文件，省略各包的 `__init__.py` 和同类业务文件；分层职责见[系统架构总览](./docs/architecture.md)。
 
 ```
 .
 ├── main.py                         # 程序入口，解析参数并启动
 ├── src/                            # 应用代码包
-│   ├── app.py                      # 应用协调层：服务管理、登录状态
-│   ├── config.py                   # 配置读取：数据库连接、日志、时区
+│   ├── app.py                      # 应用生命周期与资源装配
+│   ├── config.py                   # 配置读取：数据库、日志、时区与 Web
 │   ├── cmd/                        # 数据库、测试和本机日志命令
-│   │   ├── db.py                   # init：建表；migrate：迁移；seed：演示数据
+│   │   ├── db.py                   # init：建表；check：必需表与版本核对；seed：演示数据
 │   │   ├── logs.py                 # 按本机配置浏览日志快照
 │   │   └── test.py                 # unit/mysql/all：统一测试入口
-│   ├── utils/                      # 工具模块（基础设施）
-│   │   └── logging_config.py       # 日志系统：配置、记录、脱敏、查询
+│   ├── security/                   # 密码格式校验、哈希与验证
+│   ├── logging/                    # 日志生命周期、事件与快照合同
+│   │   ├── lifecycle.py            # 配置与关闭
+│   │   ├── events.py               # 固定操作名、结果与脱敏事件
+│   │   └── snapshots.py            # 固定快照读取与查询
 │   ├── errors/                     # 异常定义与统一处理
 │   ├── models/                     # 数据模型与类型定义
 │   │   └── contracts.py            # 公共类型：Input、View、Page
-│   ├── services/                   # 业务服务层（权限、规则、事务）
+│   ├── logic/                      # 用例层骨架：跨服务编排、Session 与事务
+│   ├── services/                   # 领域服务：权限、数据范围与业务规则
 │   │   ├── auth_service.py         # 账号与权限
 │   │   ├── member_service.py       # 会员档案
-│   │   ├── product_service.py      # 现有产品与门禁占位接口
+│   │   ├── notification_service.py # 站内通知
+│   │   ├── waitlist_service.py     # 候补队列
+│   │   ├── recommendation_service.py # 课程推荐
 │   │   └── ...                     # 其他业务服务
-│   ├── db/                         # 数据访问层
+│   ├── db/                         # 仓储与数据库运行工具
 │   │   ├── connection.py           # 连接池管理
 │   │   ├── *_repo.py               # 各模块数据访问对象（DAO）
 │   │   └── ...
-│   └── ui/                         # 用户界面层
-│       ├── cli/                    # 命令行界面（默认）
-│       │   ├── app.py              # CLI 主循环
-│       │   ├── menus.py            # 菜单定义
-│       │   ├── prompts.py          # 输入收集
-│       │   ├── formatters.py       # 结果展示
-│       │   └── handlers/           # 业务交互处理器
-│       └── tui/                    # 终端界面（可选）
-│           └── app.py              # TUI 启动与关闭
-├── tests/                          # pytest 测试与 MySQL fixture
-│
-├── sql/                            # SQL 脚本（如果不用 ORM 迁移工具）
-│   ├── 001_initial_schema.sql      # 版本 1 的 18 张表建表脚本
-│   └── 002_query_indexes_and_equipment_location.sql # 版本 2 迁移脚本
+│   ├── ui/                         # 用户界面层
+│   │   ├── cli/                    # 命令行界面（默认）
+│   │   │   ├── app.py              # CLI 主循环
+│   │   │   ├── menus.py            # 菜单定义
+│   │   │   ├── prompts.py          # 输入收集
+│   │   │   ├── formatters.py       # 结果展示
+│   │   │   └── handlers/           # 业务交互处理器
+│   │   └── tui/                    # 终端界面（可选）
+│   │       └── app.py              # TUI 入口占位
+│   ├── web/                        # FastAPI HTTP 适配与认证骨架
+│   └── tasks/                      # 单线程周期调度与关闭协调
+├── frontend/                       # Vue、TypeScript 浏览器前端与前端测试
+├── tests/                          # 后端测试
+│   ├── contracts/                  # 架构与源码声明一致性
+│   ├── unit/                       # 配置、交互与资源单元测试
+│   ├── api/                        # 使用 Logic 替身的 HTTP 适配测试
+│   ├── integration/                # 独立 MySQL 集成测试
+│   └── support/                    # 共享 CLI 与 MySQL fixture
+├── sql/                            # 数据库初始结构脚本
+│   └── 001_initial_schema.sql      # v4 初始结构
+├── requirements/                   # 按运行场景分组的 Python 依赖
+│   ├── core.txt                    # 默认 CLI 与数据库依赖
+│   ├── web.txt                     # Web API 运行依赖
+│   ├── dev.txt                     # 开发与测试工具
+│   └── all.txt                     # 全部运行依赖，不含测试工具
 ├── docs/                           # 文档目录
 │   ├── README.md                   # 文档索引
-│   ├── architecture.md             # 系统设计与架构方案
+│   ├── architecture.md             # 系统架构总览
+│   ├── architecture/backend.md     # 后端架构与接口合同
+│   ├── architecture/frontend.md    # 前端架构与交互合同
 │   ├── project-standards.md        # 代码与文档规范
 │   ├── feature-list.csv            # 功能清单与实现状态
 │   └── dev-materials-for-report/   # 报告素材（开发日志、决策记录等）
@@ -110,22 +129,30 @@
 └── README.md                       # 本文件
 ```
 
-`__init__.py` 标识 Python 包，异常包还统一导出公共类型；`.gitkeep` 用来保留尚无用例的测试目录。共用的数据类型在 [contracts.py](./src/models/contracts.py)，可从 [MemberService](./src/services/member_service.py) 查看方法签名和中文说明的写法。
+`__init__.py` 标识 Python 包，异常包还统一导出公共类型。共用的数据类型在 [contracts.py](./src/models/contracts.py)；[会员档案服务](./src/services/member_service.py)展示公开方法签名和中文说明的写法。后端测试分类与运行步骤见 [tests/README.md](./tests/README.md)，浏览器应用与测试见 [frontend/README.md](./frontend/README.md)。
 
-**当前状态**：SYS 基础层已经提供参数解析、配置读取、资源装配、公共 CLI 输入/分页和统一测试入口；业务服务、账号登录、日志与统一错误处理仍按分工逐步接入。`docs/architecture.md` 已确定 v3 目标合同，业务模型、服务、CLI、SQL 和测试需按该合同同步实现。未实现的方法继续用 `NotImplementedError` 明确标记。`--help` 和 `python -m src.cmd.test` 不需要 MySQL；正式业务启动需要配置文件、MySQL 结构和已接入的登录服务。
+**当前状态**：SYS 基础层、v4 数据库初始化与检查、Service/Logic、CLI 装配、Web 认证路由和 Worker 骨架已接入。浏览器端 `frontend/` 已建立登录表单、角色导航、身份恢复、API 客户端与测试入口；领域方法、CLI 操作和浏览器业务页仍为占位，真实 MySQL 建表和业务联调待验证。架构入口见 `docs/architecture.md`，详细合同分别见前后端分册。`--help` 和 `python -m src.cmd.test` 不连接 MySQL；正式业务流程需完成身份及业务方法实现。
 
-常用命令（均在仓库根目录执行）：
+默认 CLI 与 Web API 都会启动候补核对和推荐刷新的周期任务；关闭应用时先等待任务退出，再释放数据库连接池。任务调用的领域方法仍为占位。
+
+已验证的帮助与默认测试命令（先按[安装步骤](./docs/README.md#安装与测试命令)准备依赖，在仓库根目录执行）：
 
 ```bash
 python main.py --help
-python -m src.cmd.db init --config config.json
-python -m src.cmd.db migrate --config config.json
-python -m src.cmd.db seed --config config.json
 python -m src.cmd.test
-python -m src.cmd.test mysql --config config.test.json
 ```
 
-文档组织与协作方式沿用上学期 [CS2-G10-OOP](https://github.com/ZnLuAr/CS2-G10-OOP) 的经验，具体设计随本项目开发逐步补充。
+数据库操作命令待专用 MySQL 环境就绪后验证。先创建空数据库，将连接信息填入本地 `config.json`，再按需执行：
+
+```bash
+python -m src.cmd.db init --config config.json
+python -m src.cmd.db check --config config.json
+python -m src.cmd.db seed --config config.json
+```
+
+`init` 建立 v4 表结构，`check` 核对必需表和结构版本，`seed` 交互输入四类演示密码。连接失败时检查 MySQL 服务和配置；目标库已有对象时，改用新建空库初始化。专用测试库准备与清理规则见[后端测试说明](./tests/README.md#mysql-集成测试)。
+
+文档组织、协作步骤和技术合同见本项目的参与指引、项目规范与架构分册。
 
 ## 小组协作规范
 
@@ -205,7 +232,7 @@ git diff
 # - 业务逻辑：返回类型、异常、事务、业务规则
 # - 安全性：输入验证、SQL 注入、密码处理
 # - 代码质量：命名、职责、复杂度、错误处理
-# - 文档同步：architecture.md 是否需要更新
+# - 文档同步：对应架构分册、参与说明和功能清单
 
 # 暂存和提交
 git add <文件名>
@@ -324,8 +351,9 @@ git branch              # 查看所有分支，* 表示当前分支
 
 **解决方法：**
 ```bash
-# 先拉取远程代码
-git pull origin dev
+# 以当前功能分支 feat/member-crud 为例，先取得远程更新
+git fetch origin
+git merge origin/feat/member-crud
 
 # 如果有冲突，Git 会提示哪些文件冲突了
 # 打开冲突文件，找到 <<<<<<< 和 >>>>>>> 标记
@@ -334,10 +362,10 @@ git pull origin dev
 # 解决冲突后，重新提交
 git add <冲突文件>
 git commit -m "fix: 解决合并冲突"
-git push origin dev
+git push origin feat/member-crud
 ```
 
-**不确定怎么解决？先找组员帮忙，不要用 `--force` 强制推送！**
+合并成功后，重新运行相关检查并推送当前功能分支，PR 会自动更新。若提示远程分支不存在，先用 `git branch -vv` 确认分支与跟踪关系；冲突含义不清楚时，与负责该模块的组员共同核对。
 </details>
 
 <details>
@@ -405,8 +433,10 @@ git reset --soft HEAD~1     # 撤销最后一次提交记录，修改仍保留�
 
 ## 技术栈
 
-已确定 **Python 3.10+ + MySQL 8.4**。默认使用文本菜单 CLI，`--tui` 启用可选终端界面；核心功能先在 CLI 完成。CLI 和 TUI 共用业务服务，TUI 未完成或未安装其依赖不影响 CLI。
+已确定 **Python 3.10+ + MySQL 8.4**。默认使用文本菜单 CLI，`--tui` 选择可选终端界面，当前会提示尚未就绪；核心功能先在 CLI 完成。CLI 与 TUI 通过相同 Logic 用例使用业务服务。
 
-数据库访问使用 SQLAlchemy 2 + PyMySQL，密码哈希使用 argon2-cffi，测试使用 pytest；依赖分别列在 `requirements.txt` 和 `requirements-dev.txt`，Windows 环境安装 `tzdata` 提供时区数据。日志使用项目约定的日志模块；TUI 依赖按可选界面单独接入。Git / GitHub 用于团队协作。
+数据库访问使用 SQLAlchemy 2 + PyMySQL，密码哈希使用 argon2-cffi，Windows 环境安装 `tzdata` 提供时区数据。依赖按运行场景放在 `requirements/`：`core.txt` 是默认 CLI 的最小运行依赖，`web.txt` 在核心依赖上增加 Web API，`all.txt` 汇总全部运行依赖，`dev.txt` 放测试工具。日志使用项目约定的日志模块；TUI 依赖按可选界面单独接入。Git / GitHub 用于团队协作。
 
-第一版面向可信教学终端，直接连接 MySQL；以后若面向不可信的会员设备，再增加由服务器保管数据库凭据的接口。分层与使用方式见[系统设计](./docs/architecture.md)。
+Web API 使用 FastAPI、Pydantic 2、Uvicorn 和 PyJWT。浏览器应用位于 `frontend/`，使用 Vue 3、TypeScript、Vite、Vue Router、Pinia、TanStack Query 与 Axios；Vitest 和 Playwright 分别承担单元测试与浏览器测试。安装和启动步骤见[参与指引](./docs/README.md)。
+
+CLI 在可信教学终端连接 MySQL；Web 前端通过服务器提供的 API 访问业务，数据库凭据由后端保管。两种入口共用 Logic 用例。分层与使用方式见[系统架构总览](./docs/architecture.md)及其前后端分册。

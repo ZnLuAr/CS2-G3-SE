@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from src.config import LogConfig
@@ -28,98 +27,100 @@ class AuthService:
     """账号与权限服务。
 
     actor 来自可信登录会话，方法仍须检查权限与数据归属。
-    输入字段见 models/contracts.py；实现后遵守 docs/architecture.md“开发前必读”的返回、异常、权限和事务约定。
+    输入字段见 models/contracts.py；实现后遵守 docs/architecture/backend.md 的返回、异常、权限和事务约定。
     构造函数保存依赖；业务方法仍为占位。
     """
 
     def __init__(
-        self, session_factory: Callable[[], Session], *, log_config: LogConfig,
+        self, *, log_config: LogConfig,
     ) -> None:
-        """接收会话工厂和配置解析后的日志配置。"""
-        self._session_factory = session_factory
+        """接收配置解析后的日志配置。"""
         self._log_config = log_config
 
-    def login(self, username: str, password: str) -> Actor:
+    def login(self, session: Session, username: str, password: str) -> Actor:
         """校验凭据并取得当前操作者。
 
         用户名去首尾空白并转小写，只允许 3–50 位 ASCII 字母、数字和下划线。
         密码原样处理，允许 A–Z、a–z、0–9、短横线和下划线，共 6–32 位；不做强度检测。
-        member/coach 角色必须关联唯一且启用的对应档案；员工角色不得关联会员或教练档案。
-        账号停用、档案不匹配、未关联或关联档案停用时抛 AuthenticationError。
+        member 角色关联唯一会员档案，active 与 archived 档案均可登录；coach 角色关联启用教练档案。
+        员工角色按账号合同校验档案关联；凭据、账号状态、关联或教练状态无效时抛 AuthenticationError。
         返回：Actor。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.login 尚未实现")
 
-    def create_account(self, actor: Actor, data: AccountInput) -> AccountView:
+    def create_account(self, session: Session, actor: Actor, data: AccountInput) -> AccountView:
         """创建账号。
 
-        用户名和密码格式见 docs/architecture.md“数据边界规则”；实现时密码须哈希保存。
-        返回：AccountView。在同一服务事务中修改对应记录，失败清理后抛异常。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        用户名和密码格式见 docs/architecture/backend.md；实现时密码须哈希保存。
+        返回：AccountView。数据变更由调用方 Logic 在本次事务中提交；失败时由 Logic 回滚并传播异常。
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.create_account 尚未实现")
 
-    def get_account(self, actor: Actor, account_id: int) -> AccountView:
+    def get_account(self, session: Session, actor: Actor, account_id: int) -> AccountView:
         """查询账号详情。
 
         返回：AccountView。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.get_account 尚未实现")
 
-    def list_accounts(self, actor: Actor, query: NamedQuery) -> Page[AccountView]:
+    def list_accounts(self, session: Session, actor: Actor, query: NamedQuery) -> Page[AccountView]:
         """分页查询账号。
 
         返回：Page[AccountView]。不修改业务数据。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.list_accounts 尚未实现")
 
-    def set_account_active(self, actor: Actor, account_id: int, active: bool) -> AccountView:
+    def set_account_active(self, session: Session, actor: Actor, account_id: int, active: bool) -> AccountView:
         """停用或恢复账号。
 
         将操作者和目标账号统一按编号升序锁定；停用管理员时，同一次锁定当前读还要
         包含全部启用管理员。锁内复核操作者、目标状态和启用管理员数量。
-        返回：AccountView。在同一服务事务中修改对应记录，失败清理后抛异常。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        返回：AccountView。数据变更由调用方 Logic 在本次事务中提交；失败时由 Logic 回滚并传播异常。
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.set_account_active 尚未实现")
 
-    def link_member(self, actor: Actor, data: MemberAccountLinkInput) -> AccountView:
+    def link_member(self, session: Session, actor: Actor, data: MemberAccountLinkInput) -> AccountView:
         """将会员档案关联到会员账号。
 
         操作者账号和目标账号按编号升序锁定，再锁定会员档案；数据库双向唯一约束作为最终防重。
         账号角色不是 member 抛 InvalidState；重复关联返回当前结果。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.link_member 尚未实现")
 
-    def link_coach(self, actor: Actor, data: CoachAccountLinkInput) -> AccountView:
+    def link_coach(self, session: Session, actor: Actor, data: CoachAccountLinkInput) -> AccountView:
         """将教练档案关联到教练账号。
 
         操作者账号和目标账号按编号升序锁定，再锁定教练档案；数据库双向唯一约束作为最终防重。
         账号角色不是 coach 抛 InvalidState；重复关联返回当前结果。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.link_coach 尚未实现")
 
-    def relink_member(self, actor: Actor, account_id: int, member_id: int) -> AccountView:
-        """将会员档案移交给指定的会员账号。
+    def relink_member(self, session: Session, actor: Actor, account_id: int, member_id: int) -> AccountView:
+        """管理员为目标会员账号更换关联档案，返回最新 AccountView。
 
-        先只读取得旧账号，再将操作者、旧账号和目标账号去重后按编号升序统一锁定，最后锁档案；关联变化时最多重开 3 次。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        输入目标账号和新会员编号；先升序锁操作者与目标账号，再升序锁旧、新会员档案。
+        同一事务释放目标账号的原关联并建立新关联；新档案已被其他账号关联时抛 ConflictError。
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.relink_member 尚未实现")
 
-    def relink_coach(self, actor: Actor, account_id: int, coach_id: int) -> AccountView:
-        """将教练档案移交给指定的教练账号。
+    def relink_coach(self, session: Session, actor: Actor, account_id: int, coach_id: int) -> AccountView:
+        """管理员为目标教练账号更换关联档案，返回最新 AccountView。
 
-        先只读取得旧账号，再将操作者、旧账号和目标账号去重后按编号升序统一锁定，最后锁档案；关联变化时最多重开 3 次。
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        输入目标账号和新教练编号；先升序锁操作者与目标账号，再升序锁旧、新教练档案。
+        同一事务释放原关联并建立新关联；教练停用抛 InvalidState，档案已关联其他账号抛 ConflictError。
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.relink_coach 尚未实现")
 
     def verify_actor(self, session: Session, actor: Actor) -> Actor:
-        """锁定并重验账号、角色档案不变量及档案启用状态。
+        """以当前 Session 锁定并复核账号、角色与关联，返回可信 Actor。
 
         先锁当前账号，再通过 lock_profile_links 锁定并读取关联会员或教练的完整记录，
-        以锁内记录复核关联和 is_active；锁持有到调用方事务结束，不自行提交。
+        以锁内记录复核账号与教练的启用状态；归档会员仍可返回可信身份。
+        锁持有到调用方 Logic 结束事务。
         账号停用或档案移交一旦提交，旧 Actor 的后续复核抛 AuthenticationError。"""
         raise NotImplementedError("AuthService.verify_actor 尚未实现")
 
-    def open_log_snapshot(self, actor: Actor) -> LogSnapshot:
+    def open_log_snapshot(self, session: Session, actor: Actor) -> LogSnapshot:
         """取得管理员本次日志浏览使用的固定快照。
 
         返回：LogSnapshot；非管理员抛 PermissionDenied，读取失败抛 ResourceError。
@@ -127,7 +128,7 @@ class AuthService:
         raise NotImplementedError("AuthService.open_log_snapshot 尚未实现")
 
     def query_logs(
-        self,
+        self, session: Session,
         actor: Actor,
         query: LogQuery,
         *,
@@ -155,5 +156,5 @@ class AuthService:
         - 跨进程文件锁保护
         - 只有管理员可以查询日志
 
-        异常：当前为 NotImplementedError；实现后遵守 docs/architecture.md“开发前必读”的输入、权限、异常和事务约定。"""
+        异常：当前为 NotImplementedError；实现后遵守 docs/architecture/backend.md 的输入、权限、异常和事务约定。"""
         raise NotImplementedError("AuthService.query_logs 尚未实现")

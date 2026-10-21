@@ -14,5 +14,14 @@
     "level": "INFO",
     "max_bytes": 5242880,
     "backup_count": 3
+  },
+  "web": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "allowed_origins": [],
+    "issuer": "cs2-group3-se",
+    "audience": "cs2-group3-se-web",
+    "token_lifetime_seconds": 7200,
+    "jwt_secret_env_var": "GYM_JWT_SECRET"
   }
 }

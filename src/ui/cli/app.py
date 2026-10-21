@@ -9,7 +9,7 @@ from src.errors.handler import handle_error
 from src.models.contracts import Actor
 from src.ui.cli import menus
 from src.ui.cli.menus import CliHandlers, MenuItem
-from src.utils.logging_config import Operation
+from src.logging import Operation
 
 
 def invoke_action(
@@ -64,6 +64,10 @@ class GymCLI:
             sections["9"] = ("报表", menus.report_menu(h.report))
         if actor.role == "admin":
             sections["10"] = ("账号", menus.auth_menu(h.auth))
+        if actor.role == "member":
+            sections["11"] = ("站内通知", menus.notification_menu(h.notification))
+        if actor.role in {"member", "receptionist", "admin"}:
+            sections["12"] = ("课程推荐", menus.recommendation_menu(h.recommendation))
         return sections
 
     def _execute(self, item: MenuItem, actor_id: int | None) -> str:

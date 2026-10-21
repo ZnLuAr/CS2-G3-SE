@@ -1,0 +1,3 @@
+# 全部运行依赖：核心 CLI/数据库和 Web API；不含测试工具
+-r core.txt
+-r web.txt

@@ -2,7 +2,7 @@
 
 用法：
     python -m src.cmd.db init   # 初始化数据库（建表）
-    python -m src.cmd.db migrate  # 将已有数据库迁移到当前版本
+    python -m src.cmd.db check   # 核对必需表和结构版本
     python -m src.cmd.db seed   # 生成演示数据
 """
 
@@ -25,12 +25,11 @@ class InitResult:
 
 
 @dataclass(frozen=True, kw_only=True)
-class MigrationResult:
-    """数据库迁移结果。"""
+class SchemaCheckResult:
+    """数据库结构版本核对结果。"""
 
-    previous_version: int
-    schema_version: int
-    steps_applied: int
+    current_version: int
+    required_version: int
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -61,7 +60,7 @@ def init_database(connection: Connection) -> InitResult:
 
     执行：
     - 逐表创建（按依赖顺序）
-    - 建表完成后记录版本 3（数据库天生即 v3，无迁移链）
+    - 建表完成后记录结构版本 4
 
     失败处理：
     - MySQL 建表会隐式提交，不能回滚
@@ -98,18 +97,9 @@ def init_database(connection: Connection) -> InitResult:
     ]
     if not schema_statements:
         raise StorageError("数据库初始化脚本为空")
-    expected_tables = (
-        "schema_versions", "accounts", "members", "coaches",
-        "member_account_links", "coach_account_links",
-        "courses", "rooms", "course_sessions",
-        "equipment", "maintenance_records", "body_measurements", "operation_records",
-        "gym_card_products", "duration_gym_card_products", "visit_gym_card_products",
-        "lesson_package_products", "lesson_package_gift_rules",
-        "sale_orders", "sale_items", "gym_card_sale_items", "lesson_package_sale_items",
-        "payments", "gift_grants",
-        "gym_cards", "duration_gym_cards", "visit_gym_cards", "lesson_packages",
-        "bookings", "gym_entries", "reviews",
-    )
+    from src.db.connection import REQUIRED_SCHEMA_TABLES
+
+    expected_tables = REQUIRED_SCHEMA_TABLES
     schema_steps: list[tuple[str, str, str]] = []
     created_tables: list[str] = []
     current_table: str | None = None
@@ -139,7 +129,7 @@ def init_database(connection: Connection) -> InitResult:
         schema_steps.append((table_name, step_name, statement))
 
     if tuple(created_tables) != expected_tables:
-        raise StorageError("数据库初始化脚本的表名、顺序或数量不符合 v3 结构设计")
+        raise StorageError("数据库初始化脚本的表名、顺序或数量不符合 v4 结构设计")
     lock_name = "cs2g3:schema:" + hashlib.sha256(
         str(connection.engine.url.database).encode("utf-8")
     ).hexdigest()[:40]
@@ -180,9 +170,9 @@ def init_database(connection: Connection) -> InitResult:
                 completed_tables.append(table_name)
             current_step = None
 
-        # 记录版本号（天生 v3，一次建成，不经过迁移链）
+        # 记录当前结构版本。
         current_step = "schema_versions.version"
-        connection.execute(text("INSERT INTO schema_versions (version) VALUES (3)"))
+        connection.execute(text("INSERT INTO schema_versions (version) VALUES (4)"))
         try:
             connection.commit()
         except BaseException as exc:
@@ -196,7 +186,7 @@ def init_database(connection: Connection) -> InitResult:
 
         return InitResult(
             tables_created=tables_created,
-            schema_version=3,
+            schema_version=4,
         )
 
     except InvalidState:
@@ -231,35 +221,54 @@ def init_database(connection: Connection) -> InitResult:
                     pass
 
 
-def migrate_database(connection: Connection) -> MigrationResult:
-    """数据库天生即 v3，没有迁移链。
+def check_database_schema(connection: Connection) -> SchemaCheckResult:
+    """核对必需表和数据库记录的结构版本。
 
     输入：命令持有的专用数据库连接。
-    返回：MigrationResult；已是版本 3 时 steps_applied=0。
-    数据变更：无。仅核对 schema_versions 已记录版本 3。
-
-    本项目为全新构建，`001_initial_schema.sql` 一次建成 v3 全部表并写入版本 3。
-    若将来需从真实 v2 部署导入数据，见 docs/archive/schema/v2-to-v3-migration.md。
+    返回：SchemaCheckResult；记录当前版本和要求版本。
+    数据变更：无。读取必需表和 schema_versions，确认结构版本为 4。
     """
     from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
     from src.errors.business import InvalidState
-    from src.db.connection import CURRENT_SCHEMA_VERSION
+    from src.errors.storage import StorageError
+    from src.db.connection import CURRENT_SCHEMA_VERSION, REQUIRED_SCHEMA_TABLES
 
-    current = connection.execute(
-        text("SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1")
-    ).fetchone()
+    try:
+        result = connection.execute(
+            text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
+            )
+        )
+        actual_tables = {row[0] for row in result.fetchall()}
+        if "schema_versions" not in actual_tables:
+            raise InvalidState("数据库未初始化，请先运行：python -m src.cmd.db init")
+        missing = sorted(set(REQUIRED_SCHEMA_TABLES) - actual_tables)
+        if missing:
+            raise InvalidState(f"数据库结构不完整，缺少：{', '.join(missing)}")
+        current = connection.execute(
+            text("SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1")
+        ).fetchone()
+    except InvalidState:
+        raise
+    except SQLAlchemyError as exc:
+        driver_error = getattr(exc, "orig", None)
+        driver_args = getattr(driver_error, "args", ())
+        if driver_args and driver_args[0] == 1146:
+            raise InvalidState("数据库版本记录缺失，请先运行：python -m src.cmd.db init") from exc
+        raise StorageError("数据库结构检查失败") from exc
     if current is None:
         raise InvalidState("数据库版本记录缺失，请先运行：python -m src.cmd.db init")
     previous_version = int(current[0])
     if previous_version != CURRENT_SCHEMA_VERSION:
         raise InvalidState(
-            f"数据库版本 {previous_version} 无迁移路径到 {CURRENT_SCHEMA_VERSION}；"
-            f"本项目天生即 v3，请使用全新数据库执行 init"
+            f"数据库结构版本为 {previous_version}，要求版本为 {CURRENT_SCHEMA_VERSION}；"
+            "请使用符合目标结构版本的数据库"
         )
-    return MigrationResult(
-        previous_version=previous_version,
-        schema_version=CURRENT_SCHEMA_VERSION,
-        steps_applied=0,
+    return SchemaCheckResult(
+        current_version=previous_version,
+        required_version=CURRENT_SCHEMA_VERSION,
     )
 
 
@@ -304,7 +313,7 @@ def seed_demo_data(
     from src.errors.base import GymError
     from src.errors.business import InvalidState, ConflictError, InvalidInputError
     from src.errors.storage import StorageError
-    from src.utils.passwords import hash_password
+    from src.security.passwords import hash_password
 
     try:
         password_values = (
@@ -365,7 +374,7 @@ def seed_demo_data(
             )
             account_ids[role] = result.lastrowid
 
-        # 生成会员档案（v3: 不含 account_id/is_active，status 默认 active）
+        # 创建会员档案。
         random_source = random.Random(seed)
         member_phone = "1" + "".join(str(random_source.randrange(10)) for _ in range(10))
 
@@ -383,7 +392,7 @@ def seed_demo_data(
         )
         member_id = result.lastrowid
 
-        # 生成教练档案（v3: 不含 account_id/specialty/is_active，specialty 已删除）
+        # 创建教练档案。
         coach_phone = "1" + "".join(str(random_source.randrange(10)) for _ in range(10))
         result = session.execute(
             text(
@@ -399,7 +408,7 @@ def seed_demo_data(
         )
         coach_id = result.lastrowid
 
-        # 建立账号-档案关联（v3 新增的 account_links 表）
+        # 建立账号与档案的关联。
         session.execute(
             text(
                 """
@@ -446,7 +455,7 @@ def main(argv: list[str] | None = None) -> int:
 
     解析命令：
     - init：初始化数据库
-    - migrate：迁移已有数据库
+    - check：核对必需表和数据库结构版本
     - seed：生成演示数据
 
     失败处理：
@@ -477,8 +486,8 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     init_parser = subparsers.add_parser("init", help="初始化空数据库")
     init_parser.add_argument("--config", dest="config_path", help="配置文件路径")
-    migrate_parser = subparsers.add_parser("migrate", help="迁移已有数据库")
-    migrate_parser.add_argument("--config", dest="config_path", help="配置文件路径")
+    check_parser = subparsers.add_parser("check", help="核对必需表和结构版本")
+    check_parser.add_argument("--config", dest="config_path", help="配置文件路径")
     seed_parser = subparsers.add_parser("seed", help="生成演示数据")
     seed_parser.add_argument("--config", dest="config_path", help="配置文件路径")
     seed_parser.add_argument("--seed", type=int, help="电话随机种子")
@@ -503,13 +512,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"✓ 数据库版本：{init_result.schema_version}")
             exit_code = 0
 
-        elif options.command == "migrate":
+        elif options.command == "check":
             check_connection(engine)
-            print("正在迁移数据库...")
+            print("正在核对必需表和数据库结构版本...")
             with engine.connect() as conn:
-                migration_result = migrate_database(conn)
-            print(f"✓ 数据库版本：{migration_result.schema_version}")
-            print(f"✓ 本次执行 {migration_result.steps_applied} 个迁移步骤")
+                check_result = check_database_schema(conn)
+            print(f"✓ 当前结构版本：{check_result.current_version}")
+            print(f"✓ 要求结构版本：{check_result.required_version}")
             exit_code = 0
 
         elif options.command == "seed":

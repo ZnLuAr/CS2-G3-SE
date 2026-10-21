@@ -1,0 +1,68 @@
+:root {
+  font-family: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+  color: #20354a;
+  background: #f3f6fa;
+  font-size: 16px;
+  line-height: 1.65;
+  font-synthesis: none;
+  --blue: #124e78;
+  --border: #d6e0ea;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: var(--blue); text-decoration: none; }
+button, input { font: inherit; }
+button { cursor: pointer; border: 1px solid var(--blue); border-radius: 5px; padding: .65rem 1.2rem; background: var(--blue); color: white; font-weight: 600; }
+button:disabled { opacity: .6; cursor: wait; }
+input { width: 100%; padding: .7rem .8rem; border: 1px solid #92a9be; border-radius: 5px; color: #20354a; background: white; }
+:focus-visible { outline: 3px solid #e3a52b; outline-offset: 3px; }
+h1, h2, p { margin-top: 0; }
+h1 { font-size: 1.85rem; line-height: 1.4; letter-spacing: 0; margin-bottom: .65rem; }
+h2 { font-size: 1.2rem; }
+p { max-width: 65ch; }
+.brand { font-weight: 700; font-size: 1.25rem; white-space: nowrap; }
+.skip-link { position: fixed; left: 1rem; top: -6rem; z-index: 10; background: white; padding: .5rem 1rem; }
+.skip-link:focus { top: .5rem; }
+.login-page { display: grid; grid-template-columns: 1.1fr 1fr; min-height: 100svh; }
+.login-intro { padding: clamp(2rem, 7vw, 7rem); display: flex; flex-direction: column; justify-content: center; background: #e1edf5; border-top: 12px solid var(--blue); }
+.login-intro .brand { margin-bottom: 5rem; }
+.login-intro h1 { font-size: 2.6rem; line-height: 1.6; }
+.login-intro p { color: #405d75; }
+.login-form-panel { width: 100%; max-width: 30rem; padding: 3rem 2.25rem; align-self: center; justify-self: center; }
+.login-form-panel h2 { font-size: 1.75rem; margin-bottom: .5rem; }
+.login-form-panel > p { color: #536b80; margin-bottom: 2.25rem; }
+form label { display: block; font-weight: 600; margin: 1.2rem 0 .5rem; }
+form button { width: 100%; margin-top: 1.7rem; }
+.form-error { color: #a1232d; margin-top: 1rem; font-size: .95rem; }
+.workspace { display: grid; grid-template-columns: 15rem minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100svh; }
+.app-header { grid-column: 1 / -1; min-height: 5rem; padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--border); background: white; }
+.account-area { display: flex; align-items: center; gap: 1.5rem; font-size: .9rem; }
+.button-quiet { background: white; color: var(--blue); border-color: var(--border); padding: .4rem .75rem; }
+.app-sidebar { padding: 1.5rem 1rem; background: #eaf0f6; border-right: 1px solid var(--border); }
+.app-sidebar nav { display: flex; flex-direction: column; gap: .3rem; }
+.app-sidebar a { padding: .6rem 1rem; border-radius: 5px; color: #38556c; }
+.app-sidebar a.router-link-active { background: var(--blue); color: white; font-weight: 600; }
+.workspace-content { padding: 2.5rem clamp(1.25rem, 4vw, 4rem); }
+.page-heading { margin-bottom: 2.5rem; }
+.page-heading p { color: #536b80; }
+.state-panel { padding: 2rem; border: 1px solid var(--border); border-radius: 6px; background: white; }
+.state-panel p:last-child { margin-bottom: 0; color: #536b80; }
+.state-error { border-left: 4px solid #b84a4f; }
+.state-error button { margin-top: .5rem; }
+.state-message { padding: 1rem 0; color: #536b80; }
+.public-content { max-width: 60rem; margin: 8vh auto; padding: 2rem; }
+.status-page .text-link { display: inline-block; margin-top: 1.5rem; text-decoration: underline; }
+@media (max-width: 720px) {
+  .login-page { grid-template-columns: 1fr; }
+  .login-intro { padding: 2rem 1.5rem; }
+  .login-intro .brand { margin-bottom: 1.5rem; }
+  .login-intro h1 { font-size: 2rem; }
+  .login-form-panel { padding: 2rem 1.5rem 3rem; }
+  .workspace { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
+  .app-header { padding: 1rem; flex-wrap: wrap; }
+  .account-area { width: 100%; justify-content: space-between; }
+  .app-sidebar { padding: .75rem; border-right: 0; border-bottom: 1px solid var(--border); }
+  .app-sidebar nav { flex-direction: row; overflow-x: auto; }
+  .app-sidebar a { flex: 0 0 auto; }
+  .workspace-content { padding: 1.5rem 1rem; }
+}

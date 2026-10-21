@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING
 
 from src.models.contracts import (
     CoachInput,
+    CoachUpdateInput,
     CoachView,
     CourseInput,
     CourseKind,
+    CourseQuery,
     CourseView,
     DateWindow,
     NamedQuery,
@@ -50,13 +52,13 @@ class CoachRepository:
         raise NotImplementedError("CoachRepository.list 尚未实现")
 
     def create(self, data: CoachInput) -> CoachView:
-        """保存教练资料和账号关联。
+        """保存独立教练档案；账号关联由身份服务协调。
 
         返回：CoachView；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CoachRepository.create 尚未实现")
 
     def update(self, coach_id: int, data: CoachUpdateInput) -> CoachView:
-        """更新姓名和专长。
+        """完整更新教练姓名和可空联系方式。
 
         返回：CoachView；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CoachRepository.update 尚未实现")
@@ -68,7 +70,9 @@ class CoachRepository:
         raise NotImplementedError("CoachRepository.set_active 尚未实现")
 
     def set_account(self, coach_id: int, account_id: int) -> CoachView:
-        """更改教练账号关联；不能留下无账号的教练。
+        """写入教练账号关联，供身份服务在取得账号和档案锁后调用。
+
+        关联存储于 coach_account_links；公开操作经过 AuthLogic 和 AuthService。
 
         返回：CoachView；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CoachRepository.set_account 尚未实现")
@@ -150,13 +154,13 @@ class RoomRepository:
         raise NotImplementedError("RoomRepository.list 尚未实现")
 
     def create(self, data: RoomInput) -> RoomView:
-        """新增场地与容量。
+        """新增场地名称、可空位置和启用状态。
 
         返回：RoomView；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("RoomRepository.create 尚未实现")
 
     def update(self, room_id: int, data: RoomInput) -> RoomView:
-        """更新场地资料；容量影响由服务检查。
+        """完整更新场地名称和可空位置。
 
         返回：RoomView；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("RoomRepository.update 尚未实现")
