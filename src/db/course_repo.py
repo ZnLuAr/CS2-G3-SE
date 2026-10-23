@@ -195,6 +195,19 @@ def _session_model(row) -> CourseSession:
     )
 
 
+def load_session_views(session: Session, session_ids: list[int]) -> dict[int, SessionView]:
+    """按编号批量读取课次展示数据，供预约列表一次性组装 SessionView。
+
+    预约列表最多一页 100 条，先批量查课次再在内存中对应，避免逐条查询。
+    """
+    if not session_ids:
+        return {}
+    rows = session.execute(
+        _session_select.where(course_sessions.c.id.in_(set(session_ids)))
+    ).mappings().all()
+    return {int(row["id"]): _session_view(row) for row in rows}
+
+
 def _keyword_condition(column, keyword: str):
     """构造姓名/名称包含匹配条件；用户输入的 % 和 _ 不当作通配符。"""
     keyword = keyword.strip()

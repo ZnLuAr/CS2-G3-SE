@@ -1,14 +1,35 @@
-"""服务内部的数据访问接口。当前仅声明字段与签名，方法尚未实现。"""
+"""防重复操作记录的数据访问实现。
+
+`operation_records` 与业务记录在同一个事务中写入：业务成功但操作记录失败，
+整个事务回滚；操作记录先写、业务失败，也不会留下“成功”的假象。
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import insert, select
+
+from src.db.support import from_db_utc, utc_now
+from src.db.tables import operation_records
 from src.models.contracts import OperationName
 from src.models.operation import OperationRecord
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+def _record(row) -> OperationRecord:
+    """把一行操作记录转换成存储模型。"""
+    return OperationRecord(
+        id=int(row["id"]),
+        request_id=row["request_id"],
+        actor_id=int(row["actor_id"]),
+        operation=row["operation"],
+        payload_hash=row["payload_hash"],
+        result_id=int(row["result_id"]),
+        created_at=from_db_utc(row["created_at"]),
+    )
 
 
 class OperationRepository:
@@ -19,13 +40,14 @@ class OperationRepository:
 
     def __init__(self, session: Session) -> None:
         """接收业务服务当前事务所用的数据库会话。"""
-        raise NotImplementedError("OperationRepository.__init__ 尚未实现")
+        self._session = session
 
     def get_by_request(self, request_id: str) -> OperationRecord | None:
-        """查询原请求对应结果，供服务核对操作者和内容摘要。
-
-        返回：OperationRecord | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("OperationRepository.get_by_request 尚未实现")
+        """按请求编号查询原操作；没有记录返回 None。"""
+        row = self._session.execute(
+            select(operation_records).where(operation_records.c.request_id == request_id)
+        ).mappings().first()
+        return _record(row) if row is not None else None
 
     def create(
         self,
@@ -36,7 +58,19 @@ class OperationRepository:
         payload_hash: str,
         result_id: int,
     ) -> OperationRecord:
-        """保存请求与结果引用；必须和业务记录一起提交。
-
-        返回：OperationRecord；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("OperationRepository.create 尚未实现")
+        """保存请求与结果引用；必须和业务记录一起提交。"""
+        now = utc_now()
+        self._session.execute(
+            insert(operation_records).values(
+                request_id=request_id,
+                actor_id=actor_id,
+                operation=operation,
+                payload_hash=payload_hash,
+                result_id=result_id,
+                created_at=now,
+            )
+        )
+        record = self.get_by_request(request_id)
+        if record is None:
+            raise RuntimeError("操作记录保存后无法读取")
+        return record
