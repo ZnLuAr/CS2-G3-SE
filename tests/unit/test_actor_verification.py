@@ -7,11 +7,13 @@ from datetime import timezone
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from src.config import LogConfig
 from src.db.account_repo import AccountRepository
 from src.errors.business import AuthenticationError
+from src.errors.storage import StorageError
 from src.models.contracts import Actor
 from src.services.auth_service import AuthService
 
@@ -87,6 +89,21 @@ def test_repository_reads_current_account_and_full_linked_profile(actor_db):
     assert member.created_at.tzinfo == timezone.utc
     assert coach is None
     assert repository.lock(999) is None
+
+
+@pytest.mark.parametrize("table", ["accounts", "member_account_links", "coach_account_links"])
+def test_database_lock_failure_returns_safe_storage_error(actor_db, table):
+    """真实 SQL 在账号或档案关联缺表时失败，服务统一异常且保留调用方事务。"""
+    actor_db.execute(text(f"DROP TABLE {table}"))
+    actor_db.commit()
+
+    with pytest.raises(StorageError) as caught:
+        _auth().verify_actor(actor_db, _actor())
+
+    assert str(caught.value) == "复核当前登录身份失败"
+    assert isinstance(caught.value.__cause__, SQLAlchemyError)
+    assert table in str(caught.value.__cause__)
+    assert actor_db.in_transaction()
 
 
 @pytest.mark.parametrize("role", ["admin", "receptionist", "member", "coach"])

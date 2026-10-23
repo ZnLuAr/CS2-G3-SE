@@ -380,7 +380,7 @@ Service 保留角色、数据归属、状态和领域校验。账号管理中需
 | `coach_stats(actor: Actor, window: DateWindow, paging: PageRequest) -> Page[CoachStatsView]` | `ReportService.coach_stats` | 读 |
 | `export_payments(actor: Actor, query: PaymentQuery) -> CsvExport` | `ReportService.export_payments` | 读 |
 | `export_revenue(actor: Actor, window: DateWindow) -> CsvExport` | `ReportService.export_revenue` | 读 |
-| `export_memberships(actor: Actor, as_of: datetime) -> CsvExport` | `ReportService.export_memberships` | 读 |
+| `export_memberships(actor: Actor) -> CsvExport` | `ReportService.export_memberships` | 读 |
 | `export_sessions(actor: Actor, query: SessionQuery) -> CsvExport` | `ReportService.export_sessions` | 读 |
 | `export_coaches(actor: Actor, window: DateWindow) -> CsvExport` | `ReportService.export_coaches` | 读 |
 
@@ -4447,7 +4447,7 @@ class ReportService:
         self, session: Session, actor: Actor, window: DateWindow,
     ) -> CsvExport: ...
     def export_memberships(
-        self, session: Session, actor: Actor, as_of: datetime,
+        self, session: Session, actor: Actor,
     ) -> CsvExport: ...
     def export_sessions(
         self, session: Session, actor: Actor, query: SessionQuery,
@@ -4459,7 +4459,7 @@ class ReportService:
 
 - 收款通过 `Payment.sale_order_id` 关联销售订单；`PaymentView` 返回 `sale_order_id` 和 `member_id`。
 - 收入统计按 `paid_at` 和 `[start, end)` 汇总每笔实际付款，并按 `Payment -> SaleOrder.kind` 分类；订单内同时产生课包与赠卡也只计一笔课包付款，赠卡不产生额外收入。
-- `ReportLogic.membership_stats` 管理同一个 REPEATABLE READ 读取事务；`ReportService` 生成 `as_of` 和门店 `business_date`，分别聚合两个权益表。`export_memberships` 的 `as_of` 参数接收带时区的调用时刻提示，输出使用服务生成的当前统计时刻；CLI 自动传入当前 UTC 时间。
+- `ReportLogic.membership_stats` 管理同一个 REPEATABLE READ 读取事务；`ReportService` 在身份复核后生成一次 UTC 统计时刻 `as_of`，据此计算门店 `business_date`，分别聚合两个权益表。`export_memberships` 复用当前权益统计流程，返回本次读取快照的 CSV。
 - 课次统计按预约当前状态分组；仅课次结束且没有开放预约时，按 `completed / (completed + no_show)` 计算到课率，分母为 0 时返回 `None`。
 - 教练统计按已完成课次和 `completed` 预约统计；私教预约使用哪个课包不改变教练业绩口径。
 - 报表详情和列表失败均抛统一业务异常，不返回临时字典、裸列表或 `None`。
@@ -4478,19 +4478,21 @@ class ReportRepository:
     def membership_stats(
         self, as_of: datetime, *, business_date: date,
     ) -> MembershipStats: ...
-    def session_stats(self, query: SessionQuery) -> Page[SessionStatsView]: ...
+    def session_stats(
+        self, query: SessionQuery, *, as_of: datetime,
+    ) -> Page[SessionStatsView]: ...
     def coach_stats(
         self, window: DateWindow, paging: PageRequest,
     ) -> Page[CoachStatsView]: ...
     def session_stats_batch(
-        self, query: SessionQuery, *, after_id: int = 0, limit: int = 500,
+        self, query: SessionQuery, *, as_of: datetime, after_id: int = 0, limit: int = 500,
     ) -> list[SessionStatsView]: ...
     def coach_stats_batch(
         self, window: DateWindow, *, after_id: int = 0, limit: int = 500,
     ) -> list[CoachStatsView]: ...
 ```
 
-课次批次保留全部 `SessionQuery` 筛选，以课次编号升序读取；教练批次以教练编号升序读取。服务每批最多取 500 行，读取第 10,001 行即报超限。课次到课率使用服务写入 `session.info["report_as_of"]` 的统一时刻，跨批次读取保持相同的统计口径和事务快照。
+课次批次保留全部 `SessionQuery` 筛选，以课次编号升序读取；教练批次以教练编号升序读取。服务每批最多取 500 行，读取第 10,001 行即报超限。课次列表与导出的 `as_of` 为服务生成的带时区 UTC 时刻，通过必填参数传给仓储；一次导出的所有批次使用同一个值。例如导出过程中课次恰好结束，各批次仍按本次固定时刻判断到课率。查询失败抛 `StorageError`，导出路径转换为 `ResourceError`；读取使用 Logic 管理的同一事务，结束时释放会话与身份锁。
 
 ### 13.9 权限、安全与隐私
 

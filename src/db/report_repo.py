@@ -221,9 +221,10 @@ class ReportRepository:
                   for key, value in row.items()}
         return MembershipStats(as_of=as_of, business_date=business_date, **counts)
 
-    def session_stats(self, query: SessionQuery) -> Page[SessionStatsView]:
+    def session_stats(self, query: SessionQuery, *, as_of: datetime) -> Page[SessionStatsView]:
         """应用 SessionQuery 的全部筛选字段，再按 starts_at、session_id 降序稳定分页。
 
+        as_of 为服务固定的带时区统计时刻，用于判断课次是否已经结束。
         返回：分页内每个课次的预约状态数量与已结算到课率。"""
         where, params = _session_filters(query)
         total = self._rows(
@@ -236,7 +237,7 @@ class ReportRepository:
              "offset": (query.paging.page - 1) * query.paging.page_size},
         )
         return Page(
-            items=self._session_views(rows), total=int(total),
+            items=self._session_views(rows, as_of=as_of), total=int(total),
             page=query.paging.page, page_size=query.paging.page_size,
         )
 
@@ -257,8 +258,7 @@ class ReportRepository:
             page=paging.page, page_size=paging.page_size,
         )
 
-    def _session_views(self, rows: list[Any]) -> list[SessionStatsView]:
-        as_of = self._session.info.get("report_as_of") or datetime.now(timezone.utc)
+    def _session_views(self, rows: list[Any], *, as_of: datetime) -> list[SessionStatsView]:
         views = []
         for row in rows:
             denominator = row["completed_count"] + row["no_show_count"]
@@ -280,15 +280,15 @@ class ReportRepository:
         return views
 
     def session_stats_batch(
-        self, query: SessionQuery, *, after_id: int = 0, limit: int = 500,
+        self, query: SessionQuery, *, as_of: datetime, after_id: int = 0, limit: int = 500,
     ) -> list[SessionStatsView]:
-        """按课次主键游标读取导出批次；全部筛选沿用查询合同。"""
+        """按课次主键游标读取导出批次；所有批次复用服务传入的 as_of 和筛选。"""
         where, params = _session_filters(query)
         return self._session_views(self._rows(
             _SESSION_SELECT + f" WHERE {where} AND s.id > :after_id "
             "ORDER BY s.id ASC LIMIT :limit",
             {**params, "after_id": after_id, "limit": limit},
-        ))
+        ), as_of=as_of)
 
     def coach_stats_batch(
         self, window: DateWindow, *, after_id: int = 0, limit: int = 500,

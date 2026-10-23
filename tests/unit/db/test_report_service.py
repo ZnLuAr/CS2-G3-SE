@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -83,6 +84,32 @@ def test_invalid_payment_queries_are_project_errors(service, report_db, query):
         service.list_payments(report_db, ADMIN, query)
 
 
+def test_fall_back_window_uses_utc_order_and_half_open_bounds(service, report_db):
+    zone = ZoneInfo("America/New_York")
+    window = DateWindow(
+        start=datetime(2026, 11, 1, 1, 45, tzinfo=zone, fold=0),
+        end=datetime(2026, 11, 1, 1, 15, tzinfo=zone, fold=1),
+    )
+    repository = PaymentRepository(report_db)
+    included = repository.create(
+        1, 8, Decimal("12.30"), "cash", datetime(2026, 11, 1, 6, tzinfo=timezone.utc), 1,
+    )
+    repository.create(2, 8, Decimal("20.00"), "cash", window.end, 1)
+    result = service.list_payments(report_db, ADMIN, PaymentQuery(window=window))
+    assert result.total == 1
+    assert [item.id for item in result.items] == [included.id]
+
+
+def test_fall_back_window_rejects_utc_reverse_order(service, report_db):
+    zone = ZoneInfo("America/New_York")
+    window = DateWindow(
+        start=datetime(2026, 11, 1, 1, 15, tzinfo=zone, fold=1),
+        end=datetime(2026, 11, 1, 1, 45, tzinfo=zone, fold=0),
+    )
+    with pytest.raises(InvalidInputError, match="开始时间必须早于结束时间"):
+        service.list_payments(report_db, ADMIN, PaymentQuery(window=window))
+
+
 @pytest.mark.parametrize("query", [SessionQuery(kind="group"), SessionQuery(coach_id=False),
                                          SessionQuery(room_id=-1), SessionQuery(status="deleted")])
 def test_invalid_session_filters_are_project_errors(service, report_db, query):
@@ -94,7 +121,7 @@ def test_all_empty_exports_keep_headers(service, report_db):
     exports = [
         service.export_payments(report_db, ADMIN, PaymentQuery()),
         service.export_revenue(report_db, ADMIN, WINDOW),
-        service.export_memberships(report_db, ADMIN, START),
+        service.export_memberships(report_db, ADMIN),
         service.export_sessions(report_db, ADMIN, SessionQuery()),
         service.export_coaches(report_db, ADMIN, WINDOW),
     ]
@@ -148,11 +175,39 @@ def test_csv_handles_formulas_unicode_missing_values_and_negative_numbers(servic
 def test_current_membership_export_generates_its_own_utc_time(service, report_db):
     report_db.execute(text("INSERT INTO members VALUES (1, 'active')"))
     before = datetime.now(timezone.utc)
-    export = service.export_memberships(report_db, ADMIN, START)
+    export = ReportLogic(lambda: report_db, service).export_memberships(ADMIN)
     row = csv_rows(export)[1]
     stamp = datetime.fromisoformat(row[0])
     assert before <= stamp <= datetime.now(timezone.utc)
     assert row[1] == stamp.astimezone(service._zone).date().isoformat()
+
+
+def test_session_export_keeps_one_time_across_batches(service, report_db, monkeypatch):
+    report_db.execute(text("""
+        INSERT INTO course_sessions VALUES
+        (1, 'private', 1, 1, '2026-10-20 10:00:00', '2026-10-20 11:00:00', 'completed'),
+        (2, 'private', 1, 1, '2026-10-20 10:00:00', '2026-10-20 11:00:00', 'completed')
+    """))
+    report_db.execute(text("INSERT INTO bookings VALUES (1, 1, 'completed'), (2, 2, 'completed')"))
+    before_end = datetime(2026, 10, 20, 10, 59, 59, tzinfo=timezone.utc)
+
+    class AdvancingClock(datetime):
+        reads = 0
+
+        @classmethod
+        def now(cls, tz):
+            current = before_end + timedelta(seconds=2 * cls.reads)
+            cls.reads += 1
+            return current.astimezone(tz)
+
+    monkeypatch.setattr("src.services.report_service.datetime", AdvancingClock)
+    monkeypatch.setattr("src.services.report_service._BATCH_SIZE", 1)
+    export = service.export_sessions(report_db, ADMIN, SessionQuery())
+    rows = csv_rows(export)
+    assert export.row_count == 2
+    assert [row[0] for row in rows[1:]] == ["1", "2"]
+    assert [row[-1] for row in rows[1:]] == ["", ""]
+    assert AdvancingClock.reads == 1
 
 
 def test_export_snapshot_failure_uses_resource_error(service, report_db, monkeypatch):

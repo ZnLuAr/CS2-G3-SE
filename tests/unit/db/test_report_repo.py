@@ -16,6 +16,7 @@ from src.models.contracts import DateWindow, PageRequest, SessionQuery
 START = datetime(2026, 10, 20, tzinfo=timezone.utc)
 WINDOW = DateWindow(start=START, end=START + timedelta(days=1))
 TODAY = date(2026, 10, 21)
+AS_OF = datetime(2026, 10, 21, 12, tzinfo=timezone.utc)
 
 
 def test_empty_reports_have_stable_decimal_and_zero_fields(report_db):
@@ -29,7 +30,7 @@ def test_empty_reports_have_stable_decimal_and_zero_fields(report_db):
     stats = repo.membership_stats(START, business_date=TODAY)
     assert all(getattr(stats, field.name) == 0 for field in fields(stats)
                if field.name not in {"as_of", "business_date"})
-    assert repo.session_stats(SessionQuery()).total == 0
+    assert repo.session_stats(SessionQuery(), as_of=AS_OF).total == 0
     assert repo.coach_stats(WINDOW, PageRequest()).items == []
 
 
@@ -109,13 +110,13 @@ def seed_sessions(session):
 def test_session_counts_rate_and_stable_pagination(report_db):
     seed_sessions(report_db)
     repo = ReportRepository(report_db)
-    page = repo.session_stats(SessionQuery(window=WINDOW, paging=PageRequest(page_size=2)))
+    page = repo.session_stats(SessionQuery(window=WINDOW, paging=PageRequest(page_size=2)), as_of=AS_OF)
     assert page.total == 3
     assert [row.session_id for row in page.items] == [4, 2]
     assert all(row.attendance_rate is None for row in page.items)
     second_page = repo.session_stats(SessionQuery(
         window=WINDOW, paging=PageRequest(page=2, page_size=2),
-    ))
+    ), as_of=AS_OF)
     row = second_page.items[0]
     assert row.session_id == 1
     assert (row.completed_count, row.no_show_count, row.cancelled_count) == (2, 1, 1)
@@ -131,7 +132,7 @@ def test_session_counts_rate_and_stable_pagination(report_db):
 ])
 def test_session_query_filters_count_and_data_together(report_db, query, expected):
     seed_sessions(report_db)
-    page = ReportRepository(report_db).session_stats(query)
+    page = ReportRepository(report_db).session_stats(query, as_of=AS_OF)
     assert page.total == len(expected)
     assert [row.session_id for row in page.items] == expected
 
@@ -140,14 +141,15 @@ def test_session_batch_ignores_ui_page_and_retains_snapshot_time(report_db):
     seed_sessions(report_db)
     repo = ReportRepository(report_db)
     query = SessionQuery(window=WINDOW, paging=PageRequest(page=100, page_size=1))
-    assert [row.session_id for row in repo.session_stats_batch(query, limit=2)] == [1, 2]
-    assert [row.session_id for row in repo.session_stats_batch(query, after_id=2)] == [4]
-    future = repo.session_stats_batch(SessionQuery(), after_id=4)
+    assert [row.session_id for row in repo.session_stats_batch(query, as_of=AS_OF, limit=2)] == [1, 2]
+    assert [row.session_id for row in repo.session_stats_batch(query, as_of=AS_OF, after_id=2)] == [4]
+    future = repo.session_stats_batch(SessionQuery(), as_of=AS_OF, after_id=4)
     assert future[0].attendance_rate is None
-    report_db.info["report_as_of"] = datetime(2026, 10, 20, 11, tzinfo=timezone.utc)
-    assert repo.session_stats_batch(query, limit=1)[0].attendance_rate == Decimal(2) / Decimal(3)
-    report_db.info["report_as_of"] -= timedelta(microseconds=1)
-    assert repo.session_stats_batch(query, limit=1)[0].attendance_rate is None
+    ended_at = datetime(2026, 10, 20, 11, tzinfo=timezone.utc)
+    assert repo.session_stats_batch(query, as_of=ended_at, limit=1)[0].attendance_rate == Decimal(2) / Decimal(3)
+    assert repo.session_stats_batch(
+        query, as_of=ended_at - timedelta(microseconds=1), limit=1,
+    )[0].attendance_rate is None
 
 
 def test_coach_aggregation_counts_distinct_completed_sessions_and_completed_bookings(report_db):

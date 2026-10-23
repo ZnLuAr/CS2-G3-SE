@@ -84,14 +84,12 @@ def test_all_exports_save_service_bytes_after_confirmation(monkeypatch, tmp_path
     handler = ReportHandler(logic, _actor, timezone_name="Asia/Shanghai")
     target = tmp_path / "report.csv"
     _input(monkeypatch, [*answers, str(target), "y"])
-    started_at = datetime.now(timezone.utc)
     getattr(handler, action)()
-    finished_at = datetime.now(timezone.utc)
     assert target.read_bytes() == _csv().content
     assert getattr(logic, action).call_count == 1
     assert getattr(logic, action).call_args.args[0] == _actor()
     if action == "export_memberships":
-        assert started_at <= logic.export_memberships.call_args.args[1] <= finished_at
+        logic.export_memberships.assert_called_once_with(_actor())
 
 
 def test_export_does_not_overwrite_existing_file(monkeypatch, tmp_path):

@@ -41,6 +41,7 @@ def _positive_id(value: int) -> None:
 def _window(window: DateWindow) -> None:
     if not isinstance(window, DateWindow):
         raise InvalidInputError("时间范围格式不合法")
+    endpoints = []
     for value in (window.start, window.end):
         if not isinstance(value, datetime) or value.utcoffset() is None:
             raise InvalidInputError("时间范围必须包含时区")
@@ -50,7 +51,8 @@ def _window(window: DateWindow) -> None:
             raise InvalidInputError("时间范围超出数据库可用范围") from exc
         if utc.year < 1000:
             raise InvalidInputError("时间范围超出数据库可用范围")
-    if window.start >= window.end:
+        endpoints.append(utc)
+    if endpoints[0] >= endpoints[1]:
         raise InvalidInputError("开始时间必须早于结束时间")
 
 
@@ -119,14 +121,11 @@ class ReportService:
         self._timezone_name = timezone_name
         self._zone = ZoneInfo(timezone_name)
 
-    def _authorize(self, session: Session, actor: Actor, *, payments: bool = False) -> datetime:
+    def _authorize(self, session: Session, actor: Actor, *, payments: bool = False) -> None:
         actor = self._auth.verify_actor(session, actor)
         roles = ("admin", "receptionist") if payments else ("admin",)
         if actor.role not in roles:
             raise PermissionDenied("当前角色无权查询此报表")
-        as_of = datetime.now(timezone.utc)
-        session.info["report_as_of"] = as_of
-        return as_of
 
     def get_payment(self, session: Session, actor: Actor, payment_id: int) -> PaymentView:
         """前台或管理员按编号查收款；不存在抛 NotFoundError。"""
@@ -155,7 +154,8 @@ class ReportService:
 
     def membership_stats(self, session: Session, actor: Actor) -> MembershipStats:
         """管理员统计当前快照；服务生成统计时刻和门店业务日期。"""
-        as_of = self._authorize(session, actor)
+        self._authorize(session, actor)
+        as_of = datetime.now(timezone.utc)
         return ReportRepository(session).membership_stats(
             as_of, business_date=as_of.astimezone(self._zone).date(),
         )
@@ -164,7 +164,7 @@ class ReportService:
         """管理员按全部筛选条件查询课次统计及已结算到课率。"""
         self._authorize(session, actor)
         _session_query(query)
-        return ReportRepository(session).session_stats(query)
+        return ReportRepository(session).session_stats(query, as_of=datetime.now(timezone.utc))
 
     def coach_stats(
         self, session: Session, actor: Actor, window: DateWindow, paging: PageRequest,
@@ -248,14 +248,9 @@ class ReportService:
         )
 
     @_export_resources
-    def export_memberships(self, session: Session, actor: Actor, as_of: datetime) -> CsvExport:
-        """管理员导出本次快照统计；as_of 为调用时间提示，统计时间由服务生成。"""
-        now = self._authorize(session, actor)
-        if not isinstance(as_of, datetime) or as_of.utcoffset() is None:
-            raise InvalidInputError("统计时间必须包含时区")
-        result = ReportRepository(session).membership_stats(
-            now, business_date=now.astimezone(self._zone).date(),
-        )
+    def export_memberships(self, session: Session, actor: Actor) -> CsvExport:
+        """管理员导出当前权益快照，沿用屏幕统计的身份、时刻和业务日期口径。"""
+        result = self.membership_stats(session, actor)
         names = [field.name for field in fields(MembershipStats)]
         rows = [[getattr(result, name) for name in names]]
         if not any(getattr(result, name) for name in names[2:]):
@@ -267,12 +262,14 @@ class ReportService:
         """管理员以同一快照、全部筛选条件导出课次统计。"""
         self._authorize(session, actor)
         _session_query(query, paging=False)
+        as_of = datetime.now(timezone.utc)
         repository = ReportRepository(session)
         rows = []
         after_id = 0
         while True:
             batch = repository.session_stats_batch(
-                query, after_id=after_id, limit=min(_BATCH_SIZE, _EXPORT_LIMIT + 1 - len(rows)),
+                query, as_of=as_of, after_id=after_id,
+                limit=min(_BATCH_SIZE, _EXPORT_LIMIT + 1 - len(rows)),
             )
             if not batch:
                 break

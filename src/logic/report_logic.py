@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
 from typing import TYPE_CHECKING, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -63,8 +62,8 @@ class ReportLogic:
     def export_revenue(self, actor: Actor, window: DateWindow) -> CsvExport:
         return self._read(lambda session: self._report_service.export_revenue(session, actor, window), export=True)
 
-    def export_memberships(self, actor: Actor, as_of: datetime) -> CsvExport:
-        return self._read(lambda session: self._report_service.export_memberships(session, actor, as_of), export=True)
+    def export_memberships(self, actor: Actor) -> CsvExport:
+        return self._read(lambda session: self._report_service.export_memberships(session, actor), export=True)
 
     def export_sessions(self, actor: Actor, query: SessionQuery) -> CsvExport:
         return self._read(lambda session: self._report_service.export_sessions(session, actor, query), export=True)
