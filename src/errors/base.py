@@ -25,5 +25,10 @@ class GymError(Exception):
     message: str
 
     def __init__(self, message: str) -> None:
-        """接收可展示的中文错误信息；当前构造方法也仅占位。"""
-        raise NotImplementedError("GymError.__init__ 尚未实现")
+        """接收可展示的中文错误信息，并保存为异常自身的 message 属性。
+
+        统一错误处理入口通过 `message` 生成 ErrorResult，因此这里只保存安全的中文提示，
+        不把 SQL、密码或原始表单内容拼进消息。
+        """
+        super().__init__(message)
+        self.message = message

@@ -21,6 +21,12 @@ class OutcomeUnknownError(StorageError):
     ) -> None:
         """接收安全提示与已验证编号，由统一错误处理器取出；不含原始表单。
 
+        例子：提交预约时连接断开，数据库可能已经写入，也可能没有。此时抛出本异常，
+        界面显示“结果待核实”，用户用 `get_booking_by_request` 按原请求编号查询；
+        不能直接重试，否则可能重复占用课节。
+
         record_id 对应当前操作的原业务记录，创建时未取得编号可以为 None。
-        当前仅声明接口，调用抛 NotImplementedError。"""
-        raise NotImplementedError("OutcomeUnknownError.__init__ 尚未实现")
+        """
+        super().__init__(message)
+        self.request_id = request_id
+        self.record_id = record_id

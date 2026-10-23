@@ -1,0 +1,6 @@
+# 运行依赖：数据库访问使用 SQLAlchemy + PyMySQL，MySQL 版本需 8.0.16 以上。
+SQLAlchemy>=2.0,<2.1
+PyMySQL>=1.1,<2
+
+# 测试依赖：单元与集成测试统一用 pytest 组织。
+pytest>=8,<9
