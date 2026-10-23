@@ -435,6 +435,7 @@ cs2-group3-se/
 **查询单条记录**：
 ```python
 def get_member(self, actor, member_id) -> MemberView:
+    ...
     # 找到了 → 返回 MemberView 对象
     # 找不到 → 抛 NotFoundError
     # 不要返回 None
@@ -443,6 +444,7 @@ def get_member(self, actor, member_id) -> MemberView:
 **查询列表**：
 ```python
 def list_members(self, actor, query) -> Page[MemberView]:
+    ...
     # 有结果 → 返回 Page(items=[...], total=N)
     # 没结果 → 返回 Page(items=[], total=0)
     # 不要返回 None 或裸列表
@@ -451,6 +453,7 @@ def list_members(self, actor, query) -> Page[MemberView]:
 **修改记录**：
 ```python
 def update_member(self, actor, member_id, data) -> MemberView:
+    ...
     # 成功 → 返回修改后的 MemberView 对象
     # 失败 → 抛异常
     # 不要返回 True/False
@@ -2552,6 +2555,16 @@ class AttendanceService:
         
         # 继续签到...
 ```
+
+### 本模块实现补充（2026-10-23）
+
+- 课表可见范围：教练只能查看自己的课次；会员、前台和管理员可以浏览课表。`SessionView` 不包含学员名单，会员浏览公开课表不会泄露其他会员信息。
+- 会员卡日期：课次按 UTC 保存，预约时按门店时区把 `starts_at` 转成上课日期，再检查 `valid_from <= 上课日期 < valid_until`。例如上海时间 00:30 的课归属当天。
+- 取消预约只释放 `reserved_private_lessons` 占用，不扣 `remaining_private_lessons`；消课时才扣实际剩余节数。
+- 请求编号核实只允许原操作者；同一编号携带不同输入时抛 `ConflictError`，不重复写业务数据。
+- 预约写入的锁顺序为：会员 → 课次 → 会员卡 → 预约；取消课次为：课次 → 会员卡（按编号升序）→ 预约。两类操作都先持有课次锁，避免同时卖出最后一个名额。
+- 数据层用 SQLAlchemy Core 表定义（`src/db/tables.py`）在 MySQL 与测试 SQLite 上执行同一套代码；MySQL 建表片段见 `sql/course_booking.sql`，需与账号、会员和会员卡表一起合并到初始化脚本。
+- 请求编号的校验、输入摘要和重复提交核对集中在 `src/services/idempotency.py`；课程/预约 CLI 共用的“留空=不限”输入和日期窗口工具在 `src/ui/cli/handlers/common.py`。
 
 ### 测试要点
 

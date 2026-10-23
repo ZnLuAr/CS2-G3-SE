@@ -17,6 +17,26 @@
 
 ## 日志
 
+### [2026-10-23] 课程与预约模块实现
+
+- **变更内容**：
+  - 新增 `src/db/tables.py` 与 `src/db/support.py`，用 SQLAlchemy Core 定义课程、场地、课次、预约和操作记录等表，并统一 UTC、分页与时间窗口转换。
+  - 实现 `src/db/course_repo.py`、`src/db/booking_repo.py`、`src/db/operation_repo.py` 的仓储读写。
+  - 实现 `CourseService` 的教练、课程模板、场地、排课、取消课次和完成课次；实现 `BookingService` 的预约、取消、详情和列表。
+  - 增加 `src/services/idempotency.py`，统一请求编号校验、输入摘要和重复提交核对。
+  - 实现课程/预约相关格式化函数、`CourseHandler`、`BookingHandler` 及两个模块菜单入口。
+  - 增加 `sql/course_booking.sql` 作为 MySQL 建表片段，并同步 `docs/功能列表.csv`、README 与设计补充说明。
+- **验证**：
+  - 在仓库根目录运行 `.venv/bin/python -m pytest tests/db tests/services tests/ui -q`，69 项通过。
+  - `python -m compileall -q src tests` 通过；`pyflakes` 检查新增和修改文件未发现未定义名称，`src/utils/logging_config.py` 的既有未使用导入保持原状。
+  - 覆盖正常预约、满员、撞期、卡过期/次卡/他人卡、额度不足、取消释放、请求编号重复、提交失败回滚、权限越权和教练课表范围等场景。
+- **遇到的问题**：
+  - 当前分支从 `main` 的 `878229a` 拉出，而 `origin/dev` 已比 `main` 多 20 个提交且架构有变化；向 `dev` 开 PR 前需要先合并 `dev` 并解决冲突，或由负责人确认 PR 目标分支。
+  - 本机 GPG 密钥库在沙箱外，`git commit` 签名失败；本次提交使用 `git -c commit.gpgsign=false` 临时关闭签名，未修改仓库配置。
+  - 账号模块的 `AuthService.verify_actor`、公共 `prompts`、`main.py` 和 `App` 仍是占位，因此课程/预约的完整 CLI 流程还不能从 `python main.py` 启动；服务测试使用 `FakeAuth` 和 SQLite 内存库。
+  - `tests/test_contract_consistency.py` 在重写后的 `docs/architecture.md` 中仍遇到 5 个只含注释或 `...` 参数的示例代码块，属于本次改动前已有的文档问题；另外文档只保留了 accounts/members 两张表的 DDL，无法覆盖其余模块的表。已在文档中补记，未通过修改测试绕过。
+- **遗留问题**：MySQL 真实事务、并发预约/取消和 `SELECT ... FOR UPDATE` 行为尚未验证；课程/预约的端到端 CLI 需等账号模块与基础框架合并后联调。
+
 ### [2026-09-21] 设计审计与架构重新设计
 
 - **变更内容**：

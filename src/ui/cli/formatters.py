@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from src.models.contracts import (
     AccountView,
     BookingView,
@@ -29,6 +32,64 @@ from src.models.contracts import (
     SessionStatsView,
     SessionView,
 )
+
+
+_KIND_LABELS = {"private": "私教"}
+_SESSION_STATUS_LABELS = {
+    "scheduled": "已排课",
+    "completed": "已完成",
+    "cancelled": "已取消",
+}
+_BOOKING_STATUS_LABELS = {
+    "reserved": "已预约",
+    "cancelled": "已取消",
+    "checked_in": "已签到",
+    "completed": "已完成",
+    "no_show": "缺席",
+}
+
+
+def _zone(timezone_name: str):
+    """取得门店时区；配置异常时退回 UTC，保证展示不中断。"""
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return timezone.utc
+
+
+def _time_text(value: datetime | None, zone) -> str:
+    """把 UTC 时刻转成门店时区的“年-月-日 时:分”；空值显示为横线。"""
+    if value is None:
+        return "—"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(zone).strftime("%Y-%m-%d %H:%M")
+
+
+def _range_text(start: datetime | None, end: datetime | None, zone) -> str:
+    """展示时间范围；同一天只显示一次日期，跨午夜时两端都带日期。"""
+    if start is None or end is None:
+        return "—"
+    start_text = _time_text(start, zone)
+    end_text = _time_text(end, zone)
+    if start.astimezone(zone).date() == end.astimezone(zone).date():
+        return f"{start_text}–{end_text.split(' ', 1)[-1]}"
+    return f"{start_text}–{end_text}"
+
+
+def _active_text(is_active: bool) -> str:
+    """启用状态的中文展示。"""
+    return "启用" if is_active else "停用"
+
+
+def _page_text(page, formatter, timezone_name: str, empty_text: str) -> str:
+    """把 Page 渲染成“汇总一行 + 每条一行”；空页也保留总数和页码。"""
+    summary = f"共 {page.total} 条，第 {page.page} 页，每页 {page.page_size} 条"
+    if not page.items:
+        return f"{empty_text}（{summary}）"
+    lines = [summary]
+    lines.extend(formatter(item, timezone_name=timezone_name) for item in page.items)
+    return "\n".join(lines)
 
 
 def format_account(view: AccountView, *, timezone_name: str) -> str:
@@ -74,38 +135,58 @@ def format_entry(view: EntryView, *, timezone_name: str) -> str:
 
 
 def format_coach(view: CoachView, *, timezone_name: str) -> str:
-    """把 CoachView 转成展示文字；不输入、不打印、不查数据库。
-
-    金额、时间、状态和空值的显示规则见设计；当前调用抛 NotImplementedError。"""
-    raise NotImplementedError("format_coach 尚未实现")
+    """把 CoachView 转成展示文字；不输入、不打印、不查数据库。"""
+    specialty = view.specialty or "（未填写）"
+    return (
+        f"教练 #{view.id}：{view.name}｜专长：{specialty}"
+        f"｜状态：{_active_text(view.is_active)}｜账号 #{view.account_id}"
+    )
 
 
 def format_course(view: CourseView, *, timezone_name: str) -> str:
-    """把 CourseView 转成展示文字；不输入、不打印、不查数据库。
-
-    金额、时间、状态和空值的显示规则见设计；当前调用抛 NotImplementedError。"""
-    raise NotImplementedError("format_course 尚未实现")
+    """把 CourseView 转成展示文字；不输入、不打印、不查数据库。"""
+    kind = _KIND_LABELS.get(view.kind, view.kind)
+    return (
+        f"课程 #{view.id}：{view.name}｜类型：{kind}"
+        f"｜默认时长：{view.duration_minutes} 分钟"
+        f"｜状态：{'启用' if view.is_active else '已归档'}"
+    )
 
 
 def format_room(view: RoomView, *, timezone_name: str) -> str:
-    """把 RoomView 转成展示文字；不输入、不打印、不查数据库。
-
-    金额、时间、状态和空值的显示规则见设计；当前调用抛 NotImplementedError。"""
-    raise NotImplementedError("format_room 尚未实现")
+    """把 RoomView 转成展示文字；不输入、不打印、不查数据库。"""
+    return (
+        f"场地 #{view.id}：{view.name}｜容量：{view.capacity} 人"
+        f"｜状态：{_active_text(view.is_active)}"
+    )
 
 
 def format_session(view: SessionView, *, timezone_name: str) -> str:
-    """把 SessionView 转成展示文字；不输入、不打印、不查数据库。
-
-    金额、时间、状态和空值的显示规则见设计；当前调用抛 NotImplementedError。"""
-    raise NotImplementedError("format_session 尚未实现")
+    """把 SessionView 转成展示文字；不输入、不打印、不查数据库。"""
+    zone = _zone(timezone_name)
+    kind = _KIND_LABELS.get(view.kind, view.kind)
+    status = _SESSION_STATUS_LABELS.get(view.status, view.status)
+    return (
+        f"课次 #{view.id}：{_range_text(view.starts_at, view.ends_at, zone)}"
+        f"｜{view.course_name}（{kind}）"
+        f"｜教练：{view.coach_name}｜场地：{view.room_name}"
+        f"｜{view.occupied_count}/{view.capacity} 人"
+        f"｜状态：{status}"
+    )
 
 
 def format_booking(view: BookingView, *, timezone_name: str) -> str:
-    """把 BookingView 转成展示文字；不输入、不打印、不查数据库。
-
-    金额、时间、状态和空值的显示规则见设计；当前调用抛 NotImplementedError。"""
-    raise NotImplementedError("format_booking 尚未实现")
+    """把 BookingView 转成展示文字；不输入、不打印、不查数据库。"""
+    zone = _zone(timezone_name)
+    status = _BOOKING_STATUS_LABELS.get(view.status, view.status)
+    return (
+        f"预约 #{view.id}：{view.member_name}（会员 #{view.member_id}）"
+        f"｜会员卡 #{view.membership_id}｜状态：{status}\n"
+        f"  课次 #{view.session.id}：{_range_text(view.session.starts_at, view.session.ends_at, zone)}"
+        f"｜{view.session.course_name}｜教练：{view.session.coach_name}"
+        f"｜场地：{view.session.room_name}"
+        f"｜预约于 {_time_text(view.booked_at, zone)}"
+    )
 
 
 def format_consumption(view: ConsumptionView, *, timezone_name: str) -> str:
@@ -217,36 +298,31 @@ def format_coaches(page: Page[CoachView], *, timezone_name: str) -> str:
     """把 CoachView 的分页结果转成列表文字。
 
     空页仍读取 Page 的 total 和页码；不接受临时字典或裸列表。"""
-    raise NotImplementedError("format_coaches 尚未实现")
-
+    return _page_text(page, format_coach, timezone_name, "暂无教练记录")
 
 def format_courses(page: Page[CourseView], *, timezone_name: str) -> str:
     """把 CourseView 的分页结果转成列表文字。
 
     空页仍读取 Page 的 total 和页码；不接受临时字典或裸列表。"""
-    raise NotImplementedError("format_courses 尚未实现")
-
+    return _page_text(page, format_course, timezone_name, "暂无课程模板")
 
 def format_rooms(page: Page[RoomView], *, timezone_name: str) -> str:
     """把 RoomView 的分页结果转成列表文字。
 
     空页仍读取 Page 的 total 和页码；不接受临时字典或裸列表。"""
-    raise NotImplementedError("format_rooms 尚未实现")
-
+    return _page_text(page, format_room, timezone_name, "暂无场地记录")
 
 def format_sessions(page: Page[SessionView], *, timezone_name: str) -> str:
     """把 SessionView 的分页结果转成列表文字。
 
     空页仍读取 Page 的 total 和页码；不接受临时字典或裸列表。"""
-    raise NotImplementedError("format_sessions 尚未实现")
-
+    return _page_text(page, format_session, timezone_name, "暂无课次记录")
 
 def format_bookings(page: Page[BookingView], *, timezone_name: str) -> str:
     """把 BookingView 的分页结果转成列表文字。
 
     空页仍读取 Page 的 total 和页码；不接受临时字典或裸列表。"""
-    raise NotImplementedError("format_bookings 尚未实现")
-
+    return _page_text(page, format_booking, timezone_name, "暂无预约记录")
 
 def format_reviews(page: Page[ReviewView], *, timezone_name: str) -> str:
     """把 ReviewView 的分页结果转成列表文字。

@@ -115,7 +115,14 @@
 
 `__init__.py` 标识 Python 包，异常包还统一导出公共类型；`.gitkeep` 用来保留尚无用例的测试目录。共用的数据类型在 [contracts.py](./src/models/contracts.py)，可从 [MemberService](./src/services/member_service.py) 查看方法签名和中文说明的写法。
 
-**当前还不能运行业务流程。** 所有手写函数、构造方法和计算属性都用 `raise NotImplementedError(...)` 占位；调用时表示该方法尚未实现，不代表数据库或环境故障。数据类只定义字段，不执行业务校验。`python main.py`（包括 `--help`、`--tui`）目前也会报未实现；依赖安装和正式运行命令在功能实现并验证后补充。
+**课程与预约模块已实现服务和数据访问，其他模块仍为占位。** 教练、课程模板、场地、排课和预约的服务、SQLAlchemy Core 表定义及 CLI 处理器已有实现；在仓库根目录运行 `.venv/bin/python -m pytest tests/db tests/services tests/ui -q` 可执行课程与预约相关测试。账号、会员卡、签到、报表和基础启动框架仍使用 `raise NotImplementedError(...)` 占位，因此 `python main.py`（包括 `--help`、`--tui`）暂时不能运行。依赖安装命令：
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+课程与预约测试使用 Python 自带的 SQLite 内存库；MySQL 建表片段见 [`sql/course_booking.sql`](sql/course_booking.sql)，并发和真实事务仍需在 MySQL 测试库验证。
 
 文档组织与协作方式沿用上学期 [CS2-G10-OOP](https://github.com/ZnLuAr/CS2-G10-OOP) 的经验，具体设计随本项目开发逐步补充。
 

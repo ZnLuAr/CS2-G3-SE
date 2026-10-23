@@ -19,7 +19,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING, TypeVar
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from src.db.booking_repo import (
     BookingRepository,
@@ -145,6 +145,11 @@ def _write(
     except GymError:
         session.rollback()
         raise
+    except IntegrityError as exc:
+        # 唯一约束冲突通常来自并发重复请求：同一 request_id 或同一会员/课次
+        # 同时写入。已提交的数据没有变化，按业务冲突提示用户核实原结果。
+        session.rollback()
+        raise ConflictError("数据冲突，可能已有相同记录，请核实原结果") from exc
     except SQLAlchemyError as exc:
         session.rollback()
         if committing and request_id is not None:
