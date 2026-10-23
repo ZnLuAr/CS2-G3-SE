@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
@@ -165,9 +164,9 @@ class ReportHandler:
         self._save_export(self._logic.export_revenue(actor, self._window()))
 
     def export_memberships(self) -> None:
-        """以本次调用时刻申请导出当前快照的会员及权益指标。"""
+        """导出由服务统一确定统计时刻的当前会员及权益指标。"""
         actor = self._get_actor()
-        self._save_export(self._logic.export_memberships(actor, datetime.now(timezone.utc)))
+        self._save_export(self._logic.export_memberships(actor))
 
     def export_sessions(self) -> None:
         """导出筛选后的全部课次统计。"""

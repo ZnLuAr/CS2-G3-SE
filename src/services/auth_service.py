@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from src.config import LogConfig
 from src.db.account_repo import AccountRepository
 from src.errors.business import AuthenticationError
+from src.errors.storage import StorageError
 
 from src.models.contracts import (
     AccountInput,
@@ -119,7 +122,8 @@ class AuthService:
         先锁当前账号，再通过 lock_profile_links 锁定并读取关联会员或教练的完整记录，
         以锁内记录复核账号与教练的启用状态；归档会员仍可返回可信身份。
         锁持有到调用方 Logic 结束事务。
-        账号停用或档案移交一旦提交，旧 Actor 的后续复核抛 AuthenticationError。"""
+        账号停用或档案移交一旦提交，旧 Actor 的后续复核抛 AuthenticationError。
+        数据库读取或锁定失败抛 StorageError，提示只包含身份复核失败信息；事务由 Logic 回滚。"""
         if (
             not isinstance(actor, Actor) or type(actor.account_id) is not int
             or not 1 <= actor.account_id <= 2**63 - 1
@@ -129,10 +133,13 @@ class AuthService:
         ):
             raise AuthenticationError("当前登录身份已失效，请重新登录")
         repository = AccountRepository(session)
-        account = repository.lock(actor.account_id)
-        if account is None or not account.is_active or account.role != actor.role:
-            raise AuthenticationError("当前登录身份已失效，请重新登录")
-        member, coach = repository.lock_profile_links(actor.account_id)
+        try:
+            account = repository.lock(actor.account_id)
+            if account is None or not account.is_active or account.role != actor.role:
+                raise AuthenticationError("当前登录身份已失效，请重新登录")
+            member, coach = repository.lock_profile_links(actor.account_id)
+        except SQLAlchemyError as exc:
+            raise StorageError("复核当前登录身份失败") from exc
         if account.role == "member":
             valid = member is not None and coach is None
         elif account.role == "coach":

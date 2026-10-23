@@ -1,6 +1,6 @@
 """使用内存 SQL 数据库验证仓储筛选与聚合，不连接业务库。"""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -47,6 +47,5 @@ def report_db():
         for definition in definitions:
             connection.exec_driver_sql("CREATE TABLE " + definition)
     with Session(engine) as session:
-        session.info["report_as_of"] = datetime(2026, 10, 21, 12, tzinfo=timezone.utc)
         yield session
     engine.dispose()
