@@ -7,6 +7,15 @@
 
 ## 测试思路与策略
 
+### [2026-10-23] PR #9 修复与功能清单排序验证
+
+- **环境与基线**：Windows，使用仓库 `.venv/Scripts/python.exe`。PR #9 的独立临时副本回归为 273 项通过、7 项 MySQL 用例排除、1 条 TestClient 依赖弃用提示；该结果与原测试记录一致。
+- **针对性回归**：在仓库根目录执行 `.venv/Scripts/python.exe -B -X utf8 -m pytest tests/unit/db tests/unit/test_report_cli.py tests/unit/test_actor_verification.py tests/unit/test_measurement.py tests/contracts -q -p no:cacheprovider --tb=short --basetemp tmp/pr9-focused-tests`，182 项通过。
+- **完整回归**：在仓库根目录执行 `.venv/Scripts/python.exe -B -X utf8 -m pytest tests -m 'not mysql' -q -rs --tb=short --basetemp tmp/pr9-regression-tests -p no:cacheprovider`，279 项通过、7 项 MySQL 用例排除，1 条 FastAPI/Starlette TestClient 的依赖弃用提示。
+- **新增 6 项**：纽约夏令时回拨覆盖 UTC 正序及倒序，真实 SQL 同时验证半开结束边界；跨批次导出模拟时钟跨过课次结束时刻，验证两条课次仍使用同一统计时刻；身份复核分别在账号表、会员关联表与教练关联表查询失败时返回安全 `StorageError`，并把事务交给调用方处理。
+- **调用方与清单**：合同测试核对权益导出及仓储统计签名；CLI 测试确认权益导出直接传入身份。CSV 与合并版本逐行内容核对：223 条记录、223 个唯一 ID、53 个模块，完整记录多重集合一致，同一模块连续且按 ID 自然顺序排列，UTF-8 BOM 和 LF 换行保留。
+- **后续验证前提**：当前缺少专用 `config.test.json`，真实 MySQL 的事务、锁与快照仍待专用入口验证；登录和统一错误处理接入后继续运行 CLI 完整流程。
+
 ### [2026-10-21] 体测、收款和报表迁移回归
 
 - **环境与命令**：Windows、Python 3.13.14，在仓库根目录安装 `requirements/all.txt` 与 `requirements/dev.txt` 后，执行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`：273 项通过、7 项 MySQL 用例按模式排除。FastAPI/Starlette TestClient 的 HTTPX 弃用提示为 1 条依赖警告。
