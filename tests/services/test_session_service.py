@@ -18,7 +18,6 @@ from src.db.tables import (
     coaches,
     course_sessions,
     courses,
-    members,
     memberships,
     operation_records,
     rooms,
@@ -31,11 +30,10 @@ from src.errors.business import (
     PermissionDenied,
     ScheduleConflict,
 )
-from src.errors.storage import OutcomeUnknownError, StorageError
+from src.errors.storage import OutcomeUnknownError
 from src.models.contracts import (
     Actor,
     DateWindow,
-    PageRequest,
     SessionInput,
     SessionQuery,
 )

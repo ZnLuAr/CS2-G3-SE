@@ -20,7 +20,6 @@ from sqlalchemy.pool import StaticPool
 
 from src.db.tables import (
     accounts,
-    bookings,
     coaches,
     course_sessions,
     courses,

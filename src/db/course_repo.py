@@ -29,12 +29,7 @@ from src.db.tables import (
     courses,
     rooms,
 )
-from src.errors.business import (
-    ConflictError,
-    InvalidInputError,
-    InvalidState,
-    NotFoundError,
-)
+from src.errors.business import ConflictError, InvalidState, NotFoundError
 from src.models.contracts import (
     CoachInput,
     CoachUpdateInput,

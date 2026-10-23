@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, update
 
 from src.db.course_repo import (
     CoachRepository,
@@ -32,7 +32,6 @@ from src.models.contracts import (
     SessionInput,
     SessionQuery,
 )
-from tests.conftest import ADMIN
 
 
 def _coach_account(session_factory, account_id: int, username: str) -> None:

@@ -599,10 +599,10 @@ class CourseService:
             record = OperationRepository(session).get_by_request(request_id)
             if record is None:
                 raise NotFoundError("没有该请求编号的记录")
-            if record.operation not in ("create_session", "cancel_session"):
-                raise ConflictError("该请求编号属于其他操作")
             if record.actor_id != current.account_id:
                 raise NotFoundError("没有该请求编号的记录")
+            if record.operation not in ("create_session", "cancel_session"):
+                raise ConflictError("该请求编号属于其他操作")
             view = SessionRepository(session).get(record.result_id)
             if view is None:
                 raise NotFoundError("课次不存在")
