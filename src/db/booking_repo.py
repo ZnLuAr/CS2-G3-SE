@@ -1,152 +1,214 @@
-"""预约数据访问；体测所用的当前授课关系检查已实现。"""
+"""预约数据访问；事务由调用方 Logic 管理。"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy import func, insert, select, update
+
+from src.db.course_repo import load_session_views
+from src.db.support import from_db_utc, to_db_utc, utc_now, validate_paging, window_bounds
+from src.db.tables import bookings, course_sessions, members
+from src.errors.storage import StorageError
 from src.models.booking import Booking
 from src.models.contracts import (
-    BookingInput,
-    BookingQuery,
-    BookingStatus,
-    BookingView,
-    DateWindow,
-    Page,
+    BookingInput, BookingQuery, BookingStatus, BookingView, DateWindow, Page,
 )
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+_ACTIVE = ("reserved", "checked_in")
+
+
+def _model(row) -> Booking:
+    return Booking(
+        id=int(row["id"]), member_id=int(row["member_id"]),
+        session_id=int(row["session_id"]), lesson_package_id=int(row["lesson_package_id"]),
+        status=row["status"], booked_at=from_db_utc(row["booked_at"]),
+        checked_in_at=from_db_utc(row["checked_in_at"]),
+        closed_at=from_db_utc(row["closed_at"]),
+        created_at=from_db_utc(row["created_at"]), updated_at=from_db_utc(row["updated_at"]),
+    )
+
+
+def _view(row, session_view) -> BookingView:
+    return BookingView(
+        id=int(row["id"]), member_id=int(row["member_id"]), member_name=row["member_name"],
+        lesson_package_id=int(row["lesson_package_id"]), session=session_view,
+        status=row["status"], booked_at=from_db_utc(row["booked_at"]),
+        checked_in_at=from_db_utc(row["checked_in_at"]),
+        closed_at=from_db_utc(row["closed_at"]),
+    )
+
 
 class BookingRepository:
-    """预约数据访问；只使用传入会话，不提交、不输出提示。
-
-    返回 None 的查询由服务转换异常；写入失败交由服务清理事务。
-    """
-
     def __init__(self, session: Session) -> None:
-        """接收业务服务当前事务所用的数据库会话。"""
         self._session = session
 
     def get(self, booking_id: int) -> BookingView | None:
-        """查询预约详情；未找到返回 None。
+        row = self._session.execute(
+            select(bookings, members.c.name.label("member_name"))
+            .join(members, members.c.id == bookings.c.member_id)
+            .where(bookings.c.id == booking_id)
+        ).mappings().first()
+        if row is None:
+            return None
+        session_view = load_session_views(self._session, [int(row["session_id"])]).get(int(row["session_id"]))
+        if session_view is None:
+            raise StorageError("预约关联的课次不存在")
+        return _view(row, session_view)
 
-        返回：BookingView | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.get 尚未实现")
-
-    def list(
-        self,
-        query: BookingQuery,
-        *,
-        scope_member_id: int | None,
-        scope_coach_id: int | None,
-    ) -> Page[BookingView]:
-        """按服务明确给出的会员或教练范围分页查询。
-
-        会员调用只传 scope_member_id，教练调用只传 scope_coach_id；
-        只有前台或管理员可以同时传 None，两个范围不能同时非空。
-        按关联课次 starts_at 降序、预约 id 降序稳定分页。
-        返回：Page[BookingView]；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.list 尚未实现")
+    def list(self, query: BookingQuery, *, scope_member_id: int | None, scope_coach_id: int | None) -> Page[BookingView]:
+        page, size = validate_paging(query.paging)
+        if scope_member_id is not None and scope_coach_id is not None:
+            raise ValueError("会员与教练范围不能同时指定")
+        conditions = []
+        if query.member_id is not None:
+            conditions.append(bookings.c.member_id == query.member_id)
+        if query.session_id is not None:
+            conditions.append(bookings.c.session_id == query.session_id)
+        if query.lesson_package_id is not None:
+            conditions.append(bookings.c.lesson_package_id == query.lesson_package_id)
+        if query.status is not None:
+            conditions.append(bookings.c.status == query.status)
+        if query.window is not None:
+            start, end = window_bounds(query.window)
+            conditions.extend((course_sessions.c.starts_at >= start, course_sessions.c.starts_at < end))
+        if scope_member_id is not None:
+            conditions.append(bookings.c.member_id == scope_member_id)
+        if scope_coach_id is not None:
+            conditions.append(course_sessions.c.coach_id == scope_coach_id)
+        total = int(self._session.scalar(
+            select(func.count()).select_from(bookings)
+            .join(course_sessions, course_sessions.c.id == bookings.c.session_id)
+            .where(*conditions)
+        ) or 0)
+        rows = self._session.execute(
+            select(bookings, members.c.name.label("member_name"))
+            .join(members, members.c.id == bookings.c.member_id)
+            .join(course_sessions, course_sessions.c.id == bookings.c.session_id)
+            .where(*conditions)
+            .order_by(course_sessions.c.starts_at.desc(), bookings.c.id.desc())
+            .limit(size).offset((page - 1) * size)
+        ).mappings().all()
+        session_views = load_session_views(self._session, [int(row["session_id"]) for row in rows])
+        items = []
+        for row in rows:
+            session_view = session_views.get(int(row["session_id"]))
+            if session_view is None:
+                raise StorageError("预约关联的课次不存在")
+            items.append(_view(row, session_view))
+        return Page(items=items, total=total, page=page, page_size=size)
 
     def find_for_member_session(self, member_id: int, session_id: int) -> Booking | None:
-        """锁定当前读同会员同课次的预约，包含已取消状态。
-
-        调用方须先锁定会员和课次；不得沿用等锁前的一致性读快照。
-        返回：Booking | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.find_for_member_session 尚未实现")
+        row = self._session.execute(
+            select(bookings).where(
+                bookings.c.member_id == member_id,
+                bookings.c.session_id == session_id,
+            ).order_by(bookings.c.id.desc()).with_for_update()
+        ).mappings().first()
+        return None if row is None else _model(row)
 
     def has_open_for_member(self, member_id: int) -> bool:
-        """检查会员是否仍有 reserved 或 checked_in 预约。
-
-        调用方须先锁定会员，并使用锁定当前读，不能沿用事务先前的一致性读快照。
-        返回固定 bool，不提交事务。当前仅占位。"""
-        raise NotImplementedError("BookingRepository.has_open_for_member 尚未实现")
+        row = self._session.execute(
+            select(bookings.c.id).where(
+                bookings.c.member_id == member_id,
+                bookings.c.status.in_(_ACTIVE),
+            ).with_for_update().limit(1)
+        ).first()
+        return row is not None
 
     def list_open_for_session(self, session_id: int) -> tuple[Booking, ...]:
-        """读取课次的 reserved/checked_in 预约，供取消课次比较候选快照。
-
-        按 member_id、lesson_package_id、id 升序返回，不加锁、不提交。当前仅占位。"""
-        raise NotImplementedError("BookingRepository.list_open_for_session 尚未实现")
+        rows = self._session.execute(
+            select(bookings).where(
+                bookings.c.session_id == session_id,
+                bookings.c.status.in_(_ACTIVE),
+            ).order_by(bookings.c.member_id, bookings.c.lesson_package_id, bookings.c.id)
+        ).mappings().all()
+        return tuple(_model(row) for row in rows)
 
     def has_open_for_session(self, session_id: int) -> bool:
-        """课次已加锁后，以锁定当前读检查 reserved/checked_in 预约。
-
-        不得沿用等待课次锁前建立的一致性读快照；不提交事务。当前仅占位。"""
-        raise NotImplementedError("BookingRepository.has_open_for_session 尚未实现")
+        row = self._session.execute(
+            select(bookings.c.id).where(
+                bookings.c.session_id == session_id,
+                bookings.c.status.in_(_ACTIVE),
+            ).with_for_update().limit(1)
+        ).first()
+        return row is not None
 
     def create(self, data: BookingInput, booked_at: datetime) -> BookingView:
-        """保存预约，不在此处检查权益或提交事务。
-
-        返回：BookingView；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.create 尚未实现")
+        now = utc_now()
+        result = self._session.execute(insert(bookings).values(
+            member_id=data.member_id, session_id=data.session_id,
+            lesson_package_id=data.lesson_package_id, status="reserved",
+            booked_at=to_db_utc(booked_at), checked_in_at=None, closed_at=None,
+            created_at=now, updated_at=now,
+        ))
+        view = self.get(int(result.inserted_primary_key[0]))
+        if view is None:
+            raise StorageError("保存预约失败")
+        return view
 
     def set_state(
-        self,
-        booking_id: int,
-        *,
-        status: BookingStatus,
-        checked_in_at: datetime | None,
-        closed_at: datetime | None,
+        self, booking_id: int, *, status: BookingStatus,
+        checked_in_at: datetime | None, closed_at: datetime | None,
     ) -> BookingView:
-        """写入状态和时间，私教节数结算由服务协调。
-
-        返回：BookingView；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.set_state 尚未实现")
+        self._session.execute(update(bookings).where(bookings.c.id == booking_id).values(
+            status=status,
+            checked_in_at=None if checked_in_at is None else to_db_utc(checked_in_at),
+            closed_at=None if closed_at is None else to_db_utc(closed_at),
+            updated_at=utc_now(),
+        ))
+        view = self.get(booking_id)
+        if view is None:
+            raise StorageError("读取预约失败")
+        return view
 
     def count_occupied(self, session_id: int) -> int:
-        """锁定当前读取得该课次未取消预约记录并统计数量。
-
-        调用方须先锁定课次；不得沿用事务先前的一致性读快照。
-        返回：int；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.count_occupied 尚未实现")
+        rows = self._session.execute(
+            select(bookings.c.id).where(
+                bookings.c.session_id == session_id,
+                bookings.c.status.in_(_ACTIVE),
+            ).with_for_update()
+        ).all()
+        return len(rows)
 
     def has_member_conflict(self, member_id: int, window: DateWindow) -> bool:
-        """锁定当前读检查会员未取消预约是否与目标时间重叠。
-
-        调用方须先锁定会员；不得沿用事务先前的一致性读快照。
-        返回：bool；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.has_member_conflict 尚未实现")
-
-    def has_current_coaching_booking(
-        self, member_id: int, coach_id: int, *, at: datetime,
-    ) -> bool:
-        """检查体测录入所需的当前授课关系；at 由服务生成。
-
-        调用方已经持有会员行锁；实现须在该事务中锁定匹配预约并重读状态。
-        要求预约 reserved/checked_in、课次 scheduled，且 booked_at <= at < ends_at。
-        返回固定 bool，不写数据；历史体测查看不用此条件，按架构“体测权限规则”保留截止。
-        """
-        from datetime import timezone
-
-        from sqlalchemy import DateTime, Integer, String, column, select, table
-
-        bookings = table(
-            "bookings", column("id", Integer), column("member_id", Integer),
-            column("session_id", Integer), column("status", String),
-            column("booked_at", DateTime), column("closed_at", DateTime),
-        )
-        sessions = table(
-            "course_sessions", column("id", Integer), column("coach_id", Integer),
-            column("status", String), column("ends_at", DateTime),
-        )
-        at = at.astimezone(timezone.utc).replace(tzinfo=None)
-        statement = (
+        start, end = window_bounds(window)
+        row = self._session.execute(
             select(bookings.c.id)
-            .select_from(bookings.join(sessions, sessions.c.id == bookings.c.session_id))
+            .join(course_sessions, course_sessions.c.id == bookings.c.session_id)
             .where(
-                bookings.c.member_id == member_id, sessions.c.coach_id == coach_id,
-                bookings.c.status.in_(("reserved", "checked_in")),
-                sessions.c.status == "scheduled", bookings.c.booked_at <= at,
-                sessions.c.ends_at > at, bookings.c.closed_at.is_(None),
-            )
-            .order_by(sessions.c.id, bookings.c.id).limit(1).with_for_update()
-        )
-        return self._session.execute(statement).first() is not None
+                bookings.c.member_id == member_id,
+                bookings.c.status.in_(_ACTIVE),
+                course_sessions.c.status != "cancelled",
+                course_sessions.c.starts_at < end,
+                course_sessions.c.ends_at > start,
+            ).with_for_update().limit(1)
+        ).first()
+        return row is not None
+
+    def has_current_coaching_booking(self, member_id: int, coach_id: int, *, at: datetime) -> bool:
+        at_db = to_db_utc(at)
+        row = self._session.execute(
+            select(bookings.c.id)
+            .join(course_sessions, course_sessions.c.id == bookings.c.session_id)
+            .where(
+                bookings.c.member_id == member_id,
+                course_sessions.c.coach_id == coach_id,
+                bookings.c.status.in_(_ACTIVE),
+                course_sessions.c.status == "scheduled",
+                bookings.c.booked_at <= at_db,
+                course_sessions.c.ends_at > at_db,
+                bookings.c.closed_at.is_(None),
+            ).with_for_update().limit(1)
+        ).first()
+        return row is not None
 
     def lock(self, booking_id: int) -> Booking | None:
-        """锁定并读取最新预约记录。
-
-        返回：Booking | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.lock 尚未实现")
+        row = self._session.execute(
+            select(bookings).where(bookings.c.id == booking_id).with_for_update()
+        ).mappings().first()
+        return None if row is None else _model(row)

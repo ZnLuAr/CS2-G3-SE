@@ -122,7 +122,10 @@ class App:
                 logic.products, logic.sales, logic.entitlements, logic.access,
                 self.get_actor, timezone_name=zone,
             ),
-            course=menus.CourseHandler(logic.courses, self.get_actor, timezone_name=zone),
+            course=menus.CourseHandler(
+                logic.courses, self.get_actor, timezone_name=zone,
+                reservation_logic=logic.reservations,
+            ),
             booking=menus.BookingHandler(
                 logic.reservations, self.get_actor, logic.courses, logic.entitlements,
                 timezone_name=zone,

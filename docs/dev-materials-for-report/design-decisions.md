@@ -19,6 +19,16 @@
 
 ## 决策记录
 
+### [2026-10-23] 课程与预约采用 v3 Service/Logic 分层
+
+- **背景**：原课程/预约实现基于 `main` 的旧契约（`membership_id`、扁平 `SessionView`、服务自管事务），`origin/dev` 已改为 `lesson_package_id`、嵌套 View、Service 接收 Session、Logic 管理事务和日志。
+- **决定**：保留旧分支作为参考，新建 `feat/course-booking-v3`，按 v3 合同重写数据层、领域服务、用例层和 CLI；不把旧代码直接合入 dev。
+- **数据访问**：用 SQLAlchemy Core 表定义支持 MySQL 与 SQLite，测试可在内存库验证真实 SQL 结果；生产结构仍以 `sql/001_initial_schema.sql` 为准。
+- **事务边界**：Service 只读写传入 Session，不提交；CourseLogic/ReservationLogic 用 `transaction(session, request_id=...)` 统一提交、回滚和提交未知处理，并在成功后写脱敏操作日志。
+- **预约规则**：使用 `lesson_package_id` 的 `reserved_lessons` 占用课节；按课次门店日期检查课包 `valid_from <= date` 且 `valid_until is None or date < valid_until`；取消只释放占用，不扣剩余。
+- **取消课次**：`ReservationLogic.cancel_session` 调用课程服务改状态和写请求记录，再在同一事务内关闭开放预约并释放课包；候补关闭和通知由 WAI/NOTIFY 模块补充。
+- **影响**：课程/预约现有自动测试，v3 契约测试保持通过；真实 MySQL 锁与并发、候补通知联动仍待集成验证。
+
 ### [2026-10-21] 在共享会话中迁入体测、收款和报表
 
 - **背景**：Mingjin LI 的旧提交需要符合重构后的 v4 销售订单、身份权限和完整分层合同。

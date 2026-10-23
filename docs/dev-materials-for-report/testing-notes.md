@@ -7,6 +7,14 @@
 
 ## 测试思路与策略
 
+### [2026-10-23] 课程与预约 v3 迁移回归
+
+- **命令与结果**：仓库根目录执行 `.venv/bin/python -B -X utf8 -m src.cmd.test unit`，262 项通过、1 项跳过、7 项 MySQL 用例排除；其中课程/预约新增 11 项，契约测试 10 项通过。
+- **环境**：Python 3.14、SQLite 内存库、`FakeAuth` 身份校验替身；不连接 MySQL，不读取本地业务配置。
+- **覆盖**：课程模板创建/修改/归档、教练与场地启停、排课启停时间与时长、教练/场地撞期、请求 UUID 与幂等、会员/教练/前台可见范围、预约课包归属与有效期、重复预约、容量、会员撞期、额度不足、取消释放、课次取消关闭预约、课次完成后置条件、CLI 菜单角色过滤和会员预约使用本人编号。
+- **发现与修复**：修正 v3 仓储骨架的 `CoachUpdateInput`/`CourseQuery` 引用和 Logic 注解，使契约测试通过；测试中曾把“开始时间已到”的预期写成 `InvalidInputError`，实际合同为 `InvalidState`，已按合同修正。
+- **限制**：SQLite 不执行 `SELECT ... FOR UPDATE` 的真实行锁，并发预约、并发取消与 MySQL 事务回滚未验证；取消课次的候补/通知联动未覆盖；CLI 处理器使用替身 Logic，完整菜单主流程仍依赖登录等其他模块。
+
 ### [2026-10-21] 体测、收款和报表迁移回归
 
 - **环境与命令**：Windows、Python 3.13.14，在仓库根目录安装 `requirements/all.txt` 与 `requirements/dev.txt` 后，执行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`：273 项通过、7 项 MySQL 用例按模式排除。FastAPI/Starlette TestClient 的 HTTPX 弃用提示为 1 条依赖警告。

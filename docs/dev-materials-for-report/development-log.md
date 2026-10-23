@@ -17,6 +17,16 @@
 
 ## 日志
 
+### [2026-10-23] 课程、教练与预约迁移到 v3 架构
+
+- **分支与范围**：原 `feat/course-booking` 基于 `main` 的旧骨架。团队确认以 `origin/dev` 的 v3 结构为准后，新建 `feat/course-booking-v3`，保留原分支与备份分支，在新分支上重新实现教练、课程模板、场地、排课和预约。
+- **数据层**：新增 `src/db/tables.py` 声明本模块用到的 SQLAlchemy Core 表，新增 `src/db/support.py` 统一 UTC、分页、时间窗、UUID 与输入摘要；实现 `course_repo.py` 的教练/课程/场地/课次仓储、`booking_repo.py`、`lesson_package_repo.py` 和 `operation_repo.py`。
+- **服务与 Logic**：实现 `CoachService`、`CourseService`、`RoomService`、`BookingService`，方法接收调用方 Session；`CourseLogic` 与 `ReservationLogic` 负责会话、事务、日志和取消课次的预约收尾。预约使用 `lesson_package_id`、课包 `reserved_lessons` 和 `valid_from/valid_until` 规则。
+- **CLI**：实现课程/预约处理器、按角色过滤的菜单和共用可选输入；`CourseHandler` 增加可选 `reservation_logic` 依赖，用于取消课次入口，`app.py` 装配时传入。
+- **验证**：在仓库根目录执行 `.venv/bin/python -B -X utf8 -m src.cmd.test unit`，262 项通过、1 项跳过、7 项 MySQL 用例排除；契约测试 10 项通过。新增课程/预约测试 11 项，使用 SQLite 内存库与假身份复核。
+- **发现与修正**：v3 骨架的 `course_repo.py` 引用了不存在的 `CoachUpdateInput`、使用了不存在的 `CourseQuery`，`ReservationLogic.reconcile_waitlists` 缺少 `-> None` 注解；已按后端合同改为 `CoachInput`、`NamedQuery` 并补注解，使契约测试恢复通过。
+- **遗留问题**：取消课次尚未关闭 `waiting` 候补和写 `waitlist_closed` 通知，需 WAI/NOTIFY 模块接入；预约与候补互斥同样待 WAI；真实 MySQL 行锁、并发预约/取消和事务回滚尚未执行；登录、销售等其他模块仍为占位。
+
 ### [2026-10-21] 迁移 Mingjin LI 的体测、收款与报表实现
 
 - **同步与迁移**：在 `feat/my-code-final` 合并重构后的 `origin/dev`（`25a544b`）。远程 HTTPS fetch 遇连接重置后，从已成功 fetch 的桌面副本同步同一远程引用。删除 `src/` 根下旧的五份仓储与服务文件，实现 `src/db/`、`src/services/`、`src/logic/` 与 CLI 中对应的九个核心文件，并注册菜单。

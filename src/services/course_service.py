@@ -1,111 +1,268 @@
-"""课程模板与课次服务接口。构造函数已实现，业务操作仍为占位。"""
+"""课程模板与课次服务；事务由 CourseLogic 管理。"""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from src.db.course_repo import (
+    CoachRepository, CourseRepository, RoomRepository, SessionRepository,
+)
+from src.db.booking_repo import BookingRepository
+from src.db.operation_repo import OperationRepository
+from src.db.support import payload_hash, utc_now
+from src.errors.business import (
+    ConflictError, InvalidInputError, InvalidState, NotFoundError,
+    PermissionDenied, ScheduleConflict,
+)
 from src.models.contracts import (
-    Actor,
-    CourseInput,
-    CourseView,
-    NamedQuery,
-    Page,
-    SessionInput,
-    SessionQuery,
-    SessionView,
+    Actor, CourseInput, CourseView, DateWindow, NamedQuery, Page, SessionInput,
+    SessionQuery, SessionView,
 )
 from src.services.auth_service import AuthService
+from src.services.course_booking_rules import (
+    aware, ensure_replay, int_range, positive_id, request_uuid, require_admin,
+    text_field,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-class CourseService:
-    """课程模板与课次服务。
+def _course_input(data: CourseInput) -> CourseInput:
+    if not isinstance(data, CourseInput):
+        raise InvalidInputError("课程输入格式不正确")
+    if data.kind != "private":
+        raise InvalidInputError("当前只支持私教课（private）")
+    return CourseInput(
+        name=text_field(data.name, "课程名称", minimum=1, maximum=100),
+        description=text_field(data.description, "课程说明", minimum=1, maximum=1000, optional=True),
+        kind="private",
+        duration_minutes=int_range(data.duration_minutes, "默认时长", minimum=1, maximum=150),
+    )
 
-    actor 来自可信登录会话，方法仍须检查权限与数据归属。
-    输入字段见 models/contracts.py；实现后遵守 docs/architecture/backend.md 的返回、异常、权限和事务约定。
-    """
+
+class CourseService:
+    """课程模板与课次服务；actor 来自可信登录会话。"""
 
     def __init__(self, auth: AuthService) -> None:
-        """接收共用身份校验服务。"""
         self._auth = auth
 
-    # ========== 课程模板 ==========
     def create_course(self, session: Session, actor: Actor, data: CourseInput) -> CourseView:
-        """管理员输入完整课程名称、可空说明、private 类型与 1～150 分钟时长，创建后返回 CourseView。字段非法抛 InvalidInputError，写入由 Logic 统一提交。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.create_course 尚未实现")
+        current = self._auth.verify_actor(session, actor)
+        require_admin(current)
+        return CourseRepository(session).create(_course_input(data))
 
     def update_course(self, session: Session, actor: Actor, course_id: int, data: CourseInput) -> CourseView:
-        """管理员输入模板编号与完整条款，锁内更新后返回 CourseView。已发课次保留名称、类型、时长快照；字段非法或不存在抛项目异常。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.update_course 尚未实现")
+        positive_id(course_id, "课程编号")
+        current = self._auth.verify_actor(session, actor)
+        require_admin(current)
+        repo = CourseRepository(session)
+        if repo.lock(course_id) is None:
+            raise NotFoundError("课程模板不存在")
+        return repo.update(course_id, _course_input(data))
 
     def get_course(self, session: Session, actor: Actor, course_id: int) -> CourseView:
-        """输入模板编号，返回 CourseView。管理员可查全部，允许浏览课次的其他角色限启用模板；不存在或不可见抛 NotFoundError，查询保持业务数据。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.get_course 尚未实现")
+        positive_id(course_id, "课程编号")
+        current = self._auth.verify_actor(session, actor)
+        view = CourseRepository(session).get(course_id)
+        if view is None or (current.role != "admin" and not view.is_active):
+            raise NotFoundError("课程模板不存在或不可见")
+        return view
 
     def list_courses(self, session: Session, actor: Actor, query: NamedQuery) -> Page[CourseView]:
-        """输入名称、启用与分页条件，返回 Page[CourseView]。管理员可查全部，其他允许角色限启用模板；非法条件抛 InvalidInputError，查询保持业务数据。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.list_courses 尚未实现")
+        if not isinstance(query, NamedQuery):
+            raise InvalidInputError("课程查询格式不正确")
+        current = self._auth.verify_actor(session, actor)
+        if current.role != "admin":
+            query = replace(query, is_active=True)
+        return CourseRepository(session).list(query)
 
     def set_course_active(self, session: Session, actor: Actor, course_id: int, is_active: bool) -> CourseView:
-        """管理员输入模板编号与布尔状态，锁内更新后返回 CourseView。重复目标状态复用当前结果，启用状态控制后续排课；不存在或字段非法抛项目异常。
+        positive_id(course_id, "课程编号")
+        if not isinstance(is_active, bool):
+            raise InvalidInputError("启用状态必须是布尔值")
+        current = self._auth.verify_actor(session, actor)
+        require_admin(current)
+        repo = CourseRepository(session)
+        if repo.lock(course_id) is None:
+            raise NotFoundError("课程模板不存在")
+        view = repo.get(course_id)
+        if view is None:
+            raise NotFoundError("课程模板不存在")
+        if view.is_active == is_active:
+            return view
+        return repo.set_active(course_id, is_active)
 
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.set_course_active 尚未实现")
-
-    # ========== 课次 ==========
     def create_session(self, session: Session, actor: Actor, data: SessionInput, request_id: str) -> SessionView:
-        """管理员输入模板、教练、场地、带时区起止时间与 UUID 请求编号，返回 SessionView。按全局顺序锁资源，复核时长、启用和撞期，创建固定容量 1 的课次与操作记录；重复请求复用原结果，输入、时段或状态冲突抛项目异常。
+        request_id = request_uuid(request_id)
+        if not isinstance(data, SessionInput):
+            raise InvalidInputError("排课输入格式不正确")
+        starts_at = aware(data.starts_at, "开始时间")
+        ends_at = aware(data.ends_at, "结束时间")
+        positive_id(data.course_id, "课程编号")
+        positive_id(data.coach_id, "教练编号")
+        positive_id(data.room_id, "场地编号")
+        payload = payload_hash({
+            "course_id": data.course_id, "coach_id": data.coach_id,
+            "room_id": data.room_id, "starts_at": starts_at, "ends_at": ends_at,
+        })
+        current = self._auth.verify_actor(session, actor)
+        require_admin(current)
+        operations = OperationRepository(session)
+        existing = operations.get_by_request(request_id)
+        if existing is not None:
+            ensure_replay(existing, actor_id=current.account_id, operation="create_session", payload=payload)
+            view = SessionRepository(session).get(existing.result_id)
+            if view is None:
+                raise ConflictError("原排课记录不存在")
+            return view
 
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.create_session 尚未实现")
+        # 锁顺序：教练 → 课程模板 → 场地。
+        coach = CoachRepository(session).lock(data.coach_id)
+        if coach is None:
+            raise NotFoundError("教练不存在")
+        if not coach.is_active:
+            raise InvalidState("教练已停用")
+        course = CourseRepository(session).lock(data.course_id)
+        if course is None:
+            raise NotFoundError("课程模板不存在")
+        if not course.is_active:
+            raise InvalidState("课程模板已归档")
+        room = RoomRepository(session).lock(data.room_id)
+        if room is None:
+            raise NotFoundError("场地不存在")
+        if not room.is_active:
+            raise InvalidState("场地已停用")
+
+        if starts_at <= utc_now():
+            raise InvalidState("开始时间必须晚于当前时刻")
+        if ends_at <= starts_at:
+            raise InvalidInputError("结束时间必须晚于开始时间")
+        seconds = (ends_at - starts_at).total_seconds()
+        if seconds != course.duration_minutes * 60:
+            raise InvalidInputError("课次时长必须等于课程模板时长")
+        if seconds > 150 * 60:
+            raise InvalidInputError("单节课最长 150 分钟")
+        if SessionRepository(session).has_conflict(
+            coach_id=data.coach_id, room_id=data.room_id,
+            window=DateWindow(start=starts_at, end=ends_at),
+        ):
+            raise ScheduleConflict("教练或场地在该时段已有课次")
+        view = SessionRepository(session).create(
+            replace(data, starts_at=starts_at, ends_at=ends_at),
+            course_name=course.name, kind=course.kind,
+        )
+        operations.create(
+            request_id=request_id, actor_id=current.account_id,
+            operation="create_session", payload_hash=payload, result_id=view.id,
+        )
+        return view
 
     def get_session(self, session: Session, actor: Actor, session_id: int) -> SessionView:
-        """输入课次编号，返回 SessionView。会员限未开课 scheduled 课次，教练限本人，前台和管理员可查全部；不存在或不可见抛 NotFoundError，查询保持业务数据。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.get_session 尚未实现")
+        positive_id(session_id, "课次编号")
+        current = self._auth.verify_actor(session, actor)
+        view = SessionRepository(session).get(session_id)
+        if view is None:
+            raise NotFoundError("课次不存在")
+        if current.role == "coach":
+            if current.coach_id is None or view.coach.id != current.coach_id:
+                raise NotFoundError("课次不存在")
+        elif current.role == "member":
+            if view.status != "scheduled" or view.starts_at <= utc_now():
+                raise NotFoundError("课次不存在或不可浏览")
+        return view
 
     def list_sessions(self, session: Session, actor: Actor, query: SessionQuery) -> Page[SessionView]:
-        """输入日期窗口、教练、场地、类型、状态与分页条件，按 starts_at ASC, id ASC 返回 Page[SessionView]。SQL 计数和当前页先应用角色范围，余位按开放预约计算；非法条件抛 InvalidInputError。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.list_sessions 尚未实现")
+        if not isinstance(query, SessionQuery):
+            raise InvalidInputError("课表查询格式不正确")
+        if query.kind is not None and query.kind != "private":
+            raise InvalidInputError("当前只支持私教课（private）")
+        if query.status is not None and query.status not in ("scheduled", "completed", "cancelled"):
+            raise InvalidInputError("课次状态不合法")
+        current = self._auth.verify_actor(session, actor)
+        scope_coach_id = None
+        bookable_after = None
+        if current.role == "coach":
+            if current.coach_id is None:
+                raise PermissionDenied("当前账号未关联教练档案")
+            if query.coach_id is not None and query.coach_id != current.coach_id:
+                raise PermissionDenied("教练只能查看自己的课表")
+            scope_coach_id = current.coach_id
+        elif current.role == "member":
+            bookable_after = utc_now()
+        return SessionRepository(session).list(
+            query, scope_coach_id=scope_coach_id, bookable_after=bookable_after,
+        )
 
     def get_session_by_request(self, session: Session, actor: Actor, request_id: str) -> SessionView:
-        """输入创建或取消课次的原请求编号，按原操作者范围返回当前 SessionView。不存在或不可见抛 NotFoundError，类型不匹配抛 ConflictError，查询保持业务数据。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.get_session_by_request 尚未实现")
+        request_id = request_uuid(request_id)
+        current = self._auth.verify_actor(session, actor)
+        record = OperationRepository(session).get_by_request(request_id)
+        if record is None:
+            raise NotFoundError("没有该请求编号的记录")
+        if record.actor_id != current.account_id and current.role != "admin":
+            raise NotFoundError("没有该请求编号的记录")
+        if record.operation not in ("create_session", "cancel_session"):
+            raise ConflictError("该请求编号属于其他操作")
+        view = SessionRepository(session).get(record.result_id)
+        if view is None:
+            raise NotFoundError("课次不存在")
+        if current.role == "coach" and (current.coach_id is None or view.coach.id != current.coach_id):
+            raise NotFoundError("课次不存在")
+        return view
 
     def complete_session(self, session: Session, actor: Actor, session_id: int) -> SessionView:
-        """本课教练或管理员输入课次编号，锁内确认已结束且开放预约全部结算，返回 completed 的 SessionView。已完成时返回当前结果，边界或状态不符抛 InvalidState；更新课次状态由 Logic 提交。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.complete_session 尚未实现")
+        positive_id(session_id, "课次编号")
+        current = self._auth.verify_actor(session, actor)
+        repo = SessionRepository(session)
+        course_session = repo.lock(session_id)
+        if course_session is None:
+            raise NotFoundError("课次不存在")
+        if current.role != "admin" and not (
+            current.role == "coach" and current.coach_id == course_session.coach_id
+        ):
+            raise PermissionDenied("只有管理员或本课教练可以完成课次")
+        if course_session.status == "completed":
+            view = repo.get(session_id)
+            if view is None:
+                raise NotFoundError("课次不存在")
+            return view
+        if course_session.status == "cancelled":
+            raise InvalidState("已取消的课次不能完成")
+        if course_session.ends_at > utc_now():
+            raise InvalidState("课次尚未结束")
+        if BookingRepository(session).has_open_for_session(session_id):
+            raise InvalidState("仍有待处理预约")
+        return repo.set_status(session_id, "completed")
 
     def cancel_session(self, session: Session, actor: Actor, session_id: int, request_id: str) -> SessionView:
-        """管理员输入课次编号与 UUID 请求编号，返回 cancelled 的 SessionView。本方法维护课程状态和操作记录；ReservationLogic 统筹同事务内的预约占用释放、候补关闭与通知。已开课、已完成或重复新请求取消抛 InvalidState，候选持续变化抛 ConflictError。
-
-        当前业务方法为占位，调用抛 NotImplementedError。
-        """
-        raise NotImplementedError("CourseService.cancel_session 尚未实现")
+        request_id = request_uuid(request_id)
+        positive_id(session_id, "课次编号")
+        payload = payload_hash({"session_id": session_id})
+        current = self._auth.verify_actor(session, actor)
+        require_admin(current)
+        operations = OperationRepository(session)
+        existing = operations.get_by_request(request_id)
+        if existing is not None:
+            ensure_replay(existing, actor_id=current.account_id, operation="cancel_session", payload=payload)
+            view = SessionRepository(session).get(existing.result_id)
+            if view is None:
+                raise ConflictError("原取消记录不存在")
+            return view
+        repo = SessionRepository(session)
+        course_session = repo.lock(session_id)
+        if course_session is None:
+            raise NotFoundError("课次不存在")
+        if course_session.status == "cancelled":
+            raise InvalidState("课次已取消")
+        if course_session.status == "completed":
+            raise InvalidState("已完成的课次不能取消")
+        if course_session.starts_at <= utc_now():
+            raise InvalidState("课次已开始，不能取消")
+        view = repo.set_status(session_id, "cancelled")
+        operations.create(
+            request_id=request_id, actor_id=current.account_id,
+            operation="cancel_session", payload_hash=payload, result_id=view.id,
+        )
+        return view

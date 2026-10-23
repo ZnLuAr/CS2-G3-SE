@@ -73,16 +73,58 @@ def product_menu(handler: ProductHandler) -> list[MenuItem]:
 
 
 def course_menu(handler: CourseHandler) -> list[MenuItem]:
-    """构造本模块的已实现菜单入口。
-
-    只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    return []
+    """按角色构造课程与教练菜单；具体权限仍由服务复核。"""
+    role = handler.current_role
+    items = [
+        MenuItem(key="1", label="创建教练档案", operation="course.coach.create", action=handler.create_coach),
+        MenuItem(key="2", label="修改教练资料", operation="course.coach.update", action=handler.update_coach),
+        MenuItem(key="3", label="查看教练详情", operation="course.coach.get", action=handler.get_coach),
+        MenuItem(key="4", label="教练列表", operation="course.coach.list", action=handler.list_coaches),
+        MenuItem(key="5", label="停用/恢复教练", operation="course.coach.active", action=handler.set_coach_active),
+        MenuItem(key="6", label="创建课程模板", operation="course.create", action=handler.create_course),
+        MenuItem(key="7", label="修改课程模板", operation="course.update", action=handler.update_course),
+        MenuItem(key="8", label="查看课程模板", operation="course.get", action=handler.get_course),
+        MenuItem(key="9", label="课程模板列表", operation="course.list", action=handler.list_courses),
+        MenuItem(key="10", label="归档/恢复课程模板", operation="course.active", action=handler.set_course_active),
+        MenuItem(key="11", label="新增场地", operation="room.create", action=handler.create_room),
+        MenuItem(key="12", label="修改场地", operation="room.update", action=handler.update_room),
+        MenuItem(key="13", label="查看场地详情", operation="room.get", action=handler.get_room),
+        MenuItem(key="14", label="场地列表", operation="room.list", action=handler.list_rooms),
+        MenuItem(key="15", label="停用/恢复场地", operation="room.active", action=handler.set_room_active),
+        MenuItem(key="16", label="发布课次（排课）", operation="course.session.create", action=handler.create_session),
+        MenuItem(key="17", label="查看课次详情", operation="course.session.get", action=handler.get_session),
+        MenuItem(key="18", label="课表查询", operation="course.session.list", action=handler.list_sessions),
+        MenuItem(key="19", label="按请求编号核实课次", operation="course.session.verify", action=handler.get_session_by_request),
+        MenuItem(key="20", label="完成课次", operation="course.session.complete", action=handler.complete_session),
+        MenuItem(key="21", label="取消课次", operation="course.session.cancel", action=handler.cancel_session),
+    ]
+    admin_keys = {"1", "2", "5", "6", "7", "10", "11", "12", "15", "16", "20", "21"}
+    member_keys = {"3", "4", "8", "9", "13", "14", "17", "18"}
+    coach_keys = {"4", "8", "9", "13", "14", "17", "18", "20"}
+    reception_keys = {"3", "4", "8", "9", "13", "14", "17", "18"}
+    allowed = {
+        "admin": admin_keys | member_keys | {"19"},
+        "coach": coach_keys,
+        "member": member_keys,
+        "receptionist": reception_keys,
+    }.get(role, set())
+    return [item for item in items if item.key in allowed]
 
 
 def booking_menu(handler: BookingHandler) -> list[MenuItem]:
-    """构造本模块的已实现菜单入口。
-
-    只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
+    """按角色构造预约菜单；会员与员工显示代约/取消入口。"""
+    role = handler.current_role
+    items = [
+        MenuItem(key="1", label="预约课次", operation="booking.create", action=handler.book),
+        MenuItem(key="2", label="查看预约详情", operation="booking.get", action=handler.get_booking),
+        MenuItem(key="3", label="按请求编号核实预约", operation="booking.verify", action=handler.get_booking_by_request),
+        MenuItem(key="4", label="取消预约", operation="booking.cancel", action=handler.cancel),
+        MenuItem(key="5", label="预约列表", operation="booking.list", action=handler.list_bookings),
+    ]
+    if role in {"member", "receptionist", "admin"}:
+        return items
+    if role == "coach":
+        return [item for item in items if item.key in {"2", "5"}]
     return []
 
 
