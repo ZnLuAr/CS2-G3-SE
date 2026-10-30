@@ -338,3 +338,26 @@
 - **依赖边界**：日志配置、统一异常处理和账号登录业务仍由原负责人交付。本轮只保存这些依赖并在入口传播占位状态，不把占位方法误报为已完成业务功能。
 - **测试入口**：python -m src.cmd.test 默认运行不连接 MySQL 的测试；mysql/all --config 使用独立 _test 数据库、环境变量密码和整轮命名锁。测试 fixture 只在显式请求时建立连接，并在清理前核对数据库对象。
 - **验证**：python -m compileall -q main.py src tests、python -m src.cmd.test 和三项接口/SQL 静态检查通过；本机未连接真实 MySQL，未宣称初始化、并发和真实登录通过。
+
+
+### [2026-10-26] 会员域三层实现（MEM-01 / MEM-02 / MEM-03）
+
+- **完成内容**：实现 `member_repo` 的 `create` / `get` / `list` / `update_profile`（沿用既有 `lock`），`member_service` 的建档、按请求核实、详情、列表与资料修改，以及 `member_logic` 的对应用例入口。仓储只使用传入会话，不提交、不转异常。
+- **权限与校验**：建档与修改限前台和管理员；会员列表强制查本人，越权查询直接返回空 `Page`；`page_size` 限定 1–100；姓名去首尾空白后 1–100 字符，联系方式为 `None` 或 1–32 字符。
+- **幂等**：规范载荷按后端合同 12.7.1 的字段顺序计算摘要；相同 `request_id`、操作者与摘要返回原结果，任一不同抛 `ConflictError`。
+- **测试**：新增 60 个单元测试（仓储 14、服务 36、用例 10），在未安装 sqlalchemy 的本机以带标记的替身运行通过。
+- **遗留问题**：幂等并发复核依赖 `OperationRepository.lock_by_request`；CLI 与 Web 入口未接入；真实 MySQL 的约束、行锁与并发用例待运行。
+
+
+### [2026-10-30] 处理 PR #11 审查意见（会员域）
+
+- **完成内容**：实现 `OperationRepository` 的 `get_by_request` / `lock_by_request` / `create`。此前构造函数直接抛 `NotImplementedError`，导致 `create_member` 与 `get_member_by_request` 在授权通过后必然失败。
+- **并发幂等**：`operation_records.result_id` 为 `NOT NULL`，无法预占位；改为依赖 `UNIQUE(request_id)` 作为最终防线——后到事务写入请求记录时抛 `IntegrityError`，Logic 回滚整个事务（连同已建会员行）后换新事务重试一次，读到胜者记录即回放结果，操作者或摘要不一致则抛 `ConflictError`。
+- **文档修正**：架构总览与状态表改为如实描述：依赖已同批实现、并发按唯一约束回放、入口仍未接入。
+- **测试**：新增 `OperationRepository` 6 个用例与竞态回放 3 个用例；五份测试文件合计 69 个用例通过。
+- **遗留问题**：CLI 与 Web 入口未接入；真实 MySQL 的唯一约束、锁等待与并发回放仍需在 TEST-06 覆盖。
+
+### [2026-10-30] 验证会员建档请求并发
+
+- 核对现有操作记录仓储及唯一键冲突后的事务回滚和重放路径，补充 TEST-06 的 MySQL 并发测试，覆盖相同内容、不同内容及不同操作者。
+- 更新后端锁顺序说明与建档服务注释，明确会员建档使用唯一约束处理并发；保留其他业务的锁定复查要求。执行结果记录在测试笔记。
