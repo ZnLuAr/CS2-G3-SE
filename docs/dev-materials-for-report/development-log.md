@@ -347,3 +347,12 @@
 - **幂等**：规范载荷按后端合同 12.7.1 的字段顺序计算摘要；相同 `request_id`、操作者与摘要返回原结果，任一不同抛 `ConflictError`。
 - **测试**：新增 60 个单元测试（仓储 14、服务 36、用例 10），在未安装 sqlalchemy 的本机以带标记的替身运行通过。
 - **遗留问题**：幂等并发复核依赖 `OperationRepository.lock_by_request`；CLI 与 Web 入口未接入；真实 MySQL 的约束、行锁与并发用例待运行。
+
+
+### [2026-10-30] 处理 PR #11 审查意见（会员域）
+
+- **完成内容**：实现 `OperationRepository` 的 `get_by_request` / `lock_by_request` / `create`。此前构造函数直接抛 `NotImplementedError`，导致 `create_member` 与 `get_member_by_request` 在授权通过后必然失败。
+- **并发幂等**：`operation_records.result_id` 为 `NOT NULL`，无法预占位；改为依赖 `UNIQUE(request_id)` 作为最终防线——后到事务写入请求记录时抛 `IntegrityError`，Logic 回滚整个事务（连同已建会员行）后换新事务重试一次，读到胜者记录即回放结果，操作者或摘要不一致则抛 `ConflictError`。
+- **文档修正**：架构总览与状态表改为如实描述：依赖已同批实现、并发按唯一约束回放、入口仍未接入。
+- **测试**：新增 `OperationRepository` 6 个用例与竞态回放 3 个用例；五份测试文件合计 69 个用例通过。
+- **遗留问题**：CLI 与 Web 入口未接入；真实 MySQL 的唯一约束、锁等待与并发回放仍需在 TEST-06 覆盖。

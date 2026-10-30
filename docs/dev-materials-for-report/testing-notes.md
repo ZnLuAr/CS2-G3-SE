@@ -249,3 +249,11 @@
 - **缺陷 3**：`import src.logic.member_logic` 会先执行 `src/logic/__init__.py`，它 import `LogicBundle`，进而把全部 Logic、Service、仓储拉进来；其中 `measurement_repo` 与 `payment_repo` 在顶层 `from sqlalchemy import Numeric, DateTime, bindparam, text`，替身只提供 `text` 时报 `ImportError: cannot import name 'Numeric'`。修复：替身补齐这四个名字。
 - **结果**：三个文件分别 Ran 14 / 36 / 10，全部 OK。
 - **限制**：本机未连接真实 MySQL，未验证 CHECK 约束、`DATETIME(6)` 精度与 `SELECT ... FOR UPDATE` 行锁；这些属 TEST-02、TEST-06、TEST-08。
+
+
+### [2026-10-30] OperationRepository 与幂等竞态单测
+
+- **命令**：`py -3 -B -X utf8 tests\unit\db\test_operation_repo.py`、`tests\unit\test_member_conflict_retry.py` 与三份会员测试（本机未安装 pytest 与 sqlalchemy，使用带标记的替身）。
+- **新增覆盖**：`get_by_request` 未命中与行映射；`lock_by_request` 生成 `FOR UPDATE`；`create` 的列与参数、写入后回读失败抛 `StorageError`；`create_member` 遇 `IntegrityError` 重试一次、连续两次冲突转 `StorageError`、其他数据库错误不重试直接转 `StorageError`。
+- **结果**：仓储 14 + 服务 36 + 用例 10 + 竞态 3 + 请求记录 6，合计 69 个用例通过。
+- **限制**：替身无法验证真实唯一约束、锁等待与并发回放；这些属 TEST-06、TEST-08，需独立 MySQL 测试库。

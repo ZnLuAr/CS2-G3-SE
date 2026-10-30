@@ -43,7 +43,11 @@ def _install_sqlalchemy_stub() -> None:
         class SQLAlchemyError(Exception):
             pass
 
+        class IntegrityError(SQLAlchemyError):
+            pass
+
         exc.SQLAlchemyError = SQLAlchemyError
+        exc.IntegrityError = IntegrityError
         sys.modules["sqlalchemy.exc"] = exc
         existing.exc = exc
 

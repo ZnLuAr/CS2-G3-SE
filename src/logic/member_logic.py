@@ -10,7 +10,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Callable
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from src.db.connection import transaction
 from src.errors import OutcomeUnknownError, StorageError
@@ -39,7 +39,23 @@ class MemberLogic:
         self._member_service = member_service
 
     def create_member(self, actor: Actor, data: MemberInput, request_id: str) -> MemberView:
-        """提交一次会员建档；失败回滚，提交未知时附上请求编号供核实。"""
+        """提交一次会员建档；并发同编号时回放已提交的胜者结果。
+
+        同一 `request_id` 的两个事务都查不到旧记录时，`operation_records` 的唯一约束
+        是最终防线：后到者在 flush/提交阶段抛 `IntegrityError`，本次事务连同已建的
+        会员行一起回滚。此时换一个新事务重试一次——新事务能读到胜者记录，
+        服务据此回放结果；若操作者或内容摘要不一致则抛 `ConflictError`。
+        """
+        try:
+            return self._create_member_once(actor, data, request_id)
+        except IntegrityError:
+            try:
+                return self._create_member_once(actor, data, request_id)
+            except IntegrityError as exc:
+                raise StorageError("同一请求编号并发提交，请按原编号核实结果") from exc
+
+    def _create_member_once(self, actor: Actor, data: MemberInput, request_id: str) -> MemberView:
+        """在一个新事务里尝试建档；提交未知时附上请求编号供核实。"""
         result = None
         try:
             with self._session_factory() as session:
@@ -50,6 +66,9 @@ class MemberLogic:
                     if result is not None:
                         exc.record_id = result.id
                     raise
+        except IntegrityError:
+            # 唯一约束冲突由 create_member 负责重试，不能在这里转成 StorageError。
+            raise
         except SQLAlchemyError as exc:
             raise StorageError("保存会员档案失败") from exc
         _log_operation(Operation.MEMBER_CREATE, actor, result.id)
