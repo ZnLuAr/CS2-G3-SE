@@ -77,8 +77,7 @@ class MemberService:
             return self._replay_create(existing, current, payload_hash, members)
 
         member = members.create(normalized)
-        # 12.4.2：取得业务锁后应以锁定当前读复核 operation_records，避免与并发的同编号请求交错；
-        # 该步骤依赖 OperationRepository.lock_by_request（当前为占位实现），落地后在此处补上。
+        # 同编号并发插入由唯一约束拒绝；Logic 回滚会员行并在新事务回放。
         operations.create(
             request_id=canonical_request_id,
             actor_id=current.account_id,
