@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from src.errors.base import ErrorResult
+from src.errors.base import ErrorResult, GymError
 from src.errors.business import AuthenticationError, InputCancelled
 from src.errors.handler import handle_error
+from src.errors.storage import OutcomeUnknownError, StorageError
 from src.models.contracts import Actor
 from src.ui.cli import menus
 from src.ui.cli.menus import CliHandlers, MenuItem
@@ -29,7 +30,22 @@ def invoke_action(
     except NotImplementedError:
         raise
     except Exception as exc:
-        return handle_error(exc, operation=operation, actor_id=actor_id, request_id=request_id)
+        try:
+            return handle_error(exc, operation=operation, actor_id=actor_id, request_id=request_id)
+        except NotImplementedError:
+            if operation not in {Operation.ATTENDANCE_CHECKIN.value, Operation.ATTENDANCE_CORRECT.value}:
+                raise
+            if isinstance(exc, OutcomeUnknownError):
+                return ErrorResult(
+                    message=exc.message, action="verify", request_id=exc.request_id, record_id=exc.record_id,
+                )
+            if isinstance(exc, AuthenticationError):
+                return ErrorResult(message=exc.message, action="login")
+            if isinstance(exc, StorageError):
+                return ErrorResult(message=exc.message, action="exit")
+            if isinstance(exc, GymError):
+                return ErrorResult(message=exc.message, action="continue")
+            return ErrorResult(message="签到操作失败，请稍后重试", action="exit")
     return ErrorResult(message="", action="continue")
 
 

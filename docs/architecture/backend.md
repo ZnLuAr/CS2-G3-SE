@@ -815,7 +815,9 @@ Handler 构造接收对应 Logic，以及当前身份的读取、设置、退出
 
 体测与报表 Handler 的只读 `current_role` 属性供菜单选择入口：会员可查本人体测，教练可录入及查询授权体测，前台可查收款，管理员可查收款及经营统计并导出。CSV 由 Handler 展示建议文件名，取得保存路径和确认后以独占创建方式写入；文件已存在或输出失败抛 `ResourceError`。
 
-`invoke_action` 执行一个 Handler 操作。成功或主动取消返回 `ErrorResult(message="", action="continue")`；项目异常和未知异常交给 `handle_error`；EOF 和 Ctrl+C 继续传播。
+登录后从「签到」菜单输入预约编号，确认后办理普通签到。教练和管理员还可选择到场或未到场，确认后提交更正。成功时按门店时区显示预约与签到时间。输入 `q` 或拒绝确认会返回菜单。
+
+`invoke_action` 执行一个 Handler 操作。成功或主动取消返回 `ErrorResult(message="", action="continue")`；项目异常和未知异常交给 `handle_error`；EOF 和 Ctrl+C 继续传播。统一错误处理接入前，签到入口按第 10.3 节的规则显示安全提示并执行对应的界面动作。
 
 `GymCLI.run()` 负责登录菜单、角色模块菜单、子菜单、退出登录和程序退出。菜单可见性用于简化导航，服务层继续执行权限校验。`ErrorResult.action` 为：
 
@@ -1230,6 +1232,9 @@ def close_logging() -> None: ...
 class AttendanceChange:
     before: Literal["reserved", "checked_in"]
     after: Literal["reserved", "checked_in"]
+    before_checked_in_at: datetime | None = None
+    after_checked_in_at: datetime | None = None
+    corrected_at: datetime | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class LogFrame:
@@ -4076,9 +4081,9 @@ def check_in(self, session: Session, actor: Actor, booking_id: int) -> BookingVi
 
 - **权限**：会员本人、本课教练、前台、管理员。
 - **返回**：`checked_in` 的 `BookingView`；已经签到时返回当前 View。
-- **异常**：越权或不存在按角色范围抛 `NotFoundError`/`PermissionDenied`；仅 `starts_at <= now < ends_at` 允许普通签到，早于开始、到达 `ends_at` 或课后、以及处于终态均抛 `InvalidState`。
+- **异常**：预约编号须为有效正整数，否则抛 `InvalidInputError`。记录不存在或超出会员、教练可见范围抛 `NotFoundError`。仅 `starts_at <= now < ends_at` 允许普通签到，早于开始、到达 `ends_at` 或课后、以及处于终态均抛 `InvalidState`。
 - **数据变更**：把 `reserved` 改为 `checked_in`，设置 `checked_in_at=now`；不修改课包余额，不创建门禁记录。
-- **事务**：按 `member -> course_session -> booking` 加锁，锁后生成当前时刻并复核状态、归属和课次边界。
+- **事务**：仓储的 `BookingRepository.find_lock_targets(booking_id)` 通过普通查询返回 `(member_id, session_id)` 或 `None`。按 `member -> course_session -> booking` 加锁，锁后生成当前时刻并复核状态、归属和课次边界。
 
 #### 13.4.3 `AttendanceService.correct_attendance`
 
@@ -4090,9 +4095,11 @@ def correct_attendance(
 
 - **权限**：本课教练或管理员。
 - **返回**：更正后的 `BookingView`；目标状态与当前状态相同则返回当前 View。
-- **异常**：输入不是布尔目标状态抛 `InvalidInputError`；非本课教练抛 `PermissionDenied`；早于开课或预约已终结抛 `InvalidState`。
+- **异常**：无效预约编号或非布尔目标状态抛 `InvalidInputError`。预约不存在抛 `NotFoundError`，缺少更正权限抛 `PermissionDenied`，早于开课或预约已终结抛 `InvalidState`。
 - **数据变更**：`reserved -> checked_in` 时设置当前时刻，`checked_in -> reserved` 时清空 `checked_in_at`；课后补签只能由本课教练或管理员通过本方法执行。结构化审计记录操作者、预约、原状态、目标状态、更正时刻及原/新 `checked_in_at`，不记录联系方式或评价正文；不修改门禁或课包。
 - **事务**：按 `member -> course_session -> booking` 加锁；只允许在消课、缺席或取消之前更正。
+
+更正事务提交成功后，Logic 将状态和 UTC 时刻填入 `AttendanceChange`，预约编号作为 `result_id` 记录。相同选择直接返回当前预约。统一日志接入前，结构化更正记录输出到标准错误。
 
 #### 13.4.4 `AttendanceService.complete`
 

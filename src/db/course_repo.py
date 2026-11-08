@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy import column, select, table, text
+
+from src.db.support import from_db_utc
 from src.models.contracts import (
     CoachInput,
-    CoachUpdateInput,
     CoachView,
     CourseInput,
     CourseKind,
-    CourseQuery,
     CourseView,
     DateWindow,
     NamedQuery,
@@ -27,6 +28,9 @@ from src.models.course import Coach, Course, CourseSession, Room
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+_COURSE_SESSIONS = table("course_sessions", column("id"))
 
 
 class CoachRepository:
@@ -57,7 +61,7 @@ class CoachRepository:
         返回：CoachView；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CoachRepository.create 尚未实现")
 
-    def update(self, coach_id: int, data: CoachUpdateInput) -> CoachView:
+    def update(self, coach_id: int, data: CoachInput) -> CoachView:
         """完整更新教练姓名和可空联系方式。
 
         返回：CoachView；当前仅占位，调用抛 NotImplementedError。"""
@@ -106,7 +110,7 @@ class CourseRepository:
         协调模板修改和排课快照；不提交。当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("CourseRepository.lock 尚未实现")
 
-    def list(self, query: CourseQuery) -> Page[CourseView]:
+    def list(self, query: NamedQuery) -> Page[CourseView]:
         """按 id 升序稳定分页查询模板。
 
         返回：Page[CourseView]；当前仅占位，调用抛 NotImplementedError。"""
@@ -186,13 +190,55 @@ class SessionRepository:
 
     def __init__(self, session: Session) -> None:
         """接收业务服务当前事务所用的数据库会话。"""
-        raise NotImplementedError("SessionRepository.__init__ 尚未实现")
+        self._session = session
 
     def get(self, session_id: int) -> SessionView | None:
-        """读取课次及余位展示数据。
-
-        返回：SessionView | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("SessionRepository.get 尚未实现")
+        """读取课次、关联资料及剩余名额，课次不存在时返回 None。"""
+        row = self._session.execute(text("""
+            SELECT s.*, c.name AS course_title, c.description, c.kind AS course_kind,
+                   c.duration_minutes AS course_duration, c.is_active AS course_active,
+                   c.created_at AS course_created, c.updated_at AS course_updated,
+                   co.name AS coach_name, co.phone AS coach_phone, co.is_active AS coach_active,
+                   co.created_at AS coach_created, co.updated_at AS coach_updated,
+                   r.name AS room_name, r.location, r.is_active AS room_active,
+                   r.created_at AS room_created, r.updated_at AS room_updated,
+                   (SELECT COUNT(*) FROM bookings b
+                    WHERE b.session_id = s.id AND b.status IN ('reserved', 'checked_in')) AS occupied
+            FROM course_sessions s
+            JOIN courses c ON c.id = s.course_id
+            JOIN coaches co ON co.id = s.coach_id
+            JOIN rooms r ON r.id = s.room_id
+            WHERE s.id = :session_id
+        """), {"session_id": session_id}).mappings().first()
+        if row is None:
+            return None
+        starts_at = from_db_utc(row["starts_at"])
+        ends_at = from_db_utc(row["ends_at"])
+        available_count = max(0, row["capacity"] - row["occupied"]) if row["status"] == "scheduled" else 0
+        return SessionView(
+            id=row["id"], course_name=row["course_name"], kind=row["kind"],
+            course=CourseView(
+                id=row["course_id"], name=row["course_title"], description=row["description"],
+                kind=row["course_kind"], duration_minutes=row["course_duration"],
+                is_active=bool(row["course_active"]), created_at=from_db_utc(row["course_created"]),
+                updated_at=from_db_utc(row["course_updated"]),
+            ),
+            coach=CoachView(
+                id=row["coach_id"], name=row["coach_name"], phone=row["coach_phone"],
+                is_active=bool(row["coach_active"]), created_at=from_db_utc(row["coach_created"]),
+                updated_at=from_db_utc(row["coach_updated"]),
+            ),
+            room=RoomView(
+                id=row["room_id"], name=row["room_name"], location=row["location"],
+                is_active=bool(row["room_active"]), created_at=from_db_utc(row["room_created"]),
+                updated_at=from_db_utc(row["room_updated"]),
+            ),
+            starts_at=starts_at, ends_at=ends_at,
+            duration_minutes=int((ends_at - starts_at).total_seconds() // 60),
+            capacity=row["capacity"], occupied_count=row["occupied"],
+            available_count=available_count, status=row["status"],
+            created_at=from_db_utc(row["created_at"]), updated_at=from_db_utc(row["updated_at"]),
+        )
 
     def list(
         self,
@@ -243,7 +289,14 @@ class SessionRepository:
         raise NotImplementedError("SessionRepository.has_scheduled_for_room 尚未实现")
 
     def lock(self, session_id: int) -> CourseSession | None:
-        """锁定并读取课次，供容量与状态校验。
-
-        返回：CourseSession | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("SessionRepository.lock 尚未实现")
+        """锁定并读取最新课次，不存在时返回 None。"""
+        row = self._session.execute(
+            select(text("course_sessions.*")).select_from(_COURSE_SESSIONS)
+            .where(_COURSE_SESSIONS.c.id == session_id).with_for_update(),
+        ).mappings().first()
+        if row is None:
+            return None
+        values = dict(row)
+        for field in ("starts_at", "ends_at", "created_at", "updated_at"):
+            values[field] = from_db_utc(values[field])
+        return CourseSession(**values)
