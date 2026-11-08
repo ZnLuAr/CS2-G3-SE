@@ -1,20 +1,15 @@
-"""按业务划分的 CLI 交互接口。构造函数已实现，业务操作仍为占位。"""
+"""采集课程评价表单并展示授权查询结果。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from src.models.contracts import Actor
 from src.logic.review_logic import ReviewLogic
+from src.models.contracts import Actor, ReviewInput, ReviewQuery, Role
+from src.ui.cli import formatters, prompts
 
 
 class ReviewHandler:
-    """收集输入、确认操作、调用业务服务并展示结果。
-
-    get_actor 每次取得当前身份；不接收数据库会话，不实现业务规则。
-    各操作返回 None 表示交互完成；当前只声明接口，调用即报未实现。
-    """
-
     def __init__(
         self,
         logic: ReviewLogic,
@@ -22,28 +17,41 @@ class ReviewHandler:
         *,
         timezone_name: str,
     ) -> None:
-        """接收服务、身份回调及 App 提供的门店时区；需要时另接查询服务或登录回调。"""
         self._logic = logic
         self._get_actor = get_actor
         self._timezone_name = timezone_name
 
-    def create_review(self) -> None:
-        """组织 ReviewService.create_review 的交互步骤。
+    @property
+    def current_role(self) -> Role:
+        """取得当前菜单角色，业务权限由服务复核。"""
+        return self._get_actor().role
 
-        输入由 prompts 采集；成功结果交给 formatters 展示。
-        异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
-        raise NotImplementedError("ReviewHandler.create_review 尚未实现")
+    def create_review(self) -> None:
+        """收集评分与留言，确认后提交。"""
+        actor = self._get_actor()
+        booking_id = prompts.prompt_int("预约编号（q 取消）：", minimum=1)
+        rating = prompts.prompt_int("评分（1 至 5，q 取消）：", minimum=1, maximum=5)
+        comment = prompts.prompt_text("评价留言（可留空，q 取消）：", allow_empty=True)
+        if not prompts.prompt_confirm("确认提交评价？"):
+            return
+        view = self._logic.create_review(
+            actor, ReviewInput(booking_id=booking_id, rating=rating, comment=comment),
+        )
+        print(formatters.format_review(view, timezone_name=self._timezone_name))
 
     def get_review(self) -> None:
-        """组织 ReviewService.get_review 的交互步骤。
-
-        输入由 prompts 采集；成功结果交给 formatters 展示。
-        异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
-        raise NotImplementedError("ReviewHandler.get_review 尚未实现")
+        """按评价编号展示详情。"""
+        actor = self._get_actor()
+        review_id = prompts.prompt_int("评价编号（q 取消）：", minimum=1)
+        view = self._logic.get_review(actor, review_id)
+        print(formatters.format_review(view, timezone_name=self._timezone_name))
 
     def list_reviews(self) -> None:
-        """组织 ReviewService.list_reviews 的交互步骤。
+        """分页展示当前角色可见的评价。"""
+        from src.ui.cli.menus import browse_pages
 
-        输入由 prompts 采集；成功结果交给 formatters 展示。
-        异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
-        raise NotImplementedError("ReviewHandler.list_reviews 尚未实现")
+        actor = self._get_actor()
+        browse_pages(
+            lambda paging: self._logic.list_reviews(actor, ReviewQuery(paging=paging)),
+            lambda page: formatters.format_reviews(page, timezone_name=self._timezone_name),
+        )

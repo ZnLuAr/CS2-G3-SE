@@ -813,7 +813,7 @@ def invoke_action(
 
 Handler 构造接收对应 Logic，以及当前身份的读取、设置、退出回调和展示时区。业务方法、分页回调和结果核实统一调用 Logic。
 
-体测与报表 Handler 的只读 `current_role` 属性供菜单选择入口：会员可查本人体测，教练可录入及查询授权体测，前台可查收款，管理员可查收款及经营统计并导出。CSV 由 Handler 展示建议文件名，取得保存路径和确认后以独占创建方式写入；文件已存在或输出失败抛 `ResourceError`。
+评价、体测与报表 Handler 的只读 `current_role` 属性供菜单选择入口。会员可在评价菜单提交评分与留言，会员、教练和管理员可查询详情或分页浏览。会员可查本人体测，教练可录入及查询授权体测，前台可查收款，管理员可查收款及经营统计并导出。CSV 由 Handler 展示建议文件名，取得保存路径和确认后以独占创建方式写入；文件已存在或输出失败抛 `ResourceError`。
 
 `invoke_action` 执行一个 Handler 操作。成功或主动取消返回 `ErrorResult(message="", action="continue")`；项目异常和未知异常交给 `handle_error`；EOF 和 Ctrl+C 继续传播。
 
@@ -4330,13 +4330,13 @@ def create_review(self, session: Session, actor: Actor, data: ReviewInput) -> Re
 - **返回**：`ReviewView`。
 - **异常**：预约不在本人范围统一抛 `NotFoundError`；预约不是 `completed` 抛 `InvalidState`；重复评价抛 `ConflictError`；字段不合法抛 `InvalidInputError`。
 - **数据变更**：一条 `reviews`；不修改预约、课包或课次。
-- **事务**：锁预约后复核归属和状态，再以锁定当前读查已有评价；数据库 `UNIQUE(booking_id)` 处理并发最终防重。
+- **事务**：`BookingRepository.lock` 按主键锁定预约，复核归属和状态后，`ReviewRepository.has_for_booking` 用锁定当前读检查评价。数据库的 `UNIQUE(booking_id)` 处理并发防重。预约或评价读写遇到 MySQL 死锁错误（1213）时，用例用新会话重试一次。提交结果未知时，异常携带用于核实的评价编号。提交成功后发送含操作者和评价编号的操作事件，日志文件由统一日志模块写入。
 
 #### 13.7.2 查询评价
 
 - 会员只能查看本人评价；教练只能查看 `course_sessions.coach_id=Actor.coach_id` 的评分和留言；管理员可查看全部；前台调用详情或列表抛 `PermissionDenied`。
 - 会员或教练越出对象范围与记录不存在统一抛 `NotFoundError`。`ReviewQuery.member_id/coach_id` 只能缩小 Actor 已有范围，不能扩大范围。
-- 角色范围必须在 SQL 筛选、`COUNT(*)` 和分页前应用。`list_reviews` 返回 `Page[ReviewView]`，按 `created_at DESC, id DESC` 稳定分页。
+- `ReviewRepository.get` 按评价编号和服务指定的会员或教练范围筛选。`ReviewRepository.list` 接收 `ReviewQuery` 和同样的范围，在同一事务内用一致条件计算 `COUNT(*)` 和当前页，按 `created_at DESC, id DESC` 返回 `Page[ReviewView]`。
 - 匿名经营报表只聚合评分；留言不进入报表、导出或普通日志。评价通过预约关联会员、课次和教练，不依赖课包字段解释课程归属。
 
 ### 13.8 报表与导出

@@ -55,9 +55,10 @@ class GymCLI:
             "3": ("课程", menus.course_menu(h.course)),
             "4": ("预约", menus.booking_menu(h.booking)),
             "5": ("签到", menus.attendance_menu(h.attendance)),
-            "6": ("评价", menus.review_menu(h.review)),
-            "7": ("器械", menus.equipment_menu(h.equipment)),
         }
+        if actor.role in {"member", "coach", "admin"}:
+            sections["6"] = ("评价", menus.review_menu(h.review))
+        sections["7"] = ("器械", menus.equipment_menu(h.equipment))
         if actor.role in {"member", "coach"}:
             sections["8"] = ("体测", menus.measurement_menu(h.measurement))
         if actor.role in {"admin", "receptionist"}:
