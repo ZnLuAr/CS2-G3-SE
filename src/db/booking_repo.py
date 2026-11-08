@@ -1,9 +1,11 @@
-"""预约数据访问；体测所用的当前授课关系检查已实现。"""
+"""预约数据访问，包含授课关系检查及评价所需的预约锁。"""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, Integer, String, column, select, table
 
 from src.models.booking import Booking
 from src.models.contracts import (
@@ -17,6 +19,15 @@ from src.models.contracts import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+bookings = table(
+    "bookings", column("id", Integer), column("member_id", Integer),
+    column("session_id", Integer), column("lesson_package_id", Integer),
+    column("status", String), column("booked_at", DateTime),
+    column("checked_in_at", DateTime), column("closed_at", DateTime),
+    column("created_at", DateTime), column("updated_at", DateTime),
+)
 
 
 class BookingRepository:
@@ -118,15 +129,6 @@ class BookingRepository:
         要求预约 reserved/checked_in、课次 scheduled，且 booked_at <= at < ends_at。
         返回固定 bool，不写数据；历史体测查看不用此条件，按架构“体测权限规则”保留截止。
         """
-        from datetime import timezone
-
-        from sqlalchemy import DateTime, Integer, String, column, select, table
-
-        bookings = table(
-            "bookings", column("id", Integer), column("member_id", Integer),
-            column("session_id", Integer), column("status", String),
-            column("booked_at", DateTime), column("closed_at", DateTime),
-        )
         sessions = table(
             "course_sessions", column("id", Integer), column("coach_id", Integer),
             column("status", String), column("ends_at", DateTime),
@@ -146,7 +148,17 @@ class BookingRepository:
         return self._session.execute(statement).first() is not None
 
     def lock(self, booking_id: int) -> Booking | None:
-        """锁定并读取最新预约记录。
-
-        返回：Booking | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.lock 尚未实现")
+        """按主键锁定预约并读取最新记录。不存在时返回 None。"""
+        statement = select(bookings).where(bookings.c.id == booking_id).with_for_update()
+        row = self._session.execute(statement).mappings().one_or_none()
+        if row is None:
+            return None
+        fields = dict(row)
+        for name in ("booked_at", "checked_in_at", "closed_at", "created_at", "updated_at"):
+            value = fields[name]
+            if value is not None:
+                fields[name] = (
+                    value.replace(tzinfo=timezone.utc) if value.tzinfo is None
+                    else value.astimezone(timezone.utc)
+                )
+        return Booking(**fields)

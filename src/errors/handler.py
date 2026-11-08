@@ -1,8 +1,14 @@
-"""CLI 与 TUI 共用的异常处理接口。当前仅声明字段与签名，方法尚未实现。"""
+"""将 CLI 与 TUI 的异常转换为安全提示和界面动作。"""
 
 from __future__ import annotations
 
-from src.errors.base import ErrorResult
+import logging
+import sys
+
+from src.errors.base import ErrorAction, ErrorResult, GymError
+from src.errors.business import AuthenticationError, ResourceError
+from src.errors.storage import OutcomeUnknownError, StorageError
+from src.logging.events import Outcome, log_event
 
 
 def handle_error(
@@ -13,9 +19,38 @@ def handle_error(
     request_id: str | None = None,
     fatal: bool = False,
 ) -> ErrorResult:
-    """归类异常、生成中文提示并记录一次脱敏错误日志。
+    """分类异常，返回可展示的提示、界面动作和可选核实编号。"""
+    action: ErrorAction
+    record_id = None
+    if isinstance(error, OutcomeUnknownError):
+        action, level, outcome = "verify", logging.ERROR, Outcome.UNKNOWN
+        message = error.message
+        request_id = error.request_id or request_id
+        record_id = error.record_id
+    elif isinstance(error, AuthenticationError):
+        action, level, outcome = "login", logging.WARNING, Outcome.REJECTED
+        message = error.message
+    elif isinstance(error, (StorageError, ResourceError)):
+        action, level, outcome = "exit", logging.ERROR, Outcome.FAILED
+        message = error.message
+    elif isinstance(error, GymError):
+        action, level, outcome = "continue", logging.WARNING, Outcome.REJECTED
+        message = error.message
+    else:
+        action, level, outcome = "exit", logging.ERROR, Outcome.FAILED
+        message = "操作失败，请联系维护人员检查。"
 
-    返回：固定的 ErrorResult，包含动作、可选请求编号和原记录编号；提交未知时从异常读取编号。
-    边界：不打印、不控制界面、不提交或回滚数据库。
-    当前仅保留签名；调用抛 NotImplementedError。"""
-    raise NotImplementedError("handle_error 尚未实现")
+    try:
+        log_event(
+            level, operation=operation, outcome=outcome.value, actor_id=actor_id,
+            request_id=request_id, result_id=record_id, error=error,
+        )
+    except Exception:
+        try:
+            print("操作日志记录失败", file=sys.stderr)
+        except (OSError, ValueError):
+            pass
+    return ErrorResult(
+        message=message, action="exit" if fatal else action,
+        request_id=request_id, record_id=record_id,
+    )
