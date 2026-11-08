@@ -1,10 +1,15 @@
-"""预约数据访问；体测所用的当前授课关系检查已实现。"""
+"""预约读取、状态更新及当前授课关系检查。"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy import column, select, table, text, update
+
+from src.db.course_repo import SessionRepository
+from src.db.support import from_db_utc, to_db_utc
+from src.errors import StorageError
 from src.models.booking import Booking
 from src.models.contracts import (
     BookingInput,
@@ -19,6 +24,12 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+_BOOKINGS = table(
+    "bookings", column("id"), column("member_id"), column("session_id"),
+    column("status"), column("checked_in_at"), column("closed_at"),
+)
+
+
 class BookingRepository:
     """预约数据访问；只使用传入会话，不提交、不输出提示。
 
@@ -30,10 +41,33 @@ class BookingRepository:
         self._session = session
 
     def get(self, booking_id: int) -> BookingView | None:
-        """查询预约详情；未找到返回 None。
+        """查询预约详情，未找到时返回 None。"""
+        row = self._session.execute(text("""
+            SELECT b.*, m.name AS member_name
+            FROM bookings b JOIN members m ON m.id = b.member_id
+            WHERE b.id = :booking_id
+        """), {"booking_id": booking_id}).mappings().first()
+        if row is None:
+            return None
+        session_view = SessionRepository(self._session).get(row["session_id"])
+        if session_view is None:
+            raise StorageError("预约关联的课次不存在")
+        checked_in_at = row["checked_in_at"]
+        closed_at = row["closed_at"]
+        return BookingView(
+            id=row["id"], member_id=row["member_id"], member_name=row["member_name"],
+            session=session_view, lesson_package_id=row["lesson_package_id"], status=row["status"],
+            booked_at=from_db_utc(row["booked_at"]),
+            checked_in_at=None if checked_in_at is None else from_db_utc(checked_in_at),
+            closed_at=None if closed_at is None else from_db_utc(closed_at),
+        )
 
-        返回：BookingView | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.get 尚未实现")
+    def find_lock_targets(self, booking_id: int) -> tuple[int, int] | None:
+        """普通读取得会员和课次编号，用于按顺序取锁。"""
+        row = self._session.execute(
+            select(_BOOKINGS.c.member_id, _BOOKINGS.c.session_id).where(_BOOKINGS.c.id == booking_id),
+        ).first()
+        return None if row is None else (row.member_id, row.session_id)
 
     def list(
         self,
@@ -90,10 +124,16 @@ class BookingRepository:
         checked_in_at: datetime | None,
         closed_at: datetime | None,
     ) -> BookingView:
-        """写入状态和时间，私教节数结算由服务协调。
-
-        返回：BookingView；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.set_state 尚未实现")
+        """写入已锁定预约的状态与时刻，返回更新后的预约详情。"""
+        self._session.execute(update(_BOOKINGS).where(_BOOKINGS.c.id == booking_id).values(
+            status=status,
+            checked_in_at=None if checked_in_at is None else to_db_utc(checked_in_at),
+            closed_at=None if closed_at is None else to_db_utc(closed_at),
+        ))
+        result = self.get(booking_id)
+        if result is None:
+            raise StorageError("预约记录不存在")
+        return result
 
     def count_occupied(self, session_id: int) -> int:
         """锁定当前读取得该课次未取消预约记录并统计数量。
@@ -146,7 +186,15 @@ class BookingRepository:
         return self._session.execute(statement).first() is not None
 
     def lock(self, booking_id: int) -> Booking | None:
-        """锁定并读取最新预约记录。
-
-        返回：Booking | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.lock 尚未实现")
+        """锁定并读取最新预约记录，不存在时返回 None。"""
+        row = self._session.execute(
+            select(text("bookings.*")).select_from(_BOOKINGS)
+            .where(_BOOKINGS.c.id == booking_id).with_for_update(),
+        ).mappings().first()
+        if row is None:
+            return None
+        values = dict(row)
+        for field in ("booked_at", "checked_in_at", "closed_at", "created_at", "updated_at"):
+            if values[field] is not None:
+                values[field] = from_db_utc(values[field])
+        return Booking(**values)
