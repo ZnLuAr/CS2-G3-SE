@@ -7,7 +7,6 @@ Logic 负责创建与关闭 Session、决定事务边界，并在提交成功后
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING, Callable
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -27,6 +26,9 @@ if TYPE_CHECKING:
         Page,
     )
     from src.services.member_service import MemberService
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class MemberLogic:
@@ -126,4 +128,9 @@ def _log_operation(operation: Operation, actor: Actor, result_id: int) -> None:
             result_id=result_id,
         )
     except Exception:
-        print("操作日志记录失败", file=sys.stderr)
+        _LOGGER.exception(
+            "操作日志记录失败 operation=%s actor_id=%s result_id=%s",
+            operation.value,
+            actor.account_id,
+            result_id,
+        )

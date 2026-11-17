@@ -139,19 +139,6 @@ class GetByRequestTest(unittest.TestCase):
         self.assertEqual(record.created_at.tzinfo, timezone.utc)
 
 
-class LockByRequestTest(unittest.TestCase):
-    def test_uses_for_update(self):
-        session = _FakeSession({REQUEST_ID: _row()})
-        record = OperationRepository(session).lock_by_request(REQUEST_ID)
-
-        self.assertEqual(record.result_id, 7)
-        sql = session.calls[0][0]
-        self.assertIn("WHERE request_id = :request_id FOR UPDATE", sql)
-
-    def test_returns_none_when_missing(self):
-        self.assertIsNone(OperationRepository(_FakeSession()).lock_by_request(REQUEST_ID))
-
-
 class CreateTest(unittest.TestCase):
     def test_inserts_all_columns_and_returns_back_read_row(self):
         session = _FakeSession()

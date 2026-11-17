@@ -36,8 +36,8 @@ if TYPE_CHECKING:
     from src.models.member import Member
     from src.models.operation import OperationRecord
 
-# 可以登记会员档案的角色；会员与教练不能代替前台建档。
-_MEMBER_CREATE_ROLES = ("receptionist", "admin")
+# 可以写入会员档案的角色（建档与改资料）；会员与教练不能代替前台操作。
+_MEMBER_WRITE_ROLES = ("receptionist", "admin")
 # 可以按编号查看任意会员档案的角色；会员只能看本人。
 _MEMBER_READ_ALL_ROLES = ("receptionist", "admin")
 
@@ -62,7 +62,7 @@ class MemberService:
         ConflictError 请求编号已被其他请求使用；StorageError 原记录缺失。
         """
         current = self._auth.verify_actor(session, actor)
-        if current.role not in _MEMBER_CREATE_ROLES:
+        if current.role not in _MEMBER_WRITE_ROLES:
             raise PermissionDenied("当前角色不能登记会员档案")
 
         normalized = _normalize_member_input(data)
@@ -92,8 +92,8 @@ class MemberService:
 
         权限：原操作者本人或管理员（12.3.1 核实接口）。
         返回：MemberView。不修改业务数据。
-        异常：InvalidInputError 编号格式不合法；ConflictError 该编号对应其他操作；
-        NotFoundError 没有该编号的结果，或结果对当前身份不可见。
+        异常：InvalidInputError 编号格式不合法；NotFoundError 没有该编号的结果，
+        或结果对当前身份不可见；ConflictError 该编号对应其他操作。
         """
         current = self._auth.verify_actor(session, actor)
         canonical_request_id = _normalize_request_id(request_id)
@@ -101,10 +101,10 @@ class MemberService:
         record = OperationRepository(session).get_by_request(canonical_request_id)
         if record is None:
             raise NotFoundError("该请求编号没有对应的会员建档结果")
-        if record.operation != "create_member":
-            raise ConflictError("该请求编号对应其他操作")
         if record.actor_id != current.account_id and current.role != "admin":
             raise NotFoundError("该请求编号没有对应的会员建档结果")
+        if record.operation != "create_member":
+            raise ConflictError("该请求编号对应其他操作")
 
         member = MemberRepository(session).get(record.result_id)
         if member is None:
@@ -180,7 +180,7 @@ class MemberService:
         异常：PermissionDenied、NotFoundError、InvalidInputError。
         """
         current = self._auth.verify_actor(session, actor)
-        if current.role not in _MEMBER_CREATE_ROLES:
+        if current.role not in _MEMBER_WRITE_ROLES:
             raise PermissionDenied("当前角色不能修改会员资料")
 
         target_id = _normalize_member_id(member_id)
@@ -243,7 +243,7 @@ def _normalize_member_input(data: MemberInput) -> MemberInput:
     else:
         stripped = data.phone.strip()
         if stripped == "":
-            phone = None
+            raise InvalidInputError("联系方式未填写时请传 None，空字符串不合法")
         elif len(stripped) > 32:
             raise InvalidInputError("联系方式不超过 32 个字符")
         else:

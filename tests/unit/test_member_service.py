@@ -198,14 +198,22 @@ class CreateMemberTest(MemberServiceTestBase):
 
         self.assertEqual(_FakeOperationRepo.created[0]["payload_hash"], expected)
 
-    def test_strips_whitespace_and_treats_blank_phone_as_none(self):
+    def test_strips_name_whitespace(self):
         service = MemberService(_FakeAuth())
 
-        service.create_member(None, _actor(), MemberInput(name="  张三  ", phone="   "), REQUEST_ID)
+        service.create_member(None, _actor(), MemberInput(name="  张三  ", phone=None), REQUEST_ID)
 
         saved = _FakeMemberRepo.instances[-1].created[0]
         self.assertEqual(saved.name, "张三")
         self.assertIsNone(saved.phone)
+
+    def test_rejects_blank_phone(self):
+        """合同 12.2.2：phone=None 表示没有联系方式，空字符串不合法。"""
+        service = MemberService(_FakeAuth())
+        for blank in ("", "   "):
+            with self.subTest(phone=blank), self.assertRaises(InvalidInputError):
+                service.create_member(None, _actor(), MemberInput(name="张三", phone=blank), REQUEST_ID)
+        self.assertEqual(_FakeOperationRepo.created, [])
 
     def test_rejects_blank_name(self):
         service = MemberService(_FakeAuth())
@@ -297,6 +305,13 @@ class GetMemberByRequestTest(MemberServiceTestBase):
         _FakeOperationRepo.existing = _Record(operation="sell_gym_card", actor_id=10)
         service = MemberService(_FakeAuth())
         with self.assertRaises(ConflictError):
+            service.get_member_by_request(None, _actor(account_id=10), REQUEST_ID)
+
+    def test_invisible_request_reports_not_found_before_operation_mismatch(self):
+        """合同 12.7.1：先复核可见范围，操作类型不匹配不得泄露编号归属。"""
+        _FakeOperationRepo.existing = _Record(operation="sell_gym_card", actor_id=99)
+        service = MemberService(_FakeAuth())
+        with self.assertRaises(NotFoundError):
             service.get_member_by_request(None, _actor(account_id=10), REQUEST_ID)
 
     def test_admin_can_verify_request_of_other_actor(self):

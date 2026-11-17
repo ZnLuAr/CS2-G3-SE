@@ -43,24 +43,6 @@ class OperationRepository:
             return None
         return _to_record(dict(row))
 
-    def lock_by_request(self, request_id: str) -> OperationRecord | None:
-        """当前读并锁定已存在的请求记录，供取得业务锁后再次核对。
-
-        记录不存在时返回 None；不预占请求编号、不提交事务。
-        """
-        from sqlalchemy import text
-
-        row = self._session.execute(
-            text(
-                f"SELECT {_OPERATION_COLUMNS} FROM operation_records "
-                "WHERE request_id = :request_id FOR UPDATE"
-            ),
-            {"request_id": request_id},
-        ).mappings().first()
-        if row is None:
-            return None
-        return _to_record(dict(row))
-
     def create(
         self,
         *,
