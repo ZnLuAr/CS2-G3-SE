@@ -32,6 +32,8 @@ def _view(row) -> ReviewView:
 
 
 class ReviewRepository:
+    """使用调用方传入的 Session，提交和回滚由调用方负责。"""
+
     def __init__(self, session: Session) -> None:
         self._session = session
 

@@ -4330,7 +4330,7 @@ def create_review(self, session: Session, actor: Actor, data: ReviewInput) -> Re
 - **返回**：`ReviewView`。
 - **异常**：预约不在本人范围统一抛 `NotFoundError`；预约不是 `completed` 抛 `InvalidState`；重复评价抛 `ConflictError`；字段不合法抛 `InvalidInputError`。
 - **数据变更**：一条 `reviews`；不修改预约、课包或课次。
-- **事务**：`BookingRepository.lock` 按主键锁定预约，复核归属和状态后，`ReviewRepository.has_for_booking` 用锁定当前读检查评价。数据库的 `UNIQUE(booking_id)` 处理并发防重。预约或评价读写遇到 MySQL 死锁错误（1213）时，用例用新会话重试一次。提交结果未知时，异常携带用于核实的评价编号。提交成功后发送含操作者和评价编号的操作事件，日志文件由统一日志模块写入。
+- **事务**：`BookingRepository.lock` 按主键锁定预约，复核归属和状态后，`ReviewRepository.has_for_booking` 用锁定当前读检查评价。数据库的 `UNIQUE(booking_id)` 处理并发防重。创建评价时，预约锁定或评价仓储操作遇到 MySQL 死锁错误（1213），用例用新会话重试一次。提交结果未知时，异常携带用于核实的评价编号。提交成功后发送含操作者和评价编号的操作事件，日志文件由统一日志模块写入。日志调用抛出异常时，尝试向标准错误流输出操作名和异常类型，仍返回已提交的评价。
 
 #### 13.7.2 查询评价
 

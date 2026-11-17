@@ -55,11 +55,15 @@ class ReviewLogic:
                 logging.INFO, operation=Operation.REVIEW_CREATE.value, outcome=Outcome.SUCCESS.value,
                 actor_id=actor.account_id, result_id=result.id,
             )
-        except Exception:
+        except Exception as exc:
             try:
-                print("操作日志记录失败", file=sys.stderr)
+                print(
+                    f"操作日志记录失败（{Operation.REVIEW_CREATE.value}，{type(exc).__name__}）",
+                    file=sys.stderr,
+                )
             except (OSError, ValueError):
-                pass
+                # 标准错误流不可写时，仍返回已经提交的评价。
+                return result
         return result
 
     def get_review(self, actor: Actor, review_id: int) -> ReviewView:

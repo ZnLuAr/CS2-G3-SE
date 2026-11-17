@@ -10,6 +10,7 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from src.config import LogConfig
 from src.db.review_repo import ReviewRepository
 from src.errors import (
     AuthenticationError, ConflictError, InvalidInputError, InvalidState,
@@ -17,6 +18,7 @@ from src.errors import (
 )
 from src.logic.review_logic import ReviewLogic
 from src.models.contracts import Actor, PageRequest, ReviewInput, ReviewQuery
+from src.services.auth_service import AuthService
 from src.services.review_service import ReviewService
 from src.ui.cli.app import GymCLI, invoke_action
 from src.ui.cli.handlers.review import ReviewHandler
@@ -167,7 +169,7 @@ def test_invalid_query_cannot_reach_sql(app, query):
         app.logic.list_reviews(ADMIN, query)
 
 
-def test_role_checks_and_revoked_identity(app):
+def test_role_checks(app):
     for actor in (COACH, ADMIN, RECEPTIONIST):
         with pytest.raises(PermissionDenied):
             app.logic.create_review(actor, review())
@@ -176,14 +178,27 @@ def test_role_checks_and_revoked_identity(app):
     with pytest.raises(PermissionDenied):
         app.logic.list_reviews(RECEPTIONIST, ReviewQuery())
 
-    app.auth.verify_actor.side_effect = AuthenticationError("请重新登录")
-    for call in (
-        lambda: app.logic.create_review(MEMBER, review()),
-        lambda: app.logic.get_review(MEMBER, 1),
-        lambda: app.logic.list_reviews(MEMBER, ReviewQuery()),
-    ):
-        with pytest.raises(AuthenticationError):
-            call()
+
+@pytest.mark.parametrize("method,data", [
+    ("create_review", review()), ("get_review", 1), ("list_reviews", ReviewQuery()),
+])
+def test_disabled_account_cannot_submit_or_query_reviews(app, method, data):
+    with app.factory.begin() as session:
+        session.execute(text("""
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT, role TEXT,
+                is_active BOOLEAN, created_at DATETIME, updated_at DATETIME
+            )
+        """))
+        session.execute(
+            text("INSERT INTO accounts (id, username, role, is_active) VALUES (:id, 'member1', 'member', 0)"),
+            {"id": MEMBER.account_id},
+        )
+
+    logic = ReviewLogic(app.factory, ReviewService(AuthService(log_config=LogConfig())))
+    with pytest.raises(AuthenticationError, match="当前登录身份已失效"):
+        getattr(logic, method)(MEMBER, data)
+    assert app.logic.list_reviews(ADMIN, ReviewQuery()).total == 0
 
 
 def test_write_failure_rolls_back_insert(app, monkeypatch):
@@ -272,7 +287,7 @@ def test_cli_empty_page(app, monkeypatch, capsys):
     assert "暂无记录" in capsys.readouterr().out
 
 
-def test_review_success_event_follows_commit_without_comment(app, monkeypatch):
+def test_review_success_event_follows_commit_without_comment(app, monkeypatch, capsys):
     logic, sessions = app.logic, app.factory
     events = []
 
@@ -288,3 +303,4 @@ def test_review_success_event_follows_commit_without_comment(app, monkeypatch):
         "operation": "review.create", "outcome": "success",
         "actor_id": MEMBER.account_id, "result_id": result.id,
     }]
+    assert capsys.readouterr().err == "操作日志记录失败（review.create，OSError）\n"
