@@ -37,7 +37,7 @@ class AttendanceService:
         """确认预约会员到场。
 
         锁定预约后生成当前时刻；会员可从课次开始时刻起自行签到，本课教练、前台或管理员可代为签到。
-        普通签到时间为 starts_at <= now < ends_at；本课教练或管理员课后补签使用 correct_attendance。
+        首次签到时间为 starts_at <= now < ends_at；尚未关闭的已签到预约重试时返回当前记录。
         按当前状态设计，取消、完成或缺席后不能签到；越过状态边界抛 InvalidState。
 
         返回：BookingView。数据变更由调用方 Logic 在本次事务中提交；失败时由 Logic 回滚并传播异常。
@@ -46,17 +46,16 @@ class AttendanceService:
         actor = self._auth.verify_actor(session, actor)
         repository = BookingRepository(session)
         booking, course_session = self._lock_booking(session, repository, actor, booking_id)
-        if actor.role == "coach" and actor.coach_id != course_session.coach_id:
-            raise NotFoundError("预约不存在")
-        now = datetime.now(timezone.utc)
-        if not course_session.starts_at <= now < course_session.ends_at:
-            raise InvalidState("普通签到仅在开课后、下课前办理")
         self._require_open(booking, course_session)
         if booking.status == "checked_in":
             return self._current_view(repository, booking, course_session)
-        return repository.set_state(
+        now = datetime.now(timezone.utc)
+        if not course_session.starts_at <= now < course_session.ends_at:
+            raise InvalidState("普通签到仅在开课后、下课前办理")
+        result = repository.set_state(
             booking_id, status="checked_in", checked_in_at=now, closed_at=None,
         )
+        return self._with_current_seats(repository, result, course_session)
 
     def correct_attendance(
         self, session: Session, actor: Actor, booking_id: int, present: bool,
@@ -67,7 +66,8 @@ class AttendanceService:
         present=False 将已签到记录改回 reserved，并清空签到时间；相同选择返回当前记录。
         到场更正保持课包余额，合法原预约按其上课日期资格处理。
         取消、完成或缺席状态拒绝更正，抛 InvalidState；结算后不可冲正。
-        无更正权限抛 PermissionDenied，目标不是布尔值时抛 InvalidInputError。
+        角色无更正权限抛 PermissionDenied；预约不存在或超出教练范围抛 NotFoundError。
+        目标不是布尔值时抛 InvalidInputError。
         返回 BookingView，将实际变更交给 Logic 在提交后记录。
         """
         actor = self._auth.verify_actor(session, actor)
@@ -77,8 +77,6 @@ class AttendanceService:
             raise InvalidInputError("到场状态必须是布尔值")
         repository = BookingRepository(session)
         booking, course_session = self._lock_booking(session, repository, actor, booking_id)
-        if actor.role == "coach" and actor.coach_id != course_session.coach_id:
-            raise PermissionDenied("仅本课教练或管理员可以更正到场状态")
         now = datetime.now(timezone.utc)
         if now < course_session.starts_at:
             raise InvalidState("开课前不能更正到场状态")
@@ -96,7 +94,7 @@ class AttendanceService:
             after_checked_in_at=result.checked_in_at,
             corrected_at=now,
         )
-        return result
+        return self._with_current_seats(repository, result, course_session)
 
     @staticmethod
     def _lock_booking(
@@ -112,8 +110,12 @@ class AttendanceService:
             raise NotFoundError("预约不存在")
         member = MemberRepository(session).lock(member_id)
         course_session = SessionRepository(session).lock(session_id)
+        if member is None or course_session is None:
+            raise NotFoundError("预约不存在")
+        if actor.role == "coach" and actor.coach_id != course_session.coach_id:
+            raise NotFoundError("预约不存在")
         booking = repository.lock(booking_id)
-        if member is None or course_session is None or booking is None:
+        if booking is None:
             raise NotFoundError("预约不存在")
         if (booking.member_id, booking.session_id) != targets:
             raise InvalidState("预约归属已变化，请重新查询")
@@ -124,20 +126,30 @@ class AttendanceService:
         if course_session.status != "scheduled" or booking.status not in {"reserved", "checked_in"}:
             raise InvalidState("课次或预约已经关闭")
 
-    @staticmethod
     def _current_view(
-        repository: BookingRepository, booking: Booking, course_session: CourseSession,
+        self, repository: BookingRepository, booking: Booking, course_session: CourseSession,
     ) -> BookingView:
         view = repository.get(booking.id)
         if view is None:
             raise StorageError("预约记录不存在")
         # 普通查询可能仍使用等待锁前的快照，预约状态和时间以锁定读为准。
-        return replace(
+        current = replace(
             view, status=booking.status, booked_at=booking.booked_at,
             lesson_package_id=booking.lesson_package_id, checked_in_at=booking.checked_in_at,
             closed_at=booking.closed_at,
-            session=replace(view.session, status=course_session.status, updated_at=course_session.updated_at),
         )
+        return self._with_current_seats(repository, current, course_session)
+
+    @staticmethod
+    def _with_current_seats(
+        repository: BookingRepository, view: BookingView, course_session: CourseSession,
+    ) -> BookingView:
+        occupied = repository.count_open_for_session(course_session.id)
+        return replace(view, session=replace(
+            view.session, status=course_session.status, updated_at=course_session.updated_at,
+            capacity=course_session.capacity, occupied_count=occupied,
+            available_count=max(0, course_session.capacity - occupied),
+        ))
 
     def complete(self, session: Session, actor: Actor, booking_id: int) -> ConsumptionView:
         """本课教练或管理员在下课后登记消课，扣除 1 节私教并释放 1 节占用。

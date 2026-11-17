@@ -1165,6 +1165,8 @@ class ErrorResult:
     record_id: int | None = None
 ```
 
+统一错误处理接入前，CLI 对签到与到场更正使用以下动作：`OutcomeUnknownError` 返回 `verify` 并附核实编号，`AuthenticationError` 返回 `login`，其余 `StorageError` 返回 `exit`，其余业务异常和未知异常返回 `continue`。未知异常展示固定提示，失败日志记录操作名和异常类型。
+
 ### 10.3 `handle_error`
 
 ```python
@@ -4080,10 +4082,10 @@ def check_in(self, session: Session, actor: Actor, booking_id: int) -> BookingVi
 ```
 
 - **权限**：会员本人、本课教练、前台、管理员。
-- **返回**：`checked_in` 的 `BookingView`；已经签到时返回当前 View。
-- **异常**：预约编号须为有效正整数，否则抛 `InvalidInputError`。记录不存在或超出会员、教练可见范围抛 `NotFoundError`。仅 `starts_at <= now < ends_at` 允许普通签到，早于开始、到达 `ends_at` 或课后、以及处于终态均抛 `InvalidState`。
+- **返回**：`checked_in` 的 `BookingView`；课次仍为 `scheduled` 时，已签到预约在下课后重试也返回当前 View 并保留原签到时刻。
+- **异常**：预约编号须为有效正整数，否则抛 `InvalidInputError`。记录不存在或超出会员、教练可见范围抛 `NotFoundError`。首次签到须满足 `starts_at <= now < ends_at`；超出窗口、课次已关闭或预约处于终态抛 `InvalidState`。
 - **数据变更**：把 `reserved` 改为 `checked_in`，设置 `checked_in_at=now`；不修改课包余额，不创建门禁记录。
-- **事务**：仓储的 `BookingRepository.find_lock_targets(booking_id)` 通过普通查询返回 `(member_id, session_id)` 或 `None`。按 `member -> course_session -> booking` 加锁，锁后生成当前时刻并复核状态、归属和课次边界。
+- **事务**：仓储的 `BookingRepository.find_lock_targets(booking_id)` 通过普通查询返回 `(member_id, session_id)` 或 `None`。按 `member -> course_session -> booking` 加锁并复核状态和归属；首次签到在锁内生成当前时刻并检查课次边界。签到与更正均在持有课次锁时，以共享锁读取 `reserved/checked_in` 的预约编号并统计当前占用，从锁定课次的容量计算余量。
 
 #### 13.4.3 `AttendanceService.correct_attendance`
 
@@ -4095,11 +4097,11 @@ def correct_attendance(
 
 - **权限**：本课教练或管理员。
 - **返回**：更正后的 `BookingView`；目标状态与当前状态相同则返回当前 View。
-- **异常**：无效预约编号或非布尔目标状态抛 `InvalidInputError`。预约不存在抛 `NotFoundError`，缺少更正权限抛 `PermissionDenied`，早于开课或预约已终结抛 `InvalidState`。
+- **异常**：无效预约编号或非布尔目标状态抛 `InvalidInputError`。预约不存在或超出教练可见范围抛 `NotFoundError`，角色无更正权限抛 `PermissionDenied`，早于开课、课次已关闭或预约已终结抛 `InvalidState`。
 - **数据变更**：`reserved -> checked_in` 时设置当前时刻，`checked_in -> reserved` 时清空 `checked_in_at`；课后补签只能由本课教练或管理员通过本方法执行。结构化审计记录操作者、预约、原状态、目标状态、更正时刻及原/新 `checked_in_at`，不记录联系方式或评价正文；不修改门禁或课包。
 - **事务**：按 `member -> course_session -> booking` 加锁；只允许在消课、缺席或取消之前更正。
 
-更正事务提交成功后，Logic 将状态和 UTC 时刻填入 `AttendanceChange`，预约编号作为 `result_id` 记录。相同选择直接返回当前预约。统一日志接入前，结构化更正记录输出到标准错误。
+更正事务提交成功后，Logic 将状态和 UTC 时刻填入 `AttendanceChange`，预约编号作为 `result_id` 记录。相同选择直接返回当前预约。统一日志尚未接入或写入返回失败时，结构化更正记录输出到标准错误。
 
 #### 13.4.4 `AttendanceService.complete`
 
@@ -4680,10 +4682,11 @@ CREATE TABLE schema_versions (
 
 | 场景 | 预期 |
 |---|---|
-| 开课前签到 | `InvalidState` |
-| 到达 `ends_at` 或课后普通签到 | `InvalidState` |
+| 开课前首次签到 | `InvalidState` |
+| 到达 `ends_at` 或课后首次签到 | `InvalidState` |
 | 课后由本课教练或管理员补签 | 更正成功并写结构化审计 |
-| 重复签到 | 返回当前预约，不重复写状态 |
+| 课次仍为 `scheduled` 时重复签到（含课后） | 返回当前预约，保留原签到时间 |
+| 教练更正其他教练课次的预约或不存在的预约 | 均抛 `NotFoundError` |
 | 已签到更正为未到 | 回到 `reserved` 并清空 `checked_in_at` |
 | 未结束消课 | `InvalidState` |
 | 两次并发消同一预约 | 只创建一条消课、只扣一节 |

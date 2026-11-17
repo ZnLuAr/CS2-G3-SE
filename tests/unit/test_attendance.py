@@ -1,5 +1,6 @@
 """ATT-01、ATT-04 的签到状态、持久化及 CLI 验收。"""
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 import json
@@ -12,13 +13,14 @@ from sqlalchemy.orm import sessionmaker
 
 from src.db.booking_repo import BookingRepository
 from src.db.course_repo import SessionRepository
+from src.db.support import to_db_utc
 from src.errors import (
     AuthenticationError, InvalidInputError, InvalidState, NotFoundError,
     OutcomeUnknownError, PermissionDenied, StorageError,
 )
 from src.logic import attendance_logic
 from src.logic.attendance_logic import AttendanceLogic
-from src.models.contracts import Actor
+from src.models.contracts import Actor, AttendanceChange
 from src.services import attendance_service
 from src.services.attendance_service import AttendanceService
 from src.ui.cli.app import invoke_action
@@ -117,30 +119,74 @@ def test_check_in_rejects_outside_window(attendance, at):
         assert BookingRepository(session).get(1).status == "reserved"
 
 
-def test_correction_records_actual_time_once_and_clears_it_on_undo(attendance, capsys):
+def test_checked_in_booking_can_be_retried_after_session_ends(attendance):
+    logic, _, now = attendance
+    first = logic.check_in(MEMBER, 1)
+    now.return_value = END + timedelta(minutes=1)
+    assert logic.check_in(MEMBER, 1) == first
+
+
+def test_attendance_uses_current_counts_on_write_and_retry(attendance, monkeypatch):
+    logic, sessions, _ = attendance
+    with sessions.begin() as session:
+        session.execute(text("UPDATE course_sessions SET capacity = 2"))
+    read = SessionRepository.get
+
+    def stale_session(self, session_id):
+        view = read(self, session_id)
+        return replace(view, occupied_count=2, available_count=0)
+
+    monkeypatch.setattr(SessionRepository, "get", stale_session)
+    results = (
+        logic.check_in(COACH, 1), logic.check_in(COACH, 1),
+        logic.correct_attendance(COACH, 1, False), logic.correct_attendance(COACH, 1, False),
+    )
+    for result in results:
+        assert (result.session.occupied_count, result.session.available_count) == (1, 1)
+
+
+def test_database_utc_conversion_rejects_missing_timezone():
+    with pytest.raises(ValueError, match="时区"):
+        to_db_utc(START.replace(tzinfo=None))
+
+
+def test_correction_records_actual_time_once_and_clears_it_on_undo(attendance, monkeypatch):
     logic, sessions, now = attendance
+    recorder = Mock(return_value=True)
+    monkeypatch.setattr(attendance_logic, "log_event", recorder)
     now.return_value = END
     added = logic.correct_attendance(COACH, 1, True)
     assert added.checked_in_at == END
-    event = json.loads(capsys.readouterr().err)
+    event = recorder.call_args.kwargs
     assert (event["operation"], event["actor_id"], event["result_id"]) == ("attendance.correct", 2, 1)
-    assert event["attendance_change"] == {
-        "before": "reserved", "after": "checked_in", "before_checked_in_at": None,
-        "after_checked_in_at": END.isoformat(), "corrected_at": END.isoformat(),
-    }
+    assert event["attendance_change"] == AttendanceChange(
+        before="reserved", after="checked_in", before_checked_in_at=None,
+        after_checked_in_at=END, corrected_at=END,
+    )
     now.return_value = END + timedelta(minutes=5)
     assert logic.correct_attendance(COACH, 1, True) == added
-    assert capsys.readouterr().err == ""
+    recorder.assert_called_once()
     removed = logic.correct_attendance(ADMIN, 1, False)
     assert (removed.status, removed.checked_in_at) == ("reserved", None)
-    event = json.loads(capsys.readouterr().err)
-    assert event["attendance_change"]["before_checked_in_at"] == END.isoformat()
-    assert event["attendance_change"]["after_checked_in_at"] is None
-    assert event["attendance_change"]["corrected_at"] == now.return_value.isoformat()
+    assert recorder.call_count == 2
+    event = recorder.call_args.kwargs
+    assert (event["operation"], event["actor_id"], event["result_id"]) == ("attendance.correct", 4, 1)
+    assert event["attendance_change"] == AttendanceChange(
+        before="checked_in", after="reserved", before_checked_in_at=END,
+        after_checked_in_at=None, corrected_at=now.return_value,
+    )
     with sessions() as session:
         assert BookingRepository(session).get(1) == removed
         assert session.execute(text("SELECT remaining_lessons, reserved_lessons FROM lesson_packages")).one() == (4, 1)
         assert session.execute(text("SELECT id, booking_id FROM gym_entries")).all() == [(1, 1)]
+
+
+def test_committed_correction_falls_back_if_log_write_fails(attendance, monkeypatch, capsys):
+    logic, _, _ = attendance
+    monkeypatch.setattr(attendance_logic, "log_event", Mock(return_value=False))
+    logic.correct_attendance(COACH, 1, True)
+    event = json.loads(capsys.readouterr().err)
+    assert (event["operation"], event["result_id"]) == ("attendance.correct", 1)
 
 
 @pytest.mark.parametrize("status", ["cancelled", "completed", "no_show"])
@@ -167,9 +213,12 @@ def test_correction_scope_and_invalid_inputs(attendance):
     logic, _, now = attendance
     other_coach = Actor(account_id=5, role="coach", member_id=None, coach_id=2)
     other_member = Actor(account_id=6, role="member", member_id=2, coach_id=None)
-    for actor in (DESK, MEMBER, other_coach):
+    for actor in (DESK, MEMBER):
         with pytest.raises(PermissionDenied):
             logic.correct_attendance(actor, 1, True)
+    for booking_id in (1, 2):
+        with pytest.raises(NotFoundError, match="^预约不存在$"):
+            logic.correct_attendance(other_coach, booking_id, True)
     for actor in (other_member, other_coach):
         with pytest.raises(NotFoundError):
             logic.check_in(actor, 1)
@@ -235,11 +284,14 @@ def test_cli_uses_real_logic_and_displays_booking(attendance, monkeypatch, capsy
     (InvalidState("超出签到时间"), "continue", "超出签到时间"),
     (AuthenticationError("请重新登录"), "login", "请重新登录"),
     (StorageError("保存签到失败"), "exit", "保存签到失败"),
-    (RuntimeError("internal details"), "exit", "签到操作失败，请稍后重试"),
+    (RuntimeError("internal details"), "continue", "签到操作失败，请稍后重试"),
     (OutcomeUnknownError("核实签到结果", record_id=1), "verify", "核实签到结果"),
 ])
-def test_cli_keeps_safe_error_actions_before_shared_error_handler_is_available(error, action, message):
+def test_cli_keeps_safe_error_actions_before_shared_error_handler_is_available(error, action, message, caplog):
     result = invoke_action(Mock(side_effect=error), operation="attendance.checkin")
     assert (result.message, result.action) == (message, action)
+    assert caplog.records[-1].operation == "attendance.checkin"
+    assert caplog.records[-1].error_type == type(error).__name__
+    assert "internal details" not in caplog.text
     if action == "verify":
         assert result.record_id == 1

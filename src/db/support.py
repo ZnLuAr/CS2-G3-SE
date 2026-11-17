@@ -14,4 +14,6 @@ def from_db_utc(value: datetime | str) -> datetime:
 
 def to_db_utc(value: datetime) -> datetime:
     """把带时区的时刻转换为 UTC DATETIME 列的值。"""
+    if value.utcoffset() is None:
+        raise ValueError("写入数据库的时刻必须带时区")
     return value.astimezone(timezone.utc).replace(tzinfo=None)

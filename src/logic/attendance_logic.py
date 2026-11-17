@@ -58,14 +58,19 @@ class AttendanceLogic:
 
     @staticmethod
     def _log_correction(actor: Actor, booking_id: int, change: AttendanceChange) -> None:
+        message = None
         try:
-            log_event(
+            if log_event(
                 logging.INFO, operation=Operation.ATTENDANCE_CORRECT.value,
                 outcome=Outcome.SUCCESS.value, actor_id=actor.account_id,
                 result_id=booking_id, attendance_change=change,
-            )
+            ):
+                return
         except NotImplementedError:
-            # 统一日志接入前，将同一条脱敏事件输出到标准错误。
+            pass
+        except Exception:
+            message = "操作日志记录失败"
+        if message is None:
             payload = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "level": "INFO",
@@ -79,10 +84,6 @@ class AttendanceLogic:
                 },
             }
             message = json.dumps(payload)
-        except Exception:
-            message = "操作日志记录失败"
-        else:
-            return
         try:
             print(message, file=sys.stderr)
         except (OSError, ValueError):

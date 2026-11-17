@@ -142,6 +142,14 @@ class BookingRepository:
         返回：int；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("BookingRepository.count_occupied 尚未实现")
 
+    def count_open_for_session(self, session_id: int) -> int:
+        """课次已加锁后，以锁定读统计 reserved 和 checked_in 预约。"""
+        statement = select(_BOOKINGS.c.id).where(
+            _BOOKINGS.c.session_id == session_id,
+            _BOOKINGS.c.status.in_(("reserved", "checked_in")),
+        ).with_for_update(read=True)
+        return len(self._session.scalars(statement).all())
+
     def has_member_conflict(self, member_id: int, window: DateWindow) -> bool:
         """锁定当前读检查会员未取消预约是否与目标时间重叠。
 
