@@ -2,14 +2,35 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 
-from src.errors.base import ErrorResult
+from src.errors.base import ErrorResult, GymError
 from src.errors.business import AuthenticationError, InputCancelled
 from src.errors.handler import handle_error
+from src.errors.storage import OutcomeUnknownError, StorageError
 from src.models.contracts import Actor
 from src.ui.cli import menus
 from src.ui.cli.menus import CliHandlers, MenuItem
 from src.logging import Operation
+
+
+def _attendance_error(exc: Exception, operation: str) -> ErrorResult:
+    """统一错误处理接入前，记录脱敏失败信息并返回菜单动作。"""
+    logging.getLogger(__name__).warning(
+        "签到操作失败 (%s, %s)", operation, type(exc).__name__,
+        extra={"operation": operation, "error_type": type(exc).__name__},
+    )
+    if isinstance(exc, OutcomeUnknownError):
+        return ErrorResult(
+            message=exc.message, action="verify", request_id=exc.request_id, record_id=exc.record_id,
+        )
+    if isinstance(exc, AuthenticationError):
+        return ErrorResult(message=exc.message, action="login")
+    if isinstance(exc, StorageError):
+        return ErrorResult(message=exc.message, action="exit")
+    if isinstance(exc, GymError):
+        return ErrorResult(message=exc.message, action="continue")
+    return ErrorResult(message="签到操作失败，请稍后重试", action="continue")
 
 
 def invoke_action(
@@ -29,7 +50,12 @@ def invoke_action(
     except NotImplementedError:
         raise
     except Exception as exc:
-        return handle_error(exc, operation=operation, actor_id=actor_id, request_id=request_id)
+        try:
+            return handle_error(exc, operation=operation, actor_id=actor_id, request_id=request_id)
+        except NotImplementedError:
+            if operation not in {Operation.ATTENDANCE_CHECKIN.value, Operation.ATTENDANCE_CORRECT.value}:
+                raise
+            return _attendance_error(exc, operation)
     return ErrorResult(message="", action="continue")
 
 

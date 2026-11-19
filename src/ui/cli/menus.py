@@ -8,6 +8,7 @@ from typing import TypeVar
 
 from src.models.contracts import Page, PageRequest
 from src.errors.business import InputCancelled, InvalidInputError
+from src.logging import Operation
 
 from src.ui.cli.handlers.attendance import AttendanceHandler
 from src.ui.cli.handlers.auth import AuthHandler
@@ -87,10 +88,19 @@ def booking_menu(handler: BookingHandler) -> list[MenuItem]:
 
 
 def attendance_menu(handler: AttendanceHandler) -> list[MenuItem]:
-    """构造本模块的已实现菜单入口。
-
-    只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    return []
+    """登录用户可签到，教练与管理员可进入到场更正。"""
+    items = [
+        MenuItem(
+            key="1", label="课程签到", operation=Operation.ATTENDANCE_CHECKIN.value,
+            action=handler.check_in,
+        ),
+    ]
+    if handler.current_role in {"coach", "admin"}:
+        items.append(MenuItem(
+            key="2", label="更正到场状态", operation=Operation.ATTENDANCE_CORRECT.value,
+            action=handler.correct_attendance,
+        ))
+    return items
 
 
 def review_menu(handler: ReviewHandler) -> list[MenuItem]:

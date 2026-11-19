@@ -1,0 +1,297 @@
+"""ATT-01、ATT-04 的签到状态、持久化及 CLI 验收。"""
+
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from io import StringIO
+import json
+from unittest.mock import Mock
+
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import sessionmaker
+
+from src.db.booking_repo import BookingRepository
+from src.db.course_repo import SessionRepository
+from src.db.support import to_db_utc
+from src.errors import (
+    AuthenticationError, InvalidInputError, InvalidState, NotFoundError,
+    OutcomeUnknownError, PermissionDenied, StorageError,
+)
+from src.logic import attendance_logic
+from src.logic.attendance_logic import AttendanceLogic
+from src.models.contracts import Actor, AttendanceChange
+from src.services import attendance_service
+from src.services.attendance_service import AttendanceService
+from src.ui.cli.app import invoke_action
+from src.ui.cli.handlers.attendance import AttendanceHandler
+from src.ui.cli.menus import attendance_menu
+
+
+START = datetime(2026, 11, 8, 8, tzinfo=timezone.utc)
+END = START + timedelta(hours=1)
+MEMBER = Actor(account_id=1, role="member", member_id=1, coach_id=None)
+COACH = Actor(account_id=2, role="coach", member_id=None, coach_id=1)
+DESK = Actor(account_id=3, role="receptionist", member_id=None, coach_id=None)
+ADMIN = Actor(account_id=4, role="admin", member_id=None, coach_id=None)
+
+
+@pytest.fixture
+def attendance(monkeypatch):
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.connection.driver_connection.executescript("""
+            CREATE TABLE members (
+                id INTEGER PRIMARY KEY, name TEXT, phone TEXT, status TEXT,
+                archived_at TEXT, created_at TEXT DEFAULT '2026-11-01', updated_at TEXT DEFAULT '2026-11-01'
+            );
+            CREATE TABLE courses (
+                id INTEGER PRIMARY KEY, name TEXT, description TEXT, kind TEXT, duration_minutes INTEGER,
+                is_active BOOLEAN, created_at TEXT DEFAULT '2026-11-01', updated_at TEXT DEFAULT '2026-11-01'
+            );
+            CREATE TABLE coaches (
+                id INTEGER PRIMARY KEY, name TEXT, phone TEXT, is_active BOOLEAN,
+                created_at TEXT DEFAULT '2026-11-01', updated_at TEXT DEFAULT '2026-11-01'
+            );
+            CREATE TABLE rooms (
+                id INTEGER PRIMARY KEY, name TEXT, location TEXT, is_active BOOLEAN,
+                created_at TEXT DEFAULT '2026-11-01', updated_at TEXT DEFAULT '2026-11-01'
+            );
+            CREATE TABLE course_sessions (
+                id INTEGER PRIMARY KEY, course_id INTEGER, coach_id INTEGER, room_id INTEGER, course_name TEXT,
+                kind TEXT, starts_at TEXT, ends_at TEXT, capacity INTEGER, status TEXT,
+                created_at TEXT DEFAULT '2026-11-01', updated_at TEXT DEFAULT '2026-11-01'
+            );
+            CREATE TABLE bookings (
+                id INTEGER PRIMARY KEY, member_id INTEGER, session_id INTEGER, lesson_package_id INTEGER,
+                status TEXT, booked_at TEXT, checked_in_at TEXT, closed_at TEXT,
+                created_at TEXT DEFAULT '2026-11-01', updated_at TEXT DEFAULT '2026-11-01'
+            );
+            CREATE TABLE lesson_packages (id INTEGER PRIMARY KEY, remaining_lessons INTEGER, reserved_lessons INTEGER);
+            CREATE TABLE gym_entries (id INTEGER PRIMARY KEY, booking_id INTEGER);
+            INSERT INTO members (id, name, status) VALUES (1, '合成会员', 'active');
+            INSERT INTO courses (id, name, kind, duration_minutes, is_active) VALUES (1, '私教', 'private', 60, 1);
+            INSERT INTO coaches (id, name, is_active) VALUES (1, '合成教练', 1);
+            INSERT INTO rooms (id, name, is_active) VALUES (1, '训练室', 1);
+            INSERT INTO course_sessions (id, course_id, coach_id, room_id, course_name, kind,
+                                         starts_at, ends_at, capacity, status)
+                VALUES (1, 1, 1, 1, '私教', 'private', '2026-11-08 08:00:00', '2026-11-08 09:00:00', 1, 'scheduled');
+            INSERT INTO bookings (id, member_id, session_id, lesson_package_id, status, booked_at)
+                VALUES (1, 1, 1, 1, 'reserved', '2026-11-07 08:00:00');
+            INSERT INTO lesson_packages VALUES (1, 4, 1);
+            INSERT INTO gym_entries VALUES (1, 1);
+        """)
+    sessions = sessionmaker(engine)
+    auth = Mock()
+    auth.verify_actor.side_effect = lambda session, actor: actor
+    clock = Mock()
+    clock.now.return_value = START
+    monkeypatch.setattr(attendance_service, "datetime", clock)
+    try:
+        yield AttendanceLogic(sessions, AttendanceService(auth)), sessions, clock.now
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("actor", [MEMBER, COACH, DESK, ADMIN])
+def test_check_in_at_start_and_retry_keeps_original_time(attendance, actor):
+    logic, sessions, now = attendance
+    first = logic.check_in(actor, 1)
+    now.return_value = START + timedelta(minutes=20)
+    assert logic.check_in(actor, 1) == first
+    assert first.status == "checked_in"
+    assert first.checked_in_at == START
+    assert first.member_name == "合成会员"
+    assert (first.session.occupied_count, first.session.available_count) == (1, 0)
+    with sessions() as session:
+        assert BookingRepository(session).get(1) == first
+        assert session.execute(text("SELECT remaining_lessons, reserved_lessons FROM lesson_packages")).one() == (4, 1)
+        assert session.execute(text("SELECT id, booking_id FROM gym_entries")).all() == [(1, 1)]
+
+
+@pytest.mark.parametrize("at", [START - timedelta(microseconds=1), END, END + timedelta(minutes=1)])
+def test_check_in_rejects_outside_window(attendance, at):
+    logic, sessions, now = attendance
+    now.return_value = at
+    with pytest.raises(InvalidState):
+        logic.check_in(MEMBER, 1)
+    with sessions() as session:
+        assert BookingRepository(session).get(1).status == "reserved"
+
+
+def test_checked_in_booking_can_be_retried_after_session_ends(attendance):
+    logic, _, now = attendance
+    first = logic.check_in(MEMBER, 1)
+    now.return_value = END + timedelta(minutes=1)
+    assert logic.check_in(MEMBER, 1) == first
+
+
+def test_attendance_uses_current_counts_on_write_and_retry(attendance, monkeypatch):
+    logic, sessions, _ = attendance
+    with sessions.begin() as session:
+        session.execute(text("UPDATE course_sessions SET capacity = 2"))
+    read = SessionRepository.get
+
+    def stale_session(self, session_id):
+        view = read(self, session_id)
+        return replace(view, occupied_count=2, available_count=0)
+
+    monkeypatch.setattr(SessionRepository, "get", stale_session)
+    results = (
+        logic.check_in(COACH, 1), logic.check_in(COACH, 1),
+        logic.correct_attendance(COACH, 1, False), logic.correct_attendance(COACH, 1, False),
+    )
+    for result in results:
+        assert (result.session.occupied_count, result.session.available_count) == (1, 1)
+
+
+def test_database_utc_conversion_rejects_missing_timezone():
+    with pytest.raises(ValueError, match="时区"):
+        to_db_utc(START.replace(tzinfo=None))
+
+
+def test_correction_records_actual_time_once_and_clears_it_on_undo(attendance, monkeypatch):
+    logic, sessions, now = attendance
+    recorder = Mock(return_value=True)
+    monkeypatch.setattr(attendance_logic, "log_event", recorder)
+    now.return_value = END
+    added = logic.correct_attendance(COACH, 1, True)
+    assert added.checked_in_at == END
+    event = recorder.call_args.kwargs
+    assert (event["operation"], event["actor_id"], event["result_id"]) == ("attendance.correct", 2, 1)
+    assert event["attendance_change"] == AttendanceChange(
+        before="reserved", after="checked_in", before_checked_in_at=None,
+        after_checked_in_at=END, corrected_at=END,
+    )
+    now.return_value = END + timedelta(minutes=5)
+    assert logic.correct_attendance(COACH, 1, True) == added
+    recorder.assert_called_once()
+    removed = logic.correct_attendance(ADMIN, 1, False)
+    assert (removed.status, removed.checked_in_at) == ("reserved", None)
+    assert recorder.call_count == 2
+    event = recorder.call_args.kwargs
+    assert (event["operation"], event["actor_id"], event["result_id"]) == ("attendance.correct", 4, 1)
+    assert event["attendance_change"] == AttendanceChange(
+        before="checked_in", after="reserved", before_checked_in_at=END,
+        after_checked_in_at=None, corrected_at=now.return_value,
+    )
+    with sessions() as session:
+        assert BookingRepository(session).get(1) == removed
+        assert session.execute(text("SELECT remaining_lessons, reserved_lessons FROM lesson_packages")).one() == (4, 1)
+        assert session.execute(text("SELECT id, booking_id FROM gym_entries")).all() == [(1, 1)]
+
+
+def test_committed_correction_falls_back_if_log_write_fails(attendance, monkeypatch, capsys):
+    logic, _, _ = attendance
+    monkeypatch.setattr(attendance_logic, "log_event", Mock(return_value=False))
+    logic.correct_attendance(COACH, 1, True)
+    event = json.loads(capsys.readouterr().err)
+    assert (event["operation"], event["result_id"]) == ("attendance.correct", 1)
+
+
+@pytest.mark.parametrize("status", ["cancelled", "completed", "no_show"])
+def test_terminal_booking_cannot_be_changed(attendance, status):
+    logic, sessions, _ = attendance
+    with sessions.begin() as session:
+        session.execute(text("UPDATE bookings SET status = :status WHERE id = 1"), {"status": status})
+    with pytest.raises(InvalidState):
+        logic.check_in(MEMBER, 1)
+    with pytest.raises(InvalidState):
+        logic.correct_attendance(ADMIN, 1, True)
+
+
+def test_closed_session_has_no_available_seats(attendance):
+    _, sessions, _ = attendance
+    with sessions.begin() as session:
+        session.execute(text("UPDATE bookings SET status = 'cancelled'"))
+        session.execute(text("UPDATE course_sessions SET status = 'cancelled'"))
+        view = SessionRepository(session).get(1)
+        assert (view.occupied_count, view.available_count) == (0, 0)
+
+
+def test_correction_scope_and_invalid_inputs(attendance):
+    logic, _, now = attendance
+    other_coach = Actor(account_id=5, role="coach", member_id=None, coach_id=2)
+    other_member = Actor(account_id=6, role="member", member_id=2, coach_id=None)
+    for actor in (DESK, MEMBER):
+        with pytest.raises(PermissionDenied):
+            logic.correct_attendance(actor, 1, True)
+    for booking_id in (1, 2):
+        with pytest.raises(NotFoundError, match="^预约不存在$"):
+            logic.correct_attendance(other_coach, booking_id, True)
+    for actor in (other_member, other_coach):
+        with pytest.raises(NotFoundError):
+            logic.check_in(actor, 1)
+    with pytest.raises(InvalidInputError):
+        logic.correct_attendance(ADMIN, 1, 1)
+    with pytest.raises(InvalidInputError):
+        logic.check_in(MEMBER, True)
+    now.return_value = START - timedelta(microseconds=1)
+    with pytest.raises(InvalidState):
+        logic.correct_attendance(COACH, 1, True)
+
+
+def test_write_failure_rolls_back_without_audit(attendance, monkeypatch, capsys):
+    logic, sessions, _ = attendance
+    original = BookingRepository.set_state
+
+    def fail_after_update(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        raise OperationalError(None, None, RuntimeError("test failure"))
+
+    monkeypatch.setattr(BookingRepository, "set_state", fail_after_update)
+    with pytest.raises(StorageError):
+        logic.correct_attendance(COACH, 1, True)
+    with sessions() as session:
+        assert BookingRepository(session).get(1).status == "reserved"
+    assert capsys.readouterr().err == ""
+
+
+def test_committed_correction_survives_closed_log_output(attendance, monkeypatch):
+    logic, sessions, _ = attendance
+    closed_output = StringIO()
+    closed_output.close()
+    monkeypatch.setattr(attendance_logic, "sys", Mock(stderr=closed_output))
+    changed = logic.correct_attendance(COACH, 1, True)
+    with sessions() as session:
+        assert BookingRepository(session).get(1) == changed
+
+
+@pytest.mark.parametrize("answers", [["q"], ["1", "q"], ["1", "1", "q"], ["1", "1", "n"]])
+def test_cli_cancel_does_not_write(monkeypatch, answers):
+    logic = Mock()
+    handler = AttendanceHandler(logic, lambda: COACH, timezone_name="Asia/Shanghai")
+    monkeypatch.setattr("builtins.input", Mock(side_effect=answers))
+    correction = attendance_menu(handler)[1]
+    assert invoke_action(correction.action, operation=correction.operation).action == "continue"
+    logic.correct_attendance.assert_not_called()
+
+
+def test_cli_uses_real_logic_and_displays_booking(attendance, monkeypatch, capsys):
+    logic, _, _ = attendance
+    handler = AttendanceHandler(logic, lambda: COACH, timezone_name="Asia/Shanghai")
+    monkeypatch.setattr("builtins.input", Mock(side_effect=["1", "y", "1", "2", "y"]))
+    signup, correction = attendance_menu(handler)
+    for item in (signup, correction):
+        assert invoke_action(item.action, operation=item.operation).action == "continue"
+    output = capsys.readouterr().out
+    assert "合成会员" in output
+    assert "2026-11-08 16:00" in output
+    assert len(attendance_menu(AttendanceHandler(logic, lambda: DESK, timezone_name="Asia/Shanghai"))) == 1
+
+
+@pytest.mark.parametrize("error, action, message", [
+    (InvalidState("超出签到时间"), "continue", "超出签到时间"),
+    (AuthenticationError("请重新登录"), "login", "请重新登录"),
+    (StorageError("保存签到失败"), "exit", "保存签到失败"),
+    (RuntimeError("internal details"), "continue", "签到操作失败，请稍后重试"),
+    (OutcomeUnknownError("核实签到结果", record_id=1), "verify", "核实签到结果"),
+])
+def test_cli_keeps_safe_error_actions_before_shared_error_handler_is_available(error, action, message, caplog):
+    result = invoke_action(Mock(side_effect=error), operation="attendance.checkin")
+    assert (result.message, result.action) == (message, action)
+    assert caplog.records[-1].operation == "attendance.checkin"
+    assert caplog.records[-1].error_type == type(error).__name__
+    assert "internal details" not in caplog.text
+    if action == "verify":
+        assert result.record_id == 1
