@@ -1,12 +1,15 @@
-"""预约数据访问，包含授课关系检查及评价所需的预约锁。"""
+"""预约读取、状态更新及当前授课关系检查。"""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Integer, String, column, select, table
+from sqlalchemy import column, select, table, text, update
 
+from src.db.course_repo import SessionRepository
+from src.db.support import from_db_utc, to_db_utc
+from src.errors import StorageError
 from src.models.booking import Booking
 from src.models.contracts import (
     BookingInput,
@@ -21,12 +24,9 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-bookings = table(
-    "bookings", column("id", Integer), column("member_id", Integer),
-    column("session_id", Integer), column("lesson_package_id", Integer),
-    column("status", String), column("booked_at", DateTime),
-    column("checked_in_at", DateTime), column("closed_at", DateTime),
-    column("created_at", DateTime), column("updated_at", DateTime),
+_BOOKINGS = table(
+    "bookings", column("id"), column("member_id"), column("session_id"),
+    column("status"), column("checked_in_at"), column("closed_at"),
 )
 
 
@@ -41,10 +41,33 @@ class BookingRepository:
         self._session = session
 
     def get(self, booking_id: int) -> BookingView | None:
-        """查询预约详情；未找到返回 None。
+        """查询预约详情，未找到时返回 None。"""
+        row = self._session.execute(text("""
+            SELECT b.*, m.name AS member_name
+            FROM bookings b JOIN members m ON m.id = b.member_id
+            WHERE b.id = :booking_id
+        """), {"booking_id": booking_id}).mappings().first()
+        if row is None:
+            return None
+        session_view = SessionRepository(self._session).get(row["session_id"])
+        if session_view is None:
+            raise StorageError("预约关联的课次不存在")
+        checked_in_at = row["checked_in_at"]
+        closed_at = row["closed_at"]
+        return BookingView(
+            id=row["id"], member_id=row["member_id"], member_name=row["member_name"],
+            session=session_view, lesson_package_id=row["lesson_package_id"], status=row["status"],
+            booked_at=from_db_utc(row["booked_at"]),
+            checked_in_at=None if checked_in_at is None else from_db_utc(checked_in_at),
+            closed_at=None if closed_at is None else from_db_utc(closed_at),
+        )
 
-        返回：BookingView | None；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.get 尚未实现")
+    def find_lock_targets(self, booking_id: int) -> tuple[int, int] | None:
+        """普通读取得会员和课次编号，用于按顺序取锁。"""
+        row = self._session.execute(
+            select(_BOOKINGS.c.member_id, _BOOKINGS.c.session_id).where(_BOOKINGS.c.id == booking_id),
+        ).first()
+        return None if row is None else (row.member_id, row.session_id)
 
     def list(
         self,
@@ -101,10 +124,16 @@ class BookingRepository:
         checked_in_at: datetime | None,
         closed_at: datetime | None,
     ) -> BookingView:
-        """写入状态和时间，私教节数结算由服务协调。
-
-        返回：BookingView；当前仅占位，调用抛 NotImplementedError。"""
-        raise NotImplementedError("BookingRepository.set_state 尚未实现")
+        """写入已锁定预约的状态与时刻，返回更新后的预约详情。"""
+        self._session.execute(update(_BOOKINGS).where(_BOOKINGS.c.id == booking_id).values(
+            status=status,
+            checked_in_at=None if checked_in_at is None else to_db_utc(checked_in_at),
+            closed_at=None if closed_at is None else to_db_utc(closed_at),
+        ))
+        result = self.get(booking_id)
+        if result is None:
+            raise StorageError("预约记录不存在")
+        return result
 
     def count_occupied(self, session_id: int) -> int:
         """锁定当前读取得该课次未取消预约记录并统计数量。
@@ -112,6 +141,14 @@ class BookingRepository:
         调用方须先锁定课次；不得沿用事务先前的一致性读快照。
         返回：int；当前仅占位，调用抛 NotImplementedError。"""
         raise NotImplementedError("BookingRepository.count_occupied 尚未实现")
+
+    def count_open_for_session(self, session_id: int) -> int:
+        """课次已加锁后，以锁定读统计 reserved 和 checked_in 预约。"""
+        statement = select(_BOOKINGS.c.id).where(
+            _BOOKINGS.c.session_id == session_id,
+            _BOOKINGS.c.status.in_(("reserved", "checked_in")),
+        ).with_for_update(read=True)
+        return len(self._session.scalars(statement).all())
 
     def has_member_conflict(self, member_id: int, window: DateWindow) -> bool:
         """锁定当前读检查会员未取消预约是否与目标时间重叠。
@@ -129,6 +166,15 @@ class BookingRepository:
         要求预约 reserved/checked_in、课次 scheduled，且 booked_at <= at < ends_at。
         返回固定 bool，不写数据；历史体测查看不用此条件，按架构“体测权限规则”保留截止。
         """
+        from datetime import timezone
+
+        from sqlalchemy import DateTime, Integer, String, column, select, table
+
+        bookings = table(
+            "bookings", column("id", Integer), column("member_id", Integer),
+            column("session_id", Integer), column("status", String),
+            column("booked_at", DateTime), column("closed_at", DateTime),
+        )
         sessions = table(
             "course_sessions", column("id", Integer), column("coach_id", Integer),
             column("status", String), column("ends_at", DateTime),
@@ -148,17 +194,15 @@ class BookingRepository:
         return self._session.execute(statement).first() is not None
 
     def lock(self, booking_id: int) -> Booking | None:
-        """按主键锁定预约并读取最新记录。不存在时返回 None。"""
-        statement = select(bookings).where(bookings.c.id == booking_id).with_for_update()
-        row = self._session.execute(statement).mappings().one_or_none()
+        """锁定并读取最新预约记录，不存在时返回 None。"""
+        row = self._session.execute(
+            select(text("bookings.*")).select_from(_BOOKINGS)
+            .where(_BOOKINGS.c.id == booking_id).with_for_update(),
+        ).mappings().first()
         if row is None:
             return None
-        fields = dict(row)
-        for name in ("booked_at", "checked_in_at", "closed_at", "created_at", "updated_at"):
-            value = fields[name]
-            if value is not None:
-                fields[name] = (
-                    value.replace(tzinfo=timezone.utc) if value.tzinfo is None
-                    else value.astimezone(timezone.utc)
-                )
-        return Booking(**fields)
+        values = dict(row)
+        for field in ("booked_at", "checked_in_at", "closed_at", "created_at", "updated_at"):
+            if values[field] is not None:
+                values[field] = from_db_utc(values[field])
+        return Booking(**values)

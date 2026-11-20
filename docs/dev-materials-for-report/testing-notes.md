@@ -7,6 +7,12 @@
 
 ## 测试思路与策略
 
+### [2026-11-20] 签到与评价合并回归
+
+- 在评价工作树根目录，使用 Windows 上的 Python 3.10.6 虚拟环境运行 `python -B -X utf8 -m src.cmd.test unit`。契约、单元和 API 共 346 项通过，18 项 MySQL 用例按模式排除，Starlette 发出 1 条 HTTPX 弃用提示。
+- 使用 MySQL 方言编译预约锁查询并模拟会话，核对单一锁方法、预约主键参数绑定、`FOR UPDATE` 和未命中时返回 `None`。
+- 执行 `python -B -X utf8 -m src.cmd.test mysql --config config.test.json` 时缺少本地配置，命令在连接数据库前退出。本次合并的真实 MySQL 并发验证待测试配置就绪后执行。
+
 ### [2026-11-20] PR #13 复核验证
 
 - 在 Windows 上使用原仓库的 Python 3.10.6 虚拟环境，从评价工作树根目录执行 `python -B -X utf8 -m src.cmd.test unit`。317 项通过，其中 36 项为评价单元测试。18 项 MySQL 用例按模式排除，Starlette 发出 1 条 HTTPX 弃用提示。
@@ -25,6 +31,12 @@
 - 在评价工作树根目录使用 Windows 上原仓库的 Python 3.10.6 虚拟环境运行 `python -B -X utf8 -m src.cmd.test unit`。320 项通过，其中 41 项为评价回归。7 项 MySQL 用例按模式排除，Starlette 发出 1 条 HTTPX 弃用提示。
 - 新增 3 项使用真实身份复核服务的 SQLite 用例，覆盖停用账号的评价提交、详情和列表。日志回归验证提交后的故障提示只包含操作名和异常类型。MySQL 入口因缺少 `config.test.json` 在连接数据库前退出。
 
+### [2026-11-17] PR #12 签到评审回归
+
+- Windows、Python 3.10.6。在仓库根目录运行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`，308 项通过，其中 29 项为签到测试。7 项 MySQL 用例按模式排除，1 条 Starlette TestClient 的 HTTPX 弃用提示。API 用例在允许 Windows 本地回环连接的环境运行。
+- 新增课后签到重试、过期余量模拟、UTC 写入拒绝无时区值及审计写入失败回退用例。权限测试对比范围外预约和不存在的预约。CLI 用例核对失败日志字段及对应的菜单动作。
+- 专用 MySQL 模式因缺少 `config.test.json` 在连接前退出。待在专用数据库验证同一预约并发签到和并发更正只写入一次，等待课次锁后读取当前余量，以及更正与结算竞争。
+
 ### [2026-11-08] 签到与评价本地联调
 
 - 两个分支均基于远端 dev 的 771aff7。以签到仓储的预约锁和评价分支的统一异常处理组装临时副本，运行 Python 3.10.6 的 `python -B -X utf8 -m src.cmd.test unit`，344 项通过，7 项 MySQL 用例按模式排除，1 条 Starlette HTTPX 弃用提示。
@@ -35,6 +47,17 @@
 - 环境为 Windows、Python 3.10.6。在评价工作树中使用原仓库的 `.venv` 执行 `python -B -X utf8 -m src.cmd.test unit`。317 项通过，其中 38 项为评价回归，7 项 MySQL 用例按模式排除。Starlette 的 `TestClient` 发出 1 条 HTTPX 弃用提示。
 - 使用 SQLite 预置已完成预约，验证提交与回滚、原评价保留、评分和留言边界、跨会员与跨教练的数据隔离、稳定分页、分页总数、CLI 取消及缺失记录提示。用 MySQL 方言编译锁定查询，并模拟 MySQL 的重复键和死锁错误验证异常映射与重试。回归还核对评价提交后才发送成功事件，事件只含操作标识及编号，日志故障不影响评价结果。
 - 待专用 MySQL `_test` 库和测试配置就绪后，运行 `python -B -X utf8 -m src.cmd.test mysql --config config.test.json` 验证数据库环境。当前命令因缺少本地配置而在连接数据库前退出。现有 MySQL 套件需补评价用例，验证同一预约的重复提交及不同预约并发写入。真实消课和登录待联调。
+
+### [2026-11-08] 普通签到与到场更正回归（ATT-01、ATT-04）
+
+- Windows、Python 3.10.6。在仓库根目录运行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`，304 项通过，其中 25 项为本轮新增签到用例。7 项 MySQL 用例按模式排除，另有 1 条 Starlette TestClient 的 HTTPX 弃用提示。
+- 使用 SQLite 合成预约验证开课与下课边界、角色范围、重复操作保留原时刻、课后补签和取消签到。核对课包余额及门禁记录，注入写入故障后验证回滚，验证更正提交后输出审计和日志输出故障时保留业务结果。CLI 用例覆盖确认、取消及结果展示。
+- MySQL 测试命令因缺少专用 config.test.json 在连接前退出。现有 MySQL 套件需补签到行锁与到场更正和结算竞争的用例。真实登录、教练学员名单及审计日志文件待联调。
+
+### [2026-11-08] 签到开发基线（ATT-01、ATT-04）
+
+- 从同步后的 `origin/dev`（`771aff7`）建立 `feat/attendance`。在 Windows 上使用 Python 3.10.6 创建仓库本地 `.venv`，以 UTF-8 模式安装 `requirements/all.txt` 和 `requirements/dev.txt`。`pip check` 通过。
+- 在仓库根目录运行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`。契约、单元和 API 适配共 279 项通过，7 项 MySQL 专用用例按模式排除。Starlette 的 `TestClient` 发出 1 条 HTTPX 弃用警告。
 
 ### [2026-10-23] PR #9 修复与功能清单排序验证
 

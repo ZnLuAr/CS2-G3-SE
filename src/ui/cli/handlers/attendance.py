@@ -1,18 +1,19 @@
-"""按业务划分的 CLI 交互接口。构造函数已实现，业务操作仍为占位。"""
+"""签到与到场更正的命令行交互。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from src.models.contracts import Actor
+from src.models.contracts import Actor, Role
 from src.logic.attendance_logic import AttendanceLogic
+from src.ui.cli import formatters, prompts
 
 
 class AttendanceHandler:
     """收集输入、确认操作、调用业务服务并展示结果。
 
     get_actor 每次取得当前身份；不接收数据库会话，不实现业务规则。
-    各操作返回 None 表示交互完成；当前只声明接口，调用即报未实现。
+    各操作返回 None 表示交互完成。
     """
 
     def __init__(
@@ -27,20 +28,26 @@ class AttendanceHandler:
         self._get_actor = get_actor
         self._timezone_name = timezone_name
 
-    def check_in(self) -> None:
-        """组织 AttendanceService.check_in 的交互步骤。
+    @property
+    def current_role(self) -> Role:
+        """返回当前登录角色，供签到菜单筛选入口。"""
+        return self._get_actor().role
 
-        输入由 prompts 采集；成功结果交给 formatters 展示。
-        异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
-        raise NotImplementedError("AttendanceHandler.check_in 尚未实现")
+    def check_in(self) -> None:
+        """确认预约编号后签到，并展示更新后的预约。"""
+        booking_id = prompts.prompt_int("预约编号（q 取消）：", minimum=1)
+        if prompts.prompt_confirm(f"确认对预约 {booking_id} 签到？"):
+            result = self._logic.check_in(self._get_actor(), booking_id)
+            print(formatters.format_booking(result, timezone_name=self._timezone_name))
 
     def correct_attendance(self) -> None:
-        """采集预约编号和到场选择，由本课教练或管理员更正并展示结果。
-
-        我的课表 → 选择课次 → 学员签到情况 → 更正到场/未到场 → 确认。
-        未结算预约可在下课后补签；校验交给服务，取消输入不调用写方法。
-        成功展示 BookingView；当前调用抛 NotImplementedError。"""
-        raise NotImplementedError("AttendanceHandler.correct_attendance 尚未实现")
+        """选择到场或未到场，确认后更正并展示更新后的预约。"""
+        booking_id = prompts.prompt_int("预约编号（q 取消）：", minimum=1)
+        choice = prompts.prompt_int("1 到场 / 2 未到场（q 取消）：", minimum=1, maximum=2)
+        label = "到场" if choice == 1 else "未到场"
+        if prompts.prompt_confirm(f"确认将预约 {booking_id} 更正为{label}？"):
+            result = self._logic.correct_attendance(self._get_actor(), booking_id, present=choice == 1)
+            print(formatters.format_booking(result, timezone_name=self._timezone_name))
 
     def complete(self) -> None:
         """组织 AttendanceService.complete 的交互步骤。

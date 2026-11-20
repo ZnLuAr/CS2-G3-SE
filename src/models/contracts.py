@@ -914,10 +914,13 @@ class CsvExport:
 
 @dataclass(frozen=True, kw_only=True)
 class AttendanceChange:
-    """签到状态变更记录（消课/纠正签到时写入日志）。"""
+    """到场更正的状态和 UTC 时刻。"""
 
     before: Literal["reserved", "checked_in"]
     after: Literal["reserved", "checked_in"]
+    before_checked_in_at: datetime | None = None
+    after_checked_in_at: datetime | None = None
+    corrected_at: datetime | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
