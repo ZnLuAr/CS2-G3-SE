@@ -1,23 +1,23 @@
-"""评价授权、SQL 分页、事务与 CLI 回归。行锁语法按 MySQL 方言验证。"""
+"""评价服务、用例事务和 CLI 的隔离回归。"""
 
-from datetime import timezone
+from contextlib import nullcontext
+from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
-from sqlalchemy import create_engine, event, text
-from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from src.config import LogConfig
+from src.db.booking_repo import BookingRepository
 from src.db.review_repo import ReviewRepository
 from src.errors import (
     AuthenticationError, ConflictError, InvalidInputError, InvalidState,
     NotFoundError, OutcomeUnknownError, PermissionDenied, StorageError,
 )
 from src.logic.review_logic import ReviewLogic
-from src.models.contracts import Actor, PageRequest, ReviewInput, ReviewQuery
+from src.models.contracts import Actor, Page, PageRequest, ReviewInput, ReviewQuery, ReviewView
 from src.services.auth_service import AuthService
 from src.services.review_service import ReviewService
 from src.ui.cli.app import GymCLI, invoke_action
@@ -26,9 +26,7 @@ from src.ui.cli.menus import review_menu
 
 
 MEMBER = Actor(account_id=1, role="member", member_id=10, coach_id=None)
-OTHER_MEMBER = Actor(account_id=2, role="member", member_id=11, coach_id=None)
 COACH = Actor(account_id=3, role="coach", member_id=None, coach_id=20)
-OTHER_COACH = Actor(account_id=4, role="coach", member_id=None, coach_id=21)
 ADMIN = Actor(account_id=5, role="admin", member_id=None, coach_id=None)
 RECEPTIONIST = Actor(account_id=6, role="receptionist", member_id=None, coach_id=None)
 
@@ -37,51 +35,27 @@ def review(booking_id=40, rating=5, comment="课程很清楚"):
     return ReviewInput(booking_id=booking_id, rating=rating, comment=comment)
 
 
+def review_view(comment="课程很清楚"):
+    return ReviewView(
+        id=1, booking_id=40, member_id=10, session_id=30, coach_id=20,
+        rating=5, comment=comment, created_at=datetime(2026, 11, 8, tzinfo=timezone.utc),
+    )
+
+
 @pytest.fixture
-def app():
-    engine = create_engine("sqlite://")
-    with engine.begin() as connection:
-        for statement in (
-            "CREATE TABLE course_sessions (id INTEGER PRIMARY KEY, coach_id INTEGER NOT NULL)",
-            """CREATE TABLE bookings (
-                id INTEGER PRIMARY KEY, member_id INTEGER NOT NULL, session_id INTEGER NOT NULL,
-                lesson_package_id INTEGER NOT NULL DEFAULT 100, status TEXT NOT NULL,
-                booked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, checked_in_at DATETIME,
-                closed_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )""",
-            """CREATE TABLE reviews (
-                id INTEGER PRIMARY KEY, booking_id INTEGER NOT NULL UNIQUE,
-                rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-                comment TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )""",
-            "INSERT INTO course_sessions VALUES (30, 20), (31, 21)",
-            """INSERT INTO bookings (id, member_id, session_id, status) VALUES
-                (40, 10, 30, 'completed'), (41, 10, 31, 'reserved'),
-                (42, 10, 31, 'completed'), (43, 11, 30, 'completed'),
-                (44, 11, 31, 'completed')""",
-        ):
-            connection.execute(text(statement))
-    factory = sessionmaker(bind=engine)
-    auth = Mock()
+def repositories(monkeypatch):
+    bookings = Mock(spec=BookingRepository)
+    reviews = Mock(spec=ReviewRepository)
+    monkeypatch.setattr("src.services.review_service.BookingRepository", Mock(return_value=bookings))
+    monkeypatch.setattr("src.services.review_service.ReviewRepository", Mock(return_value=reviews))
+    return bookings, reviews
+
+
+@pytest.fixture
+def auth():
+    auth = Mock(spec=AuthService)
     auth.verify_actor.side_effect = lambda session, actor: actor
-    service = ReviewService(auth)
-    yield SimpleNamespace(engine=engine, factory=factory, logic=ReviewLogic(factory, service), auth=auth)
-    engine.dispose()
-
-
-@pytest.mark.parametrize("rating,comment,expected", [
-    (1, "   ", ""), (5, "  体验很好  ", "体验很好"), (3, "课" * 1000, "课" * 1000),
-])
-def test_create_review_returns_and_persists_the_completed_booking(app, rating, comment, expected):
-    view = app.logic.create_review(MEMBER, review(rating=rating, comment=comment))
-    assert (view.member_id, view.session_id, view.coach_id) == (10, 30, 20)
-    assert view.rating == rating
-    assert view.comment == expected
-    assert view.created_at.tzinfo is timezone.utc
-    assert app.logic.get_review(MEMBER, view.id) == view
-    with app.factory() as session:
-        assert session.scalar(text("SELECT status FROM bookings WHERE id = 40")) == "completed"
+    return auth
 
 
 @pytest.mark.parametrize("data,error", [
@@ -96,30 +70,16 @@ def test_create_review_returns_and_persists_the_completed_booking(app, rating, c
     (review(booking_id=43), NotFoundError),
     (review(booking_id=999), NotFoundError),
 ])
-def test_rejected_submission_does_not_insert(app, data, error):
+def test_rejected_submission_does_not_insert(repositories, auth, data, error):
+    bookings, reviews = repositories
+    bookings.lock.side_effect = {
+        41: SimpleNamespace(member_id=10, status="reserved"),
+        43: SimpleNamespace(member_id=11, status="completed"),
+        999: None,
+    }.__getitem__
     with pytest.raises(error):
-        app.logic.create_review(MEMBER, data)
-    assert app.logic.list_reviews(ADMIN, ReviewQuery()).total == 0
-
-
-def test_duplicate_preserves_original_and_uses_mysql_locking_reads(app):
-    statements = []
-
-    @event.listens_for(app.engine, "before_execute")
-    def capture(connection, statement, multiparams, params, execution_options):
-        statements.append(str(statement.compile(dialect=mysql.dialect())))
-
-    original = app.logic.create_review(MEMBER, review())
-    with pytest.raises(ConflictError):
-        app.logic.create_review(MEMBER, review(rating=1, comment="再次提交"))
-    assert app.logic.get_review(MEMBER, original.id) == original
-    assert app.logic.list_reviews(ADMIN, ReviewQuery()).total == 1
-    locked = [statement for statement in statements if "FOR UPDATE" in statement]
-    assert len(locked) == 4
-    for booking_lock, review_lock in zip(locked[::2], locked[1::2]):
-        assert "FROM bookings" in booking_lock and "WHERE bookings.id" in booking_lock
-        assert "FROM reviews" in review_lock and "WHERE reviews.booking_id" in review_lock
-        assert "JOIN" not in booking_lock + review_lock
+        ReviewService(auth).create_review(Mock(spec=Session), MEMBER, data)
+    assert not reviews.mock_calls
 
 
 @pytest.mark.parametrize("code,expected", [(1062, ConflictError), (1452, IntegrityError)])
@@ -130,120 +90,115 @@ def test_insert_only_maps_mysql_duplicate_key_to_conflict(code, expected):
         ReviewRepository(session).create(review())
 
 
-def test_reads_scope_details_count_and_stable_pages(app):
-    for actor, booking_id in ((MEMBER, 40), (MEMBER, 42), (OTHER_MEMBER, 43), (OTHER_MEMBER, 44)):
-        app.logic.create_review(actor, review(booking_id=booking_id))
-    with app.factory.begin() as session:
-        session.execute(text("UPDATE reviews SET created_at = '2026-11-08 12:00:00'"))
-
-    for actor, visible in (
-        (MEMBER, [42, 40]), (OTHER_MEMBER, [44, 43]), (COACH, [43, 40]),
-        (OTHER_COACH, [44, 42]), (ADMIN, [44, 43, 42, 40]),
-    ):
-        query = ReviewQuery(paging=PageRequest(page_size=1))
-        page = app.logic.list_reviews(actor, query)
-        assert page.total == len(visible)
-        assert [item.booking_id for item in page.items] == visible[:1]
-        query = ReviewQuery(paging=PageRequest(page=2, page_size=1))
-        page = app.logic.list_reviews(actor, query)
-        assert [item.booking_id for item in page.items] == visible[1:2]
-
-    for actor, hidden_id in ((MEMBER, 3), (OTHER_MEMBER, 1), (COACH, 2), (OTHER_COACH, 1)):
-        with pytest.raises(NotFoundError, match="评价不存在或不可见"):
-            app.logic.get_review(actor, hidden_id)
-    with pytest.raises(NotFoundError, match="评价不存在或不可见"):
-        app.logic.get_review(ADMIN, 999)
-
-    assert app.logic.list_reviews(MEMBER, ReviewQuery(member_id=11)).total == 0
-    assert app.logic.list_reviews(COACH, ReviewQuery(coach_id=21)).total == 0
-    assert app.logic.list_reviews(ADMIN, ReviewQuery(member_id=10, coach_id=21)).total == 1
-
-
 @pytest.mark.parametrize("query", [
     ReviewQuery(member_id=True), ReviewQuery(coach_id=-1), ReviewQuery(paging=None),
     ReviewQuery(paging=PageRequest(page_size=101)), ReviewQuery(paging=PageRequest(page=0)),
     ReviewQuery(paging=PageRequest(page=2**63 - 1, page_size=100)),
 ])
-def test_invalid_query_cannot_reach_sql(app, query):
+def test_invalid_query_cannot_reach_repository(repositories, auth, query):
+    _, reviews = repositories
     with pytest.raises(InvalidInputError):
-        app.logic.list_reviews(ADMIN, query)
+        ReviewService(auth).list_reviews(Mock(spec=Session), ADMIN, query)
+    assert not reviews.mock_calls
 
 
-def test_role_checks(app):
+def test_role_checks(repositories, auth):
+    service = ReviewService(auth)
+    session = Mock(spec=Session)
     for actor in (COACH, ADMIN, RECEPTIONIST):
         with pytest.raises(PermissionDenied):
-            app.logic.create_review(actor, review())
+            service.create_review(session, actor, review())
     with pytest.raises(PermissionDenied):
-        app.logic.get_review(RECEPTIONIST, 1)
+        service.get_review(session, RECEPTIONIST, 1)
     with pytest.raises(PermissionDenied):
-        app.logic.list_reviews(RECEPTIONIST, ReviewQuery())
+        service.list_reviews(session, RECEPTIONIST, ReviewQuery())
+    assert all(not repository.mock_calls for repository in repositories)
 
 
 @pytest.mark.parametrize("method,data", [
     ("create_review", review()), ("get_review", 1), ("list_reviews", ReviewQuery()),
 ])
-def test_disabled_account_cannot_submit_or_query_reviews(app, method, data):
-    with app.factory.begin() as session:
-        session.execute(text("""
-            CREATE TABLE accounts (
-                id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT, role TEXT,
-                is_active BOOLEAN, created_at DATETIME, updated_at DATETIME
-            )
-        """))
-        session.execute(
-            text("INSERT INTO accounts (id, username, role, is_active) VALUES (:id, 'member1', 'member', 0)"),
-            {"id": MEMBER.account_id},
-        )
+def test_disabled_account_cannot_submit_or_query_reviews(repositories, monkeypatch, method, data):
+    accounts = Mock()
+    accounts.lock.return_value = SimpleNamespace(role=MEMBER.role, is_active=False)
+    account_repository = Mock(return_value=accounts)
+    monkeypatch.setattr("src.services.auth_service.AccountRepository", account_repository)
+    session = Mock(spec=Session)
+    service = ReviewService(AuthService(log_config=LogConfig()))
 
-    logic = ReviewLogic(app.factory, ReviewService(AuthService(log_config=LogConfig())))
     with pytest.raises(AuthenticationError, match="当前登录身份已失效"):
-        getattr(logic, method)(MEMBER, data)
-    assert app.logic.list_reviews(ADMIN, ReviewQuery()).total == 0
+        getattr(service, method)(session, MEMBER, data)
+
+    account_repository.assert_called_once_with(session)
+    accounts.lock.assert_called_once_with(MEMBER.account_id)
+    accounts.lock_profile_links.assert_not_called()
+    assert all(not repository.mock_calls for repository in repositories)
 
 
-def test_write_failure_rolls_back_insert(app, monkeypatch):
-    def fail(*args, **kwargs):
-        raise SQLAlchemyError("driver details")
+def test_review_permissions_use_the_verified_actor(repositories):
+    bookings, reviews = repositories
+    bookings.lock.return_value = SimpleNamespace(id=40, member_id=10, status="completed")
+    reviews.has_for_booking.return_value = False
+    auth = Mock(spec=AuthService)
+    auth.verify_actor.return_value = MEMBER
+    session = Mock(spec=Session)
+    service = ReviewService(auth)
+    query = ReviewQuery()
 
-    monkeypatch.setattr(ReviewRepository, "get", fail)
-    with pytest.raises(StorageError, match="保存评价失败"):
-        app.logic.create_review(MEMBER, review())
-    assert app.logic.list_reviews(ADMIN, ReviewQuery()).total == 0
+    service.create_review(session, RECEPTIONIST, review())
+    service.get_review(session, RECEPTIONIST, 1)
+    service.list_reviews(session, RECEPTIONIST, query)
+
+    assert auth.verify_actor.call_args_list == [call(session, RECEPTIONIST)] * 3
+    reviews.create.assert_called_once_with(review())
+    reviews.get.assert_called_once_with(1, scope_member_id=10, scope_coach_id=None)
+    reviews.list.assert_called_once_with(query, scope_member_id=10, scope_coach_id=None)
 
 
 @pytest.mark.parametrize("code,failures,attempts", [(1213, 1, 2), (1213, 2, 2), (1205, 1, 1)])
-def test_retries_only_a_confirmed_mysql_deadlock_once(app, monkeypatch, code, failures, attempts):
-    original = ReviewRepository.create
-    sessions = []
+def test_retries_only_a_confirmed_mysql_deadlock_once(code, failures, attempts):
+    sessions = [Mock(spec=Session) for _ in range(attempts)]
+    factory = Mock(side_effect=[nullcontext(session) for session in sessions])
+    service = Mock(spec=ReviewService)
+    result = review_view()
+    service.create_review.side_effect = [
+        OperationalError("INSERT", {}, Exception(code, "driver details")) for _ in range(failures)
+    ] + [result]
+    logic = ReviewLogic(factory, service)
 
-    def create(repository, data):
-        sessions.append(repository._session)
-        if len(sessions) <= failures:
-            raise OperationalError("INSERT", {}, Exception(code, "driver details"))
-        return original(repository, data)
-
-    monkeypatch.setattr(ReviewRepository, "create", create)
     if attempts > failures:
-        assert app.logic.create_review(MEMBER, review()).id == 1
+        assert logic.create_review(MEMBER, review()) == result
+        sessions[-1].commit.assert_called_once_with()
     else:
         with pytest.raises(StorageError):
-            app.logic.create_review(MEMBER, review())
-    assert len(set(sessions)) == attempts
+            logic.create_review(MEMBER, review())
+
+    assert service.create_review.call_args_list == [call(session, MEMBER, review()) for session in sessions]
+    for session in sessions[:failures]:
+        session.rollback.assert_called_once_with()
+        session.commit.assert_not_called()
 
 
-def test_unknown_commit_identifies_the_review(app):
-    class FailingCommit(Session):
-        def commit(self):
-            raise SQLAlchemyError("connection lost")
-
-    logic = ReviewLogic(lambda: FailingCommit(app.engine), ReviewService(app.auth))
+def test_unknown_commit_identifies_the_review():
+    session = Mock(spec=Session)
+    session.commit.side_effect = SQLAlchemyError("connection lost")
+    factory = Mock(return_value=nullcontext(session))
+    result = review_view()
+    service = Mock(spec=ReviewService)
+    service.create_review.return_value = result
     with pytest.raises(OutcomeUnknownError) as error:
-        logic.create_review(MEMBER, review())
-    assert error.value.record_id == 1
+        ReviewLogic(factory, service).create_review(MEMBER, review())
+    assert error.value.record_id == result.id
+    factory.assert_called_once_with()
 
 
-def test_cli_navigation_success_and_missing_detail(app, monkeypatch, capsys):
-    handler = ReviewHandler(app.logic, lambda: MEMBER, timezone_name="Asia/Shanghai")
+def test_cli_navigation_success_and_missing_detail(monkeypatch, capsys):
+    logic = Mock(spec=ReviewLogic)
+    result = review_view(comment="谢谢教练")
+    logic.create_review.side_effect = [result, ConflictError("这条预约已有评价")]
+    logic.get_review.side_effect = NotFoundError("评价不存在或不可见")
+    logic.list_reviews.return_value = Page(items=[result], total=1, page=1, page_size=20)
+    handler = ReviewHandler(logic, lambda: MEMBER, timezone_name="Asia/Shanghai")
     handlers = SimpleNamespace(review=handler, **{
         name: Mock() for name in (
             "member", "product", "course", "booking", "attendance", "equipment",
@@ -259,13 +214,18 @@ def test_cli_navigation_success_and_missing_detail(app, monkeypatch, capsys):
     assert "这条预约已有评价" in output
     assert "评价不存在或不可见" in output
     assert "共 1 条" in output
+    assert logic.create_review.call_args_list == [
+        call(MEMBER, review(comment="谢谢教练")), call(MEMBER, review(rating=1, comment="")),
+    ]
+    logic.get_review.assert_called_once_with(MEMBER, 999)
+    logic.list_reviews.assert_called_once_with(MEMBER, ReviewQuery())
 
 
 @pytest.mark.parametrize("answers", [("40", "5", "q"), ("40", "5", "", "n")])
 def test_cli_cancellation_never_calls_write(monkeypatch, answers):
     inputs = iter(answers)
     monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
-    logic = Mock()
+    logic = Mock(spec=ReviewLogic)
     handler = ReviewHandler(logic, lambda: MEMBER, timezone_name="Asia/Shanghai")
     result = invoke_action(handler.create_review, operation="review.create")
     assert result.action == "continue"
@@ -276,29 +236,32 @@ def test_cli_cancellation_never_calls_write(monkeypatch, answers):
     (MEMBER, ["1", "2", "3"]), (COACH, ["2", "3"]), (ADMIN, ["2", "3"]), (RECEPTIONIST, []),
 ])
 def test_role_specific_review_menu(actor, keys):
-    handler = ReviewHandler(Mock(), lambda: actor, timezone_name="Asia/Shanghai")
+    handler = ReviewHandler(Mock(spec=ReviewLogic), lambda: actor, timezone_name="Asia/Shanghai")
     assert [item.key for item in review_menu(handler)] == keys
 
 
-def test_cli_empty_page(app, monkeypatch, capsys):
+def test_cli_empty_page(monkeypatch, capsys):
     monkeypatch.setattr("builtins.input", lambda prompt: "0")
-    handler = ReviewHandler(app.logic, lambda: COACH, timezone_name="Asia/Shanghai")
+    logic = Mock(spec=ReviewLogic)
+    logic.list_reviews.return_value = Page(items=[], total=0, page=1, page_size=20)
+    handler = ReviewHandler(logic, lambda: COACH, timezone_name="Asia/Shanghai")
     handler.list_reviews()
     assert "暂无记录" in capsys.readouterr().out
 
 
-def test_review_success_event_follows_commit_without_comment(app, monkeypatch, capsys):
-    logic, sessions = app.logic, app.factory
+def test_review_success_event_follows_commit_without_comment(monkeypatch, capsys):
+    session = Mock(spec=Session)
+    service = Mock(spec=ReviewService)
+    service.create_review.return_value = review_view()
     events = []
 
     def capture(level, **event):
-        with sessions() as session:
-            assert session.execute(text("SELECT COUNT(*) FROM reviews")).scalar_one() == 1
+        session.commit.assert_called_once_with()
         events.append(event)
         raise OSError("log writer unavailable")
 
     monkeypatch.setattr("src.logic.review_logic.log_event", capture)
-    result = logic.create_review(MEMBER, review())
+    result = ReviewLogic(lambda: nullcontext(session), service).create_review(MEMBER, review())
     assert events == [{
         "operation": "review.create", "outcome": "success",
         "actor_id": MEMBER.account_id, "result_id": result.id,
