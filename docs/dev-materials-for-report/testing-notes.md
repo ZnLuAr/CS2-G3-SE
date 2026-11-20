@@ -7,6 +7,19 @@
 
 ## 测试思路与策略
 
+### [2026-11-20] PR #13 复核验证
+
+- 在 Windows 上使用原仓库的 Python 3.10.6 虚拟环境，从评价工作树根目录执行 `python -B -X utf8 -m src.cmd.test unit`。317 项通过，其中 36 项为评价单元测试。18 项 MySQL 用例按模式排除，Starlette 发出 1 条 HTTPX 弃用提示。
+- 单元回归覆盖停用账号的评价提交、详情与列表，验证授权使用复核后的身份。操作日志失败时检查脱敏提示、已提交评价和体测结果，以及统一异常处理返回的核实编号。另有用例覆盖标准错误流不可写时的体测结果。
+- 使用仅监听 `127.0.0.1` 的临时 MySQL 8.4.13 和独立的 `gym_pr13_test` 库。在 PowerShell 中设置 `$env:PYTEST_ADDOPTS = 'tests/integration/test_reviews.py'`，运行 `python -B -X utf8 -m src.cmd.test mysql --config <临时测试配置路径>`，11 项全部通过。验证评分与留言持久化、授权总数与分页、停用账号复核、行锁等待、写入回滚、同一预约并发防重和不同预约并发提交。
+- 清除 `PYTEST_ADDOPTS` 后通过同一命令运行完整 MySQL 套件。17 项通过、1 项失败，317 项按模式排除，退出码为 1。失败项为 `test_mysql_cli_reaches_login_and_exits`。CLI 正常显示登录菜单并以 0 退出，候补对账和推荐快照刷新占位回调产生的两条「后台任务执行失败」触发了标准错误空输出断言。
+
+### [2026-11-17] PR #13 本地 MySQL 验收
+
+- 在 `feat/reviews` 的 `8f0ffd5` 上，使用 Windows、Python 3.10.6、pytest 8.4.2 和仅监听本机的 MySQL 8.4.13 临时实例。在仓库根目录执行 `python -B -X utf8 -m src.cmd.test mysql --config <临时测试配置路径>`，使用独立的 `gym_acceptance_test` 库。
+- 6 项通过、1 项失败，退出码为 1。320 项按 MySQL 模式排除。通过项覆盖体测授权与行锁、订单与收款回滚、订单付款唯一约束、营收导出时间边界和可重复读快照。
+- CLI 启动退出用例显示登录菜单且退出码为 0。候补对账和推荐快照刷新回调均抛出 `NotImplementedError`，导致标准错误输出两条「后台任务执行失败」，触发空输出断言。课程评价的同一预约防重及不同预约并发提交仍待专用 MySQL 用例验证。
+
 ### [2026-11-17] PR #13 课程评价评审回归
 
 - 在评价工作树根目录使用 Windows 上原仓库的 Python 3.10.6 虚拟环境运行 `python -B -X utf8 -m src.cmd.test unit`。320 项通过，其中 41 项为评价回归。7 项 MySQL 用例按模式排除，Starlette 发出 1 条 HTTPX 弃用提示。
