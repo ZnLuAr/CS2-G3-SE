@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING, Callable
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -11,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.db.connection import transaction
 from src.errors import OutcomeUnknownError, StorageError
 from src.logging import Operation, Outcome, log_event
+from src.logging.events import report_log_failure
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -53,8 +53,8 @@ class MeasurementLogic:
                 logging.INFO, operation=Operation.MEASUREMENT_RECORD.value,
                 outcome=Outcome.SUCCESS.value, actor_id=actor.account_id, result_id=result.id,
             )
-        except Exception:
-            print("操作日志记录失败", file=sys.stderr)
+        except Exception as exc:
+            report_log_failure(Operation.MEASUREMENT_RECORD.value, exc)
         return result
 
     def get_measurement(self, actor: Actor, measurement_id: int) -> MeasurementView:

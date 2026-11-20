@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING, Callable
 
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -11,6 +10,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from src.db.connection import transaction
 from src.errors import OutcomeUnknownError, StorageError
 from src.logging import Operation, Outcome, log_event
+from src.logging.events import report_log_failure
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -56,14 +56,7 @@ class ReviewLogic:
                 actor_id=actor.account_id, result_id=result.id,
             )
         except Exception as exc:
-            try:
-                print(
-                    f"操作日志记录失败（{Operation.REVIEW_CREATE.value}，{type(exc).__name__}）",
-                    file=sys.stderr,
-                )
-            except (OSError, ValueError):
-                # 标准错误流不可写时，仍返回已经提交的评价。
-                return result
+            report_log_failure(Operation.REVIEW_CREATE.value, exc)
         return result
 
     def get_review(self, actor: Actor, review_id: int) -> ReviewView:

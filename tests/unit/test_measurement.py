@@ -390,7 +390,15 @@ def test_logic_audit_failure_keeps_committed_record(db, service, monkeypatch, ca
     monkeypatch.setattr("src.logic.measurement_logic.log_event", Mock(side_effect=RuntimeError("private")))
     result = MeasurementLogic(lambda: Session(db.engine), service).record(COACH, measurement())
     assert db.session.scalar(select(db.measurements.c.id)) == result.id
-    assert "private" not in capsys.readouterr().err
+    assert capsys.readouterr().err == "操作日志记录失败（measurement.record，RuntimeError）\n"
+
+
+def test_logic_audit_failure_keeps_result_when_stderr_is_unwritable(db, service, monkeypatch):
+    monkeypatch.setattr("src.logic.measurement_logic.log_event", Mock(side_effect=OSError("private")))
+    with monkeypatch.context() as patch:
+        patch.setattr("sys.stderr", Mock(write=Mock(side_effect=OSError("stream unavailable"))))
+        result = MeasurementLogic(lambda: Session(db.engine), service).record(COACH, measurement())
+    assert db.session.scalar(select(db.measurements.c.id)) == result.id
 
 
 def test_logic_maps_database_failure_to_safe_storage_error(db):

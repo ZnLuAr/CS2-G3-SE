@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+import sys
 
 from src.models.contracts import AttendanceChange
 
@@ -76,6 +77,15 @@ class Outcome(str, Enum):
     REJECTED = "rejected"  # 业务拒绝（权限、冲突、余额不足）
     FAILED = "failed"  # 系统错误（数据库故障）
     UNKNOWN = "unknown"  # 提交结果未知
+
+
+def report_log_failure(operation: str, error: Exception) -> None:
+    """向标准错误流报告操作名和日志异常类型，保留原业务结果。"""
+    try:
+        print(f"操作日志记录失败（{operation}，{type(error).__name__}）", file=sys.stderr)
+    except (OSError, ValueError):
+        # 标准错误流不可写时，由调用方继续返回业务结果。
+        return
 
 
 def log_event(

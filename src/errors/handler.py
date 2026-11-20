@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-import sys
 
 from src.errors.base import ErrorAction, ErrorResult, GymError
 from src.errors.business import AuthenticationError, ResourceError
 from src.errors.storage import OutcomeUnknownError, StorageError
-from src.logging.events import Outcome, log_event
+from src.logging.events import Outcome, log_event, report_log_failure
 
 
 def handle_error(
@@ -45,11 +44,8 @@ def handle_error(
             level, operation=operation, outcome=outcome.value, actor_id=actor_id,
             request_id=request_id, result_id=record_id, error=error,
         )
-    except Exception:
-        try:
-            print("操作日志记录失败", file=sys.stderr)
-        except (OSError, ValueError):
-            pass
+    except Exception as exc:
+        report_log_failure(operation, exc)
     return ErrorResult(
         message=message, action="exit" if fatal else action,
         request_id=request_id, record_id=record_id,
