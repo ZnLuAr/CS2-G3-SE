@@ -11,7 +11,7 @@
 
 - 在评价工作树根目录，使用 Windows 上的 Python 3.10.6 虚拟环境运行 `python -B -X utf8 -m src.cmd.test unit`。契约、单元和 API 共 346 项通过，18 项 MySQL 用例按模式排除，Starlette 发出 1 条 HTTPX 弃用提示。
 - 使用 MySQL 方言编译预约锁查询并模拟会话，核对单一锁方法、预约主键参数绑定、`FOR UPDATE` 和未命中时返回 `None`。
-- 执行 `python -B -X utf8 -m src.cmd.test mysql --config config.test.json` 时缺少本地配置，命令在连接数据库前退出。本次合并的真实 MySQL 并发验证待测试配置就绪后执行。
+- 完整后端回归实测 363 项通过、1 项已知失败。MySQL 评价集成用例 11 项全部通过，覆盖同一预约并发提交防重和不同预约并发提交。已知失败为 `test_mysql_cli_reaches_login_and_exits`，后台任务的错误输出触发了标准错误流为空的断言。
 
 ### [2026-11-20] PR #13 复核验证
 
