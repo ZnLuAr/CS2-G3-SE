@@ -1,4 +1,4 @@
-"""统一导出异常类型与处理入口；处理行为仍待实现。"""
+"""统一导出异常类型与处理入口。"""
 
 from .base import ErrorAction, ErrorResult, GymError
 from .business import (

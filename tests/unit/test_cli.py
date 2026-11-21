@@ -9,6 +9,8 @@ import pytest
 
 from main import parse_args
 from src.errors.business import InputCancelled
+from src.errors.handler import handle_error
+from src.errors.storage import OutcomeUnknownError
 from src.models.contracts import MemberView, Page
 from src.ui.cli.formatters import format_member, format_members
 from src.ui.cli.prompts import prompt_confirm, prompt_decimal, prompt_int, prompt_text
@@ -51,3 +53,11 @@ def test_formatter_masks_phone_and_reports_page():
     assert "12345678" not in text
     page = Page(items=[member], total=1, page=1, page_size=20)
     assert "第 1/1 页，共 1 条" in format_members(page, timezone_name="Asia/Shanghai")
+
+
+def test_error_response_survives_operation_log_failure(monkeypatch, capsys):
+    monkeypatch.setattr("src.errors.handler.log_event", mock.Mock(side_effect=ValueError("private")))
+    error = OutcomeUnknownError("事务提交结果未知", record_id=42)
+    result = handle_error(error, operation="review.create")
+    assert result.action == "verify" and result.record_id == 42
+    assert capsys.readouterr().err == "操作日志记录失败（review.create，ValueError）\n"

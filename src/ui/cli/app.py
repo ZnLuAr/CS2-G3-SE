@@ -1,4 +1,4 @@
-"""CLI 导航与操作调用；错误分类由统一错误处理接口提供。"""
+"""CLI 导航、操作调用与错误处理。"""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -15,7 +15,7 @@ from src.logging import Operation
 
 
 def _attendance_error(exc: Exception, operation: str) -> ErrorResult:
-    """统一错误处理接入前，记录脱敏失败信息并返回菜单动作。"""
+    """记录脱敏的签到失败信息并返回签到菜单动作。"""
     logging.getLogger(__name__).warning(
         "签到操作失败 (%s, %s)", operation, type(exc).__name__,
         extra={"operation": operation, "error_type": type(exc).__name__},
@@ -50,12 +50,9 @@ def invoke_action(
     except NotImplementedError:
         raise
     except Exception as exc:
-        try:
-            return handle_error(exc, operation=operation, actor_id=actor_id, request_id=request_id)
-        except NotImplementedError:
-            if operation not in {Operation.ATTENDANCE_CHECKIN.value, Operation.ATTENDANCE_CORRECT.value}:
-                raise
+        if operation in {Operation.ATTENDANCE_CHECKIN.value, Operation.ATTENDANCE_CORRECT.value}:
             return _attendance_error(exc, operation)
+        return handle_error(exc, operation=operation, actor_id=actor_id, request_id=request_id)
     return ErrorResult(message="", action="continue")
 
 
@@ -81,9 +78,10 @@ class GymCLI:
             "3": ("课程", menus.course_menu(h.course)),
             "4": ("预约", menus.booking_menu(h.booking)),
             "5": ("签到", menus.attendance_menu(h.attendance)),
-            "6": ("评价", menus.review_menu(h.review)),
-            "7": ("器械", menus.equipment_menu(h.equipment)),
         }
+        if actor.role in {"member", "coach", "admin"}:
+            sections["6"] = ("评价", menus.review_menu(h.review))
+        sections["7"] = ("器械", menus.equipment_menu(h.equipment))
         if actor.role in {"member", "coach"}:
             sections["8"] = ("体测", menus.measurement_menu(h.measurement))
         if actor.role in {"admin", "receptionist"}:
