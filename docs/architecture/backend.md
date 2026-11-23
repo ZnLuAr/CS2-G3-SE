@@ -817,7 +817,7 @@ Handler 构造接收对应 Logic，以及当前身份的读取、设置、退出
 
 登录后从「签到」菜单输入预约编号，确认后办理普通签到。教练和管理员还可选择到场或未到场，确认后提交更正。成功时按门店时区显示预约与签到时间。输入 `q` 或拒绝确认会返回菜单。
 
-`invoke_action` 执行一个 Handler 操作。成功或主动取消返回 `ErrorResult(message="", action="continue")`；项目异常和未知异常交给 `handle_error`；EOF 和 Ctrl+C 继续传播。统一错误处理接入前，签到入口按第 10.3 节的规则显示安全提示并执行对应的界面动作。
+`invoke_action` 执行一个 Handler 操作。成功或主动取消返回 `ErrorResult(message="", action="continue")`；项目异常和未知异常交给 `handle_error`；EOF 和 Ctrl+C 继续传播。
 
 `GymCLI.run()` 负责登录菜单、角色模块菜单、子菜单、退出登录和程序退出。菜单可见性用于简化导航，服务层继续执行权限校验。`ErrorResult.action` 为：
 
@@ -1165,7 +1165,7 @@ class ErrorResult:
     record_id: int | None = None
 ```
 
-统一错误处理接入前，CLI 对签到与到场更正使用以下动作：`OutcomeUnknownError` 返回 `verify` 并附核实编号，`AuthenticationError` 返回 `login`，其余 `StorageError` 返回 `exit`，其余业务异常和未知异常返回 `continue`。未知异常展示固定提示，失败日志记录操作名和异常类型。
+异常分类与界面动作统一由 `handle_error` 按第 10.3 节的规则给出；签到与到场更正不再有专属分支。
 
 ### 10.3 `handle_error`
 

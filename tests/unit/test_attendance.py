@@ -284,14 +284,12 @@ def test_cli_uses_real_logic_and_displays_booking(attendance, monkeypatch, capsy
     (InvalidState("超出签到时间"), "continue", "超出签到时间"),
     (AuthenticationError("请重新登录"), "login", "请重新登录"),
     (StorageError("保存签到失败"), "exit", "保存签到失败"),
-    (RuntimeError("internal details"), "continue", "签到操作失败，请稍后重试"),
+    (RuntimeError("internal details"), "exit", "操作失败，请联系维护人员检查。"),
     (OutcomeUnknownError("核实签到结果", record_id=1), "verify", "核实签到结果"),
 ])
-def test_cli_keeps_safe_error_actions_before_shared_error_handler_is_available(error, action, message, caplog):
+def test_cli_routes_attendance_errors_through_shared_error_handler(error, action, message):
     result = invoke_action(Mock(side_effect=error), operation="attendance.checkin")
     assert (result.message, result.action) == (message, action)
-    assert caplog.records[-1].operation == "attendance.checkin"
-    assert caplog.records[-1].error_type == type(error).__name__
-    assert "internal details" not in caplog.text
+    assert "internal details" not in result.message
     if action == "verify":
         assert result.record_id == 1
