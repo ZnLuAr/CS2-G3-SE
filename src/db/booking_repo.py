@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import column, select, table, text, update
+from sqlalchemy import column, func, select, table, text, update
 
 from src.db.course_repo import SessionRepository
 from src.db.support import from_db_utc, to_db_utc
@@ -143,12 +143,12 @@ class BookingRepository:
         raise NotImplementedError("BookingRepository.count_occupied 尚未实现")
 
     def count_open_for_session(self, session_id: int) -> int:
-        """课次已加锁后，以锁定读统计 reserved 和 checked_in 预约。"""
-        statement = select(_BOOKINGS.c.id).where(
+        """课次已加锁后，以锁定读统计 reserved 和 checked_in 的预约数。"""
+        statement = select(func.count()).select_from(_BOOKINGS).where(
             _BOOKINGS.c.session_id == session_id,
             _BOOKINGS.c.status.in_(("reserved", "checked_in")),
         ).with_for_update(read=True)
-        return len(self._session.scalars(statement).all())
+        return self._session.scalar(statement) or 0
 
     def has_member_conflict(self, member_id: int, window: DateWindow) -> bool:
         """锁定当前读检查会员未取消预约是否与目标时间重叠。
