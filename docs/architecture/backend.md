@@ -557,7 +557,7 @@ class App:
 
 - 输入：`with_worker` 指定是否同时启动周期任务，默认 `True`。
 - 返回：`None`。
-- 异常：重复启动抛 `InvalidState`；日志资源不可用抛 `ResourceError`；数据库连接失败抛 `StorageError`；结构不完整或版本不匹配抛 `InvalidState`。
+- 异常：重复启动抛 `InvalidState`；日志资源或密码哈希工具不可用抛 `ResourceError`；数据库连接失败抛 `StorageError`；结构不完整或版本不匹配抛 `InvalidState`。
 - 数据变更：创建数据库引擎和会话工厂，检查数据库结构，装配领域服务、`LogicBundle`、CLI Handlers 和 `GymCLI`；`with_worker=True` 时另行启动候补核对与推荐刷新任务。Worker 任务失败只记录任务名称和异常类型，应用仍可启动。结构升级由数据库维护命令执行，普通启动只读检查结构。
 - 日志：先于装配初始化操作日志（写入 `app.log`）；装配全部完成后记录一条 `app.start` 成功事件，装配抛出任何异常时先记录 `app.start` 失败事件再原样抛出。
 
@@ -946,7 +946,7 @@ class AuthService:
     def __init__(self, *, log_config: LogConfig) -> None: ...
 ```
 
-构造输入为已校验的日志配置，返回 `AuthService` 实例；数据库 Session 由每次调用显式传入。构造只保存配置，账号、身份和日志查询在调用时执行。
+构造输入为已校验的日志配置，返回 `AuthService` 实例；数据库 Session 由每次调用显式传入。构造保存配置并预热登录等时校验用的占位哈希（见 9.3），哈希工具不可用抛 `ResourceError`；账号、身份和日志查询在调用时执行。
 
 当前身份查询由 `AuthLogic.get_current_actor(actor) -> Actor` 承接。Logic 创建短 Session，调用 `verify_actor` 后返回数据库复核过的身份；账号停用、角色或关联变更时抛 `AuthenticationError`。该查询用于终端恢复显示及 `GET /auth/me`。
 
@@ -962,7 +962,7 @@ def login(self, session: Session, username: str, password: str) -> Actor: ...
 - 异常：输入格式、凭据、账号状态、档案关联或档案状态任一校验失败时抛 `AuthenticationError`；密码工具不可用抛 `ResourceError`；存储故障抛 `StorageError`。
 - 数据变更：无业务数据变更；记录一次脱敏登录结果日志。
 
-服务规范化用户名后读取账号，使用 Argon2id 验证密码，并取得关联档案。取得关联档案时先锁定账号行，再按主键锁定存在的档案行；锁定后对已存在的关联行做一次锁定读复核，关联已移交时按新档案返回。终端提示对用户名不存在、密码错误和账号状态异常采用一致的认证失败消息。
+服务规范化用户名后读取账号，使用 Argon2id 验证密码，并取得关联档案。账号不存在时对格式合法的密码同样执行一次 Argon2id 校验并丢弃结果，使响应时间与密码错误分支一致，不泄露账号是否存在。取得关联档案时先锁定账号行，再按主键锁定存在的档案行；锁定后对已存在的关联行做一次锁定读复核，关联已移交时按新档案返回。终端提示对用户名不存在、密码错误和账号状态异常采用一致的认证失败消息。
 
 #### `create_account`
 
@@ -1121,11 +1121,15 @@ def query_logs(
 ```python
 def hash_password(password: str) -> str: ...
 def verify_password(password: str, password_hash: str) -> bool: ...
+def prepare_dummy_hash() -> None: ...
+def verify_against_dummy(password: str) -> None: ...
 ```
 
 `hash_password` 校验密码为 6～32 位 ASCII 字母、数字、短横线或下划线，并返回包含算法、参数和随机盐的 Argon2id 哈希；格式非法抛 `InvalidInputError`，依赖不可用抛 `ResourceError`。
 
 `verify_password` 对符合上述格式的明文密码进行验证，匹配返回 `True`，不匹配或输入格式非法返回 `False`；存储哈希损坏抛 `StorageError`，依赖不可用抛 `ResourceError`。
+
+`prepare_dummy_hash` 生成并缓存一个固定占位哈希，重复调用无效果；必须在接收登录请求前调用（`AuthService` 构造时），依赖不可用抛 `ResourceError`。`verify_against_dummy` 对格式合法的密码用该占位哈希执行一次与 `verify_password` 同参数的校验并丢弃结果，供登录时账号不存在的分支使用，使该分支与密码错误分支的响应时间一致；未调用 `prepare_dummy_hash` 时抛 `ResourceError`，不在请求内生成哈希，其余异常与 `verify_password` 相同。
 
 ## 10. 错误处理
 
@@ -1215,7 +1219,7 @@ def close_logging() -> None: ...
 
 `configure_logging` 创建日志目录和轮转处理器，日志文件为 `settings.log.directory / "app.log"`。初始化失败抛 `ResourceError`，使启动流程停止。
 
-写入与轮转在同一目录的锁文件 `app.log.lock` 上持有跨进程独占锁（Windows 用 `msvcrt`，其他平台用 `fcntl`，非阻塞，拿不到锁即失败），每次写入在锁内打开、追加、关闭，不长期保留日志文件句柄；当前文件加上新日志超过上限时把 `app.log` 依次改名为 `app.log.1` 至 `app.log.<backup_count>`，`backup_count` 为 0 时直接截断。
+写入与轮转在同一目录的锁文件 `app.log.lock` 上持有跨进程独占锁（Windows 用 `msvcrt`，其他平台用 `fcntl`，以非阻塞方式加锁，拿不到时每 50 毫秒重试，最长等待 5 秒，超时后本次写入失败），每次写入在锁内打开、追加、关闭，不长期保留日志文件句柄；当前文件加上新日志超过上限时把 `app.log` 依次改名为 `app.log.1` 至 `app.log.<backup_count>`，`backup_count` 为 0 时直接截断。
 
 `log_event` 接收固定操作名、结果类别和非敏感编号，成功返回 `True`，运行期写入失败返回 `False` 并向标准错误输出固定提示。日志字段包括：
 
@@ -2619,7 +2623,7 @@ class AccountRepository:
     def delete_coach_link(self, account_id: int) -> bool: ...
 ```
 
-- `lock_many` 去重后按账号编号升序，用一条 `ORDER BY id` 的锁定读取得全部行；`lock_active_admins` 用一条锁定读取得指定账号与全部启用管理员（`is_active = 1 AND role = 'admin'`）的并集，不锁定会员、教练或前台账号，供停用账号时同时锁住操作者、目标账号并复核最后一名管理员。
+- `lock_many` 去重后按账号编号升序，用一条 `ORDER BY id` 的锁定读取得全部行；`lock_active_admins` 用一条锁定读取得指定账号（不论角色）与全部启用管理员（`is_active = 1 AND role = 'admin'`）的并集，供停用账号时同时锁住操作者、目标账号并复核最后一名管理员；未指定的会员、教练或前台账号不在返回结果中，但锁定读会锁住执行计划扫过的行，不保证它们在事务期间可用。
 - `lock_profile_links` 要求账号行已加锁：先普通读取两类关联编号，再按主键依次锁定存在的档案行，没有关联时不加间隙锁；返回 `(member, coach)`，未关联项为 `None`。`recheck=True` 供登录使用，对已存在的关联行再做一次锁定读复核，关联已移交时按新档案返回。
 - `get_member_link_owner`、`get_coach_link_owner` 用普通一致性读查档案当前关联的账号编号，不加间隙锁；防重由 12.6.3 的双向唯一约束负责，冲突由服务转换为 `ConflictError`。
 - `list` 按 `a.id` 升序稳定分页，关键字用 `LOCATE` 做字面量匹配（SQLite 用 `instr`），`is_active` 筛选与分页独立生效；返回的 `AccountView` 不含密码哈希。

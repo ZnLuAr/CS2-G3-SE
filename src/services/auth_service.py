@@ -39,6 +39,7 @@ from src.models.contracts import (
 from src.security.passwords import (
     PASSWORD_PATTERN,
     hash_password,
+    prepare_dummy_hash,
     verify_against_dummy,
     verify_password,
 )
@@ -88,8 +89,12 @@ class AuthService:
     """
 
     def __init__(self, *, log_config: LogConfig) -> None:
-        """接收配置解析后的日志配置。"""
+        """接收配置解析后的日志配置；同时预热登录等时校验用的占位哈希。
+
+        预热在装配阶段完成，请求路径内不再生成哈希；哈希工具不可用抛 ResourceError。
+        """
         self._log_config = log_config
+        prepare_dummy_hash()
 
     def login(self, session: Session, username: str, password: str) -> Actor:
         """校验凭据并取得当前操作者。

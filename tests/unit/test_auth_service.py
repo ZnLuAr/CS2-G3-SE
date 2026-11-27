@@ -16,10 +16,10 @@ from src.errors.business import (
     InvalidState,
     NotFoundError,
     PermissionDenied,
+    ResourceError,
 )
 from src.models.contracts import (
     AccountInput,
-    Actor,
     CoachAccountLinkInput,
     LogQuery,
     MemberAccountLinkInput,
@@ -28,6 +28,7 @@ from src.models.contracts import (
 )
 from src.security import passwords
 from src.security.passwords import hash_password
+from src.services import auth_service
 from src.services.auth_service import AuthService
 
 
@@ -289,40 +290,55 @@ def test_transferred_profile_invalidates_admin_operations_for_stale_actor(db):
         _service().set_account_active(db, member, 5, False)
 
 
-def test_login_rejects_inactive_account_and_profile_mismatches(db):
-    """账号停用、档案停用或关联形状不符时都抛 AuthenticationError。"""
+def _assert_rejected_after_one_hash(monkeypatch, service, db, username, password):
+    """登录被拒且恰好执行一次 Argon2 校验：所有失败分支响应时间一致。"""
+    calls = []
+    real_verify = auth_service.verify_password
+
+    def counting_verify(password, password_hash):
+        calls.append(password)
+        return real_verify(password, password_hash)
+
+    monkeypatch.setattr(auth_service, "verify_password", counting_verify)
+    with pytest.raises(AuthenticationError):
+        service.login(db, username, password)
+    assert len(calls) == 1
+
+
+def test_login_rejects_inactive_account_and_profile_mismatches(db, monkeypatch):
+    """账号停用、档案停用或关联形状不符时都抛 AuthenticationError，且都先跑一次密码校验。
+
+    每个拒绝分支都必须在 Argon2 之后返回：若某个分支提前返回，响应时间会比
+    密码错误分支短，可据此判断账号状态。 AuthService 直接绑定 verify_password，
+    所以计数器要打在 auth_service 模块上。
+    """
     service = _service()
     db.execute(text("UPDATE accounts SET is_active = 0 WHERE id = 1"))
-    with pytest.raises(AuthenticationError):
-        service.login(db, "admin_1", "admin_1")
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "admin_1", "admin_1")
     db.execute(text("UPDATE accounts SET is_active = 1 WHERE id = 1"))
 
     # 教练账号关联的教练档案停用后不能登录。
     db.execute(text("UPDATE coaches SET is_active = 0 WHERE id = 20"))
-    with pytest.raises(AuthenticationError):
-        service.login(db, "coach_1", "coach_1")
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "coach_1", "coach_1")
     db.execute(text("UPDATE coaches SET is_active = 1 WHERE id = 20"))
 
     # 会员账号同时带教练关联：身份不变量被破坏。
     db.execute(text(
         "INSERT INTO coach_account_links VALUES (3, 22, :now, 1)"
     ), {"now": datetime.now(timezone.utc)})
-    with pytest.raises(AuthenticationError):
-        service.login(db, "member_1", "member_1")
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "member_1", "member_1")
     db.execute(text("DELETE FROM coach_account_links WHERE account_id = 3"))
 
     # 教练账号没有关联档案。
     db.execute(text("DELETE FROM coach_account_links WHERE account_id = 4"))
-    with pytest.raises(AuthenticationError):
-        service.login(db, "coach_1", "coach_1")
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "coach_1", "coach_1")
     db.execute(text(
         "INSERT INTO coach_account_links VALUES (4, 20, :now, 1)"
     ), {"now": datetime.now(timezone.utc)})
 
     # 未知角色不能按管理员放行。
     db.execute(text("UPDATE accounts SET role = 'owner' WHERE id = 1"))
-    with pytest.raises(AuthenticationError):
-        service.login(db, "admin_1", "admin_1")
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "admin_1", "admin_1")
 
 
 def test_unknown_username_still_runs_password_hashing(db, monkeypatch):
@@ -338,6 +354,38 @@ def test_unknown_username_still_runs_password_hashing(db, monkeypatch):
     with pytest.raises(AuthenticationError):
         _service().login(db, "nobody_here", "whatever_1")
     assert len(calls) == 1
+
+
+def test_dummy_hash_is_prepared_before_login_requests(db, monkeypatch):
+    """占位哈希在 AuthService 构造时生成；请求路径内只校验、不生成哈希。
+
+    若留到请求内惰性生成，进程内第一个账号不存在的请求会多一次 Argon2 运算，
+    耗时仍可与其他请求区分。
+    """
+    monkeypatch.setattr(passwords, "_DUMMY_HASH", None)
+    service = _service()
+    assert passwords._DUMMY_HASH is not None
+
+    hashes: list[str] = []
+    real_hash = passwords.hash_password
+
+    def counting_hash(password):
+        hashes.append(password)
+        return real_hash(password)
+
+    monkeypatch.setattr(passwords, "hash_password", counting_hash)
+    with pytest.raises(AuthenticationError):
+        service.login(db, "nobody_here", "whatever_1")
+    with pytest.raises(AuthenticationError):
+        service.login(db, "nobody_here_2", "whatever_1")
+    assert hashes == []
+
+
+def test_verify_against_dummy_requires_preparation(monkeypatch):
+    """未预热时 verify_against_dummy 抛 ResourceError，而不是在请求内生成哈希。"""
+    monkeypatch.setattr(passwords, "_DUMMY_HASH", None)
+    with pytest.raises(ResourceError):
+        passwords.verify_against_dummy("whatever_1")
 
 
 def test_link_rejects_account_with_wrong_role(db):
