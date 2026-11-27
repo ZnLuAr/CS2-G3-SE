@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import logging
+from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 import sys
+import traceback
+from typing import Any
 
 from src.models.contracts import AttendanceChange
+
+MAX_LOG_BYTES = 16 * 1024
+MAX_OPERATION_CHARS = 64
+MAX_REQUEST_ID_CHARS = 64
+MAX_OUTCOME_CHARS = 32
+# handler 还会追加一个换行符，按整行（含终止符）不超过 16 KiB 计算。
+MAX_PAYLOAD_BYTES = MAX_LOG_BYTES - 1
 
 
 class Operation(str, Enum):
@@ -18,10 +31,13 @@ class Operation(str, Enum):
     # 账号
     ACCOUNT_CREATE = "account.create"
     ACCOUNT_UPDATE = "account.update"
+    ACCOUNT_LINK = "account.link"
+    ACCOUNT_QUERY = "account.query"
     ACCOUNT_ACTIVATE = "account.activate"
     ACCOUNT_DEACTIVATE = "account.deactivate"
     LOGIN = "auth.login"
     LOGOUT = "auth.logout"
+    LOG_QUERY = "log.query"
 
     # 会员
     MEMBER_CREATE = "member.create"
@@ -73,10 +89,10 @@ class Operation(str, Enum):
 class Outcome(str, Enum):
     """操作结果类型。"""
 
-    SUCCESS = "success"  # 成功
-    REJECTED = "rejected"  # 业务拒绝（权限、冲突、余额不足）
-    FAILED = "failed"  # 系统错误（数据库故障）
-    UNKNOWN = "unknown"  # 提交结果未知
+    SUCCESS = "success"
+    REJECTED = "rejected"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
 
 
 def report_log_failure(operation: str, error: Exception) -> None:
@@ -84,7 +100,6 @@ def report_log_failure(operation: str, error: Exception) -> None:
     try:
         print(f"操作日志记录失败（{operation}，{type(error).__name__}）", file=sys.stderr)
     except (OSError, ValueError):
-        # 标准错误流不可写时，由调用方继续返回业务结果。
         return
 
 
@@ -99,51 +114,150 @@ def log_event(
     error: Exception | None = None,
     attendance_change: AttendanceChange | None = None,
 ) -> bool:
-    """记录操作日志。
+    """记录一条脱敏操作日志。
 
-    参数：
-    - level：日志级别（logging.INFO / WARNING / ERROR）
-    - operation：操作名称（Operation 枚举值或字符串）
-    - outcome：结果类型（Outcome 枚举值或字符串）
-    - actor_id：操作人编号
-    - request_id：请求编号（UUID）
-    - result_id：结果记录编号
-    - error：异常对象（如果有）
+    输入：日志级别、固定操作名、结果类别、非敏感编号、异常和可选签到变化。
+    返回：写入成功返回 True；运行期写入失败返回 False，并向标准错误输出固定提示。
+    异常：不抛出。日志故障不能传播到已完成的业务调用。
+    数据变更：向已配置的 app.log 追加一行不超过 16 KiB 的 UTF-8 JSON。
+    """
+    from src.logging.lifecycle import get_logger
 
-    JSON 格式：
-    {
-      "timestamp": "2026-09-20T10:30:00.123456+00:00",
-      "level": "INFO",
-      "operation": "member.create",
-      "outcome": "success",
-      "actor_id": 1,
-      "request_id": "123e4567-e89b-12d3-a456-426614174000",
-      "result_id": 42,
-      "error_type": null,
-      "frames": []
+    operation_name = _text_value(operation)
+    logger = get_logger()
+    if logger is None:
+        report_log_failure(operation_name, RuntimeError("日志系统未初始化"))
+        return False
+    try:
+        truncated = False
+        if len(operation_name) > MAX_OPERATION_CHARS:
+            operation_name = operation_name[:MAX_OPERATION_CHARS]
+            truncated = True
+        outcome_name = _text_value(outcome)
+        if len(outcome_name) > MAX_OUTCOME_CHARS:
+            outcome_name = outcome_name[:MAX_OUTCOME_CHARS]
+            truncated = True
+        request_id_value = request_id
+        if isinstance(request_id_value, str) and len(request_id_value) > MAX_REQUEST_ID_CHARS:
+            request_id_value = request_id_value[:MAX_REQUEST_ID_CHARS]
+            truncated = True
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": logging.getLevelName(level),
+            "operation": operation_name,
+            "outcome": outcome_name,
+            "actor_id": actor_id,
+            "request_id": request_id_value,
+            "result_id": result_id,
+            "error_type": None,
+            "error_message": None,
+            "attendance_change": _attendance_payload(attendance_change),
+            "frames": [],
+            "truncated": truncated,
+        }
+        if error is not None:
+            payload["error_type"], payload["error_message"] = _error_fields(error)
+            payload["frames"] = _frames(error)
+        text, _ = _fit(payload)
+        logger.log(level, text)
+    except Exception as exc:
+        report_log_failure(operation_name, exc)
+        return False
+    return True
+
+
+def _text_value(value: object) -> str:
+    if isinstance(value, Enum):
+        return str(value.value)
+    return str(value)
+
+
+def _timestamp(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _attendance_payload(value: AttendanceChange | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return {
+        "before": value.before,
+        "after": value.after,
+        "before_checked_in_at": _timestamp(value.before_checked_in_at),
+        "after_checked_in_at": _timestamp(value.after_checked_in_at),
+        "corrected_at": _timestamp(value.corrected_at),
     }
 
-    脱敏规则：
-    - 密码：完全不记录
-    - 电话：138****5678（保留前 3 后 4）
-    - 体测：只记录操作，不记录具体数值
-    - SQL：不记录完整 SQL 语句
-    - 异常链：只记录文件名、行号、函数名
-    - 未知异常：error_message 为 None，不记录 str(error)
 
-    单条日志限制：
-    - 最大 16 KiB
-    - 超长截断并标记
+def _error_fields(error: Exception) -> tuple[str, str | None]:
+    """项目异常只记录安全的中文消息；未知异常不记录 str(error)。"""
+    from src.errors.base import GymError
 
-    返回：
-    - True：记录成功
-    - False：记录失败
+    message = error.message if isinstance(error, GymError) else None
+    return type(error).__name__, message
 
-    失败处理：
-    - 启动时日志失败 → 退出程序
-    - 运行时日志失败 → 输出到 stderr，继续执行
-    - 不抛异常，不让日志故障传播到业务逻辑
 
-    输入：固定操作名、结果类别和非敏感编号；不得传入原始表单或密码。
-    当前占位：调用抛 NotImplementedError，不写日志。"""
-    raise NotImplementedError("log_event 尚未实现")
+def _frames(error: Exception) -> list[dict[str, object]]:
+    frames: list[dict[str, object]] = []
+    for frame in traceback.extract_tb(error.__traceback__):
+        frames.append({
+            "filename": Path(frame.filename).name,
+            "line_number": frame.lineno,
+            "function_name": frame.name,
+        })
+    return frames
+
+
+def _serialize(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _encoded_size(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def _fit(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """保证单条日志（含换行）不超过 16 KiB；超限时依次丢堆栈、截断错误消息。"""
+    text = _serialize(payload)
+    if _encoded_size(text) <= MAX_PAYLOAD_BYTES:
+        return text, payload
+
+    payload["truncated"] = True
+    payload["frames"] = []
+    text = _serialize(payload)
+    if _encoded_size(text) <= MAX_PAYLOAD_BYTES:
+        return text, payload
+
+    message = payload.get("error_message")
+    if isinstance(message, str):
+        low, high = 0, len(message)
+        while low < high:
+            middle = (low + high + 1) // 2
+            payload["error_message"] = message[:middle]
+            text = _serialize(payload)
+            if _encoded_size(text) <= MAX_PAYLOAD_BYTES:
+                low = middle
+            else:
+                high = middle - 1
+        payload["error_message"] = message[:low]
+        text = _serialize(payload)
+        if _encoded_size(text) <= MAX_PAYLOAD_BYTES:
+            return text, payload
+
+    payload["error_message"] = None
+    text = _serialize(payload)
+    if _encoded_size(text) <= MAX_PAYLOAD_BYTES:
+        return text, payload
+
+    minimal = {
+        "timestamp": payload["timestamp"],
+        "level": payload["level"],
+        "operation": str(payload["operation"])[:MAX_OPERATION_CHARS],
+        "outcome": str(payload["outcome"])[:MAX_OUTCOME_CHARS],
+        "truncated": True,
+        "frames": [],
+    }
+    return _serialize(minimal), minimal

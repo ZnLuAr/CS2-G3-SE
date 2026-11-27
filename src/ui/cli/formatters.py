@@ -2,7 +2,7 @@
 
 
 from __future__ import annotations
-from src.models.contracts import AccountView, BookingView, CoachStatsView, CoachView, CourseView, EntryView, EquipmentView, MaintenanceView, MeasurementComparison, MeasurementView, MemberView, MembershipStats, Page, PaymentView, RevenueView, ReviewView, RoomView, SessionStatsView, SessionView
+from src.models.contracts import AccountView, Actor, BookingView, CoachStatsView, CoachView, CourseView, EntryView, EquipmentView, LogEntry, MaintenanceView, MeasurementComparison, MeasurementView, MemberView, MembershipStats, Page, PaymentView, RevenueView, ReviewView, RoomView, SessionStatsView, SessionView
 
 
 
@@ -400,3 +400,48 @@ def format_session_stats_page(page: Page[SessionStatsView], *, timezone_name: st
 def format_coach_stats_page(page: Page[CoachStatsView], *, timezone_name: str) -> str:
     """返回中文展示文本。"""
     return _page(page, format_coach_stats, timezone_name)
+
+
+def format_actor(actor: Actor, *, timezone_name: str) -> str:
+    """展示当前登录身份；不包含密码或令牌。"""
+    details = _lines([
+        ("账号编号", actor.account_id),
+        ("角色", _WORDS[actor.role]),
+        ("会员编号", actor.member_id),
+        ("教练编号", actor.coach_id),
+    ], timezone_name)
+    return details
+
+
+def format_log(entry: LogEntry, *, timezone_name: str) -> str:
+    """展示一条脱敏日志；堆栈只显示文件名、行号和函数名。"""
+    values: list[tuple[str, object]] = [
+        ("时间", entry.timestamp),
+        ("级别", entry.level),
+        ("操作", entry.operation),
+        ("结果", entry.outcome),
+        ("操作人编号", entry.actor_id),
+        ("请求编号", entry.request_id),
+        ("结果编号", entry.result_id),
+        ("错误类型", entry.error_type),
+        ("错误信息", entry.error_message),
+    ]
+    change = entry.attendance_change
+    if change is not None:
+        values.append(("到场变化", f"{change.before} → {change.after}"))
+    if entry.frames:
+        values.append((
+            "位置",
+            "；".join(
+                f"{frame.filename}:{frame.line_number} {frame.function_name}"
+                for frame in entry.frames
+            ),
+        ))
+    if entry.truncated:
+        values.append(("截断", "是"))
+    return _lines(values, timezone_name)
+
+
+def format_logs(page: Page[LogEntry], *, timezone_name: str) -> str:
+    """返回日志分页的中文展示文本。"""
+    return _page(page, format_log, timezone_name)
