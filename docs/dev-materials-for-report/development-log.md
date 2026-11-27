@@ -428,3 +428,13 @@
 - **minor**：`_MEMBER_CREATE_ROLES` 更名为 `_MEMBER_WRITE_ROLES`，注释同步为"建档与改资料"。
 - **测试**：五份会员测试文件 Ran 4 / 14 / 38 / 10 / 3，合计 69 个用例通过；本机无 `.venv` 与 MySQL，真实依赖的全量测试与集成用例由评审环境执行。
 - **遗留问题**：`tests/integration/test_member_idempotency.py` 需在 MySQL 测试库运行；会员 CLI 与 Web 入口未接入。
+
+
+### [2026-11-27] PR #11 合并后的会员域审计修正
+
+- **背景**：PR #11（会员建档、按请求核实、详情、列表与资料修改）已合入 `dev`（`218fafe`）。在合并树上并行做四路审计（源码对合同、单元测试有效性、新增集成用例、文档一致性），按后端架构合同修正。
+- **用例层**：`MemberLogic.create_member` 只对 MySQL 1062（唯一键重复）回滚并换新事务重放，其他完整性错误转 `StorageError`；请求编号的格式校验移到开启会话之前（合同 4.2），服务层校验函数改为公开的 `normalize_request_id` 并保留为防线；改资料提交未知时带上会员编号（`record_id`，合同 6.2）；操作日志调用带 `request_id`（`log_event` 仍为占位），日志失败改为调用 `report_log_failure` 输出固定提示，与评价、体测的用例层一致，不影响已提交结果；该调用方约束写入合同 11.1（`report_log_failure` 的签名与固定提示格式、`log_event` 抛异常时由调用方转交）。
+- **仓储**：`MemberRepository` 与 `OperationRepository` 的回读改用 `src/db/support.py` 的 `from_db_utc`，去掉内联的时区补全和为此传入的 `timezone` 参数；变异检查中“回读不补时区”“补成错误时区”两项按新写法重新锚点后仍被测试发现。
+- **测试**：五份会员测试文件删除 sqlalchemy 替身，改用仓库依赖中的真实包；补 SQL 全串与参数、UTC 时间戳来源、输入类型校验、重试使用新会话、日志失败等断言。单元测试有效性审计用 71 处变异核对，按其发现补齐 `MemberRepository.lock` 的 FOR UPDATE 语句、LIMIT 与 OFFSET 可区分的绑定、改资料提交未知、`_to_view` 的状态与时间戳字段、列表按编号筛选的校验、核实接口对会员和教练不可见、失败路径会话释放、日志级别等断言。会员域单元测试由 69 项增至 98 项，非 MySQL 全套 444 项通过。新增 `tests/integration/test_member_profile.py`（4 项，覆盖管理员、非法输入不覆盖旧值、能发现漏转义的关键字），已在专用测试环境（labs）的 MySQL 8.4 上通过。
+- **文档**：后端架构补 12.3.1 `get_member_by_request` 小节与各小节的异常、事务说明，12.5.12 `OperationRepository` 与 12.7.3 会员建档例外；功能清单 MEM-01～MEM-04 的状态与备注、根 README、参与指引和架构总览按实际更新，负责人列未改；几处“MySQL 建表待验证”的过期表述按 CI 实际结果改写；测试说明补“推送前的数据库测试”与 labs 测试通道的接入步骤；CI 数据库作业的已知失败提示不再写死用例数。
+- **遗留问题**：CLI 与 Web 入口未接入；1062 判断在 `cmd/db.py`、`review_repo.py` 和 `member_logic.py` 各有一处，出现第四处时再抽到公共模块。

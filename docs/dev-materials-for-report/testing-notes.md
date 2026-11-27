@@ -13,6 +13,14 @@
 - **labs 环境运行**：专用测试环境（labs，Debian 13，Python 3.13.5、pytest 8.4.2，本机 MySQL 8.4 的 `gym_system_test` 库）。先在提交前的工作树快照上以 `mysql` 模式只跑 `tests/integration/test_db_error_mapping.py`（经 `PYTEST_ADDOPTS` 指定路径），3 项通过：唯一键重复（1062）与外键失败（1452）为 `IntegrityError`；CHECK 违反（3819）不是 `IntegrityError`，驱动抛出的是 `OperationalError`。再在提交 `4e0d23b` 上以 `all` 模式运行全套，命令 `python -B -X utf8 -m src.cmd.test all --config config.test.json`，440 项中 439 项通过、1 项失败，用时 123 秒，唯一失败是已知基线 `tests/integration/test_cli.py::test_mysql_cli_reaches_login_and_exits`，报告 `20261127-092247-audit-leftovers-4e0d23b.log`。
 - 集成测试中没有覆盖到课更正业务流程的用例，日志失败分支由单元测试覆盖。
 
+### [2026-11-27] PR #11 合并后的会员域复查
+
+- **CI 记录**：PR #11（`feat/member-crud-v2`，提交 `81b92fb`）的 GitHub Actions 运行 45960781449，以及合并提交 `218fafe` 推送 `dev` 后的运行 45964942044，结论均为 success。数据库作业在 MySQL 8.4 服务容器执行 `python -B -X utf8 -m src.cmd.test all --config config.test.json`，两次均为 435 项通过、1 项失败；唯一失败是已知基线 `tests/integration/test_cli.py::test_mysql_cli_reaches_login_and_exits`（周期任务回调占位），由工作流按规则容忍。`tests/integration/test_member_idempotency.py` 的 3 个同编号并发建档用例在通过项内。工作流容忍分支的提示文字原本写死“363/364”，本轮改为只说明唯一失败为已知占位项。
+- **本地回归**：Windows，仓库 `.venv`（Python 3.13.9、SQLAlchemy 2.0.55、PyMySQL 2.2.8、pytest 8.4.2），分支 `fix/member-audit`（基于 `dev` 的 `218fafe`）。仓库根目录执行 `.venv/Scripts/python.exe -B -X utf8 -m src.cmd.test unit`，444 项通过，25 项 MySQL 用例按模式排除，其中 4 项为本轮新增的会员档案集成用例。会员域五个单元测试文件单独运行 98 项通过，修正前为 69 项。`.venv/Scripts/python.exe -B -X utf8 -m unittest discover -s tests/contracts -p "test_*.py"` 9 项通过。
+- **修正内容**：建档重试只认 MySQL 1062；请求编号格式校验移到开启会话之前（合同 4.2），服务层保留校验作为防线；改资料提交未知时带上会员编号；操作日志调用带 `request_id`（`log_event` 仍为占位），日志失败经 `report_log_failure` 输出固定提示、不影响已提交结果；五份会员测试删除 sqlalchemy 替身，改为断言完整 SQL 文本、参数和 UTC 时间戳来源，并补输入校验、重试使用新会话、日志失败等用例。
+- **变异检查**：用未入库的一次性脚本在内存中改写会员域源码后逐项运行会员域单元测试，不改动源码文件。自备脚本 26 项全部被测试发现：INSERT 列与参数、SELECT 列清单、UPDATE 多改状态、COUNT 与分页条件不一致、分页丢筛选参数、LIMIT/OFFSET 以外的 WHERE 拼接、建档/改资料/操作记录用本机时间、1062 判断放宽、重试不带原编号、日志字段与兜底范围、建档与改资料的提交未知（含记录编号）、建档与核实不在事务前校验编号、服务层的幂等命中三条件、记录改取传入身份、重放跳过复核、核实接口不规范化编号、去掉 admin 写权限、删状态与关键词校验、删会员无档案守卫。另用单元测试审计脚本 71 项复核：修正前存活 11 项，按发现补测试后除两处外全部被发现——一处为等价变异（把输入校验挪到构造仓储之后，仍在加锁之前），一处经 `verify_actor` 不可达（列表对四种角色以外的身份）。最后把两处 UTC 时间替身合并为 `tests/support/clock.py`，回读用例改用库里生成的编号与时间戳作断言；合并后两套变异的结论不变。仓储回读改用 `from_db_utc` 后，自备 26 项与涉及两个仓储的 18 项审计变异重跑结论不变，其中“回读不补时区”的两项按新写法重新锚点。
+- **labs 环境运行**：专用测试环境（labs，Debian 13，Python 3.13.5、pytest 8.4.2，本机 MySQL 8.4 的 `gym_system_test` 库）。分支变基到合并 PR #16 后的 `dev`（`c23d81b`）之后，在提交 `e77fa03`（分支上最后一个改动代码与测试的提交）上以 `all` 模式运行全套，命令 `python -B -X utf8 -m src.cmd.test all --config config.test.json`，473 项中 472 项通过、1 项失败，用时 169 秒，唯一失败是已知基线 `tests/integration/test_cli.py::test_mysql_cli_reaches_login_and_exits`，报告 `20261127-101430-fix-member-audit-member-rebased-e77fa03.log`。变基前在 `a158443` 上以同样方式运行，469 项中 468 项通过、1 项失败，用时 137 秒，报告 `20261127-093034-fix-member-audit-a158443.log`；更早在中间提交上跑过一次只含会员集成用例的子集（`mysql` 模式，7 项通过）和四次全套（同为 468 项通过、1 项已知失败），报告同在服务器报告目录。通过项包含 `test_member_profile.py` 的 4 项（列表分页、筛选与 LIKE 转义按字面量匹配，会员只能查到本人、教练被拒绝、管理员可查全部，非法输入不覆盖旧值，建档时间戳按 UTC 写入）和 `test_member_idempotency.py` 的 3 项，修正后的建档重试路径随并发用例复跑。CHECK 违反（MySQL 3819）在 PyMySQL 中归入 `OperationalError` 一点，起初只依据驱动错误码表，后由 `tests/integration/test_db_error_mapping.py` 在同一环境的真实库上验证（PR #16）：唯一键重复（1062）与外键失败（1452）为 `IntegrityError`，3819 不是；单元测试用外键失败（1452）代表“非唯一键的 IntegrityError”。
+
 ### [2026-11-20] 签到与评价合并回归
 
 - 在评价工作树根目录，使用 Windows 上的 Python 3.10.6 虚拟环境运行 `python -B -X utf8 -m src.cmd.test unit`。契约、单元和 API 共 346 项通过，18 项 MySQL 用例按模式排除，Starlette 发出 1 条 HTTPX 弃用提示。
@@ -304,7 +312,7 @@
 - **命令**：`py -3 -B -X utf8 tests\unit\db\test_member_repo.py`、`tests\unit\test_member_service.py`、`tests\unit\test_member_logic.py`（本机未安装 pytest 与 sqlalchemy）。
 - **缺陷 1**：`MemberView` 只传了 `id` / `name` / `phone` / `status`，漏掉 `archived_at`、`created_at`、`updated_at`，构造即 `TypeError`。修复：按 `contracts.py` 补齐 7 个字段。
 - **缺陷 2**：测试里的 `sqlalchemy` 替身会遮蔽仓库已安装的真包。修复：替身加 `__dsh_stub__` 标记，检测到真包即跳过注入。
-- **缺陷 3**：`import src.logic.member_logic` 会先执行 `src/logic/__init__.py`，它 import `LogicBundle`，进而把全部 Logic、Service、仓储拉进来；其中 `measurement_repo` 与 `payment_repo` 在顶层 `from sqlalchemy import Numeric, DateTime, bindparam, text`，替身只提供 `text` 时报 `ImportError: cannot import name 'Numeric'`。修复：替身补齐这四个名字。
+- **缺陷 3**：`import src.logic.member_logic` 会先执行 `src/logic/__init__.py`，它 import `LogicBundle`，进而把全部 Logic、Service、仓储拉进来；其中 `measurement_repo` 在顶层 `from sqlalchemy import DateTime, Numeric, bindparam, text`，`payment_repo` 在顶层 `from sqlalchemy import Numeric, bindparam, text`（2026-11-27 复核更正：原记录把两个文件的导入写成同一行），替身只提供 `text` 时报 `ImportError: cannot import name 'Numeric'`。修复：替身补齐这四个名字。
 - **结果**：三个文件分别 Ran 14 / 36 / 10，全部 OK。
 - **限制**：本机未连接真实 MySQL，未验证 CHECK 约束、`DATETIME(6)` 精度与 `SELECT ... FOR UPDATE` 行锁；这些属 TEST-02、TEST-06、TEST-08。
 

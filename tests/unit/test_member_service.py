@@ -1,70 +1,41 @@
-"""MemberService 单元测试：校验、权限、幂等三个分支与详情可见范围。
+"""MemberService 单元测试：校验、权限、幂等三个分支与可见范围。
 
-本机未安装 sqlalchemy，这里注入最小替身（text 与 exc.SQLAlchemyError）；
-仓储与幂等记录用替身对象替换，真实 SQL 与约束由 MySQL 集成用例验证。
+仓储与幂等记录用替身对象替换；真实 SQL 与约束由 MySQL 集成用例验证。
 """
 
 from __future__ import annotations
 
-import sys
-import types
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-
-def _install_sqlalchemy_stub() -> None:
-    """仓库环境装了 sqlalchemy 时用真包；只在缺依赖的本机注入带标记的替身。"""
-    existing = sys.modules.get("sqlalchemy")
-    if existing is not None and not getattr(existing, "__dsh_stub__", False):
-        return
-    if existing is None:
-        try:
-            import sqlalchemy as existing  # noqa: F401
-        except ModuleNotFoundError:
-            existing = None
-        if existing is not None:
-            return
-    if existing is None:
-        existing = types.ModuleType("sqlalchemy")
-        existing.__dsh_stub__ = True
-        existing.__path__ = []
-        sys.modules["sqlalchemy"] = existing
-    for name in ("text", "Numeric", "DateTime", "bindparam"):
-        if not hasattr(existing, name):
-            setattr(existing, name, lambda *args, **kwargs: None)
-    if not hasattr(existing, "exc"):
-        exc = types.ModuleType("sqlalchemy.exc")
-
-        class SQLAlchemyError(Exception):
-            pass
-
-        exc.SQLAlchemyError = SQLAlchemyError
-        sys.modules["sqlalchemy.exc"] = exc
-        existing.exc = exc
-
-
-_install_sqlalchemy_stub()
-
-import src.services.member_service as member_service_module  # noqa: E402
-from src.errors.business import ConflictError, InvalidInputError, NotFoundError, PermissionDenied  # noqa: E402
-from src.models.contracts import Actor, MemberInput, MemberQuery, PageRequest  # noqa: E402
-from src.models.member import Member  # noqa: E402
-from src.services.member_service import MemberService  # noqa: E402  # noqa: E402
+import src.services.member_service as member_service_module
+from src.errors import StorageError
+from src.errors.business import (
+    AuthenticationError,
+    ConflictError,
+    InvalidInputError,
+    NotFoundError,
+    PermissionDenied,
+)
+from src.models.contracts import Actor, MemberInput, MemberQuery, PageRequest
+from src.models.member import Member
+from src.services.member_service import MemberService
 
 REQUEST_ID = "6f1c1c2a-8f8f-4f6a-9d2b-2a7f4c0f5e11"
-OTHER_REQUEST_ID = "0b7a3d5e-2c4f-4a8b-9e6d-1f2a3b4c5d6e"
 NOW = datetime(2026, 10, 23, 3, 0, 0, tzinfo=timezone.utc)
+LATER = datetime(2026, 10, 24, 3, 0, 0, tzinfo=timezone.utc)
 
 
 def _actor(role="receptionist", account_id=10, member_id=None):
     return Actor(account_id=account_id, role=role, member_id=member_id, coach_id=None)
 
 
-def _member(member_id=7, name="张三", phone="13800000000", status="active"):
+def _member(member_id=7, name="张三", phone="13800000000", status="active", archived_at=None):
+    # 创建与更新时刻取不同值，视图字段互换时断言才能发现。
     return Member(
         id=member_id, name=name, phone=phone, status=status,
-        archived_at=None, created_at=NOW, updated_at=NOW,
+        archived_at=archived_at, created_at=NOW, updated_at=LATER,
     )
 
 
@@ -167,13 +138,20 @@ class MemberServiceTestBase(unittest.TestCase):
 
 class CreateMemberTest(MemberServiceTestBase):
     def test_creates_member_and_records_request(self):
+        # 自增编号取一个输入里没有的数，返回视图与请求记录里的编号只能来自仓储写入的结果。
+        _FakeMemberRepo.next_id = 41
         auth = _FakeAuth()
         service = MemberService(auth)
 
         view = service.create_member(None, _actor(), MemberInput(name="张三", phone="13800000000"), REQUEST_ID)
 
+        self.assertEqual(view.id, 41)
         self.assertEqual(view.name, "张三")
         self.assertEqual(view.status, "active")
+        self.assertEqual(view.phone, "13800000000")
+        self.assertIsNone(view.archived_at)
+        self.assertEqual(view.created_at, NOW)
+        self.assertEqual(view.updated_at, LATER)
         self.assertEqual(auth.calls, 1)
         repo = _FakeMemberRepo.instances[-1]
         self.assertEqual(len(repo.created), 1)
@@ -182,7 +160,7 @@ class CreateMemberTest(MemberServiceTestBase):
         self.assertEqual(record["request_id"], REQUEST_ID)
         self.assertEqual(record["actor_id"], 10)
         self.assertEqual(record["operation"], "create_member")
-        self.assertEqual(record["result_id"], 7)
+        self.assertEqual(record["result_id"], 41)
         self.assertRegex(record["payload_hash"], r"^[0-9a-f]{64}$")
 
     def test_payload_hash_matches_contract_field_order(self):
@@ -241,14 +219,66 @@ class CreateMemberTest(MemberServiceTestBase):
         with self.assertRaises(PermissionDenied):
             service.create_member(None, _actor(role="coach"), MemberInput(name="张三", phone=None), REQUEST_ID)
 
+    def test_role_is_checked_before_input_validation(self):
+        """权限检查先于输入校验：越权角色提交非法输入时仍按权限拒绝。"""
+        service = MemberService(_FakeAuth())
+        with self.assertRaises(PermissionDenied):
+            service.create_member(
+                None, _actor(role="member", member_id=7), MemberInput(name="   ", phone=None), REQUEST_ID
+            )
+        self.assertEqual(_FakeMemberRepo.instances, [])
+
     def test_rejects_non_canonical_request_id(self):
         service = MemberService(_FakeAuth())
         for bad in (REQUEST_ID.upper(), "not-a-uuid", 123, ""):
             with self.subTest(request_id=bad), self.assertRaises(InvalidInputError):
                 service.create_member(None, _actor(), MemberInput(name="张三", phone=None), bad)
 
+    def test_admin_can_create_member(self):
+        """合同 12.3.1：建档权限是前台与管理员。"""
+        service = MemberService(_FakeAuth())
+
+        view = service.create_member(None, _actor(role="admin"), MemberInput(name="张三", phone=None), REQUEST_ID)
+
+        self.assertEqual(view.id, 7)
+        self.assertEqual(len(_FakeOperationRepo.created), 1)
+
+    def test_accepts_boundary_lengths(self):
+        """合同 12.8.1：姓名恰好 100 字、联系方式恰好 32 字都合法。"""
+        service = MemberService(_FakeAuth())
+
+        service.create_member(None, _actor(), MemberInput(name="张" * 100, phone="1" * 32), REQUEST_ID)
+
+        saved = _FakeMemberRepo.instances[-1].created[0]
+        self.assertEqual(len(saved.name), 100)
+        self.assertEqual(len(saved.phone), 32)
+
+    def test_rejects_wrong_input_types(self):
+        service = MemberService(_FakeAuth())
+        for bad in (
+            None,
+            MemberInput(name=123, phone=None),
+            MemberInput(name="张三", phone=13800000000),
+        ):
+            with self.subTest(data=bad), self.assertRaises(InvalidInputError):
+                service.create_member(None, _actor(), bad, REQUEST_ID)
+        self.assertEqual(_FakeOperationRepo.created, [])
+
+    def test_verify_actor_failure_propagates_before_any_write(self):
+        """合同 12.7.2：每次都先重验账号，复核失败时不能留下任何写入。"""
+        auth = _FakeAuth(error=AuthenticationError("当前登录身份已失效，请重新登录"))
+        service = MemberService(auth)
+
+        with self.assertRaises(AuthenticationError):
+            service.create_member(None, _actor(), MemberInput(name="张三", phone=None), REQUEST_ID)
+
+        self.assertEqual(_FakeMemberRepo.instances, [])
+        self.assertEqual(_FakeOperationRepo.created, [])
+
 
 class IdempotentCreateTest(MemberServiceTestBase):
+    """合同 12.7.2：request_id、操作者、操作名、摘要四项都相同才回放原结果。"""
+
     def _hash_of(self, name="张三", phone="13800000000"):
         service = MemberService(_FakeAuth())
         _FakeMemberRepo.instances.clear()
@@ -256,37 +286,72 @@ class IdempotentCreateTest(MemberServiceTestBase):
         service.create_member(None, _actor(), MemberInput(name=name, phone=phone), REQUEST_ID)
         return _FakeOperationRepo.created[0]["payload_hash"]
 
-    def test_replay_with_same_payload_returns_original_member(self):
+    def _replay(self, auth, make_record):
+        """预置一条已存在的请求记录（摘要取真实值），再按相同内容提交。"""
         payload_hash = self._hash_of()
         _FakeMemberRepo.instances.clear()
         _FakeOperationRepo.created = []
-        _FakeOperationRepo.existing = _Record(payload_hash=payload_hash)
+        _FakeOperationRepo.existing = make_record(payload_hash)
+        return MemberService(auth).create_member(
+            None, _actor(), MemberInput(name="张三", phone="13800000000"), REQUEST_ID
+        )
 
-        service = MemberService(_FakeAuth())
-        # 原会员已在库中，重放时不应再插入
-        _FakeMemberRepo.instances.clear()
-        view = service.create_member(None, _actor(), MemberInput(name="张三", phone="13800000000"), REQUEST_ID)
+    def test_replay_with_same_payload_returns_original_member(self):
+        auth = _FakeAuth()
+
+        view = self._replay(auth, lambda payload_hash: _Record(payload_hash=payload_hash))
 
         self.assertEqual(view.id, 7)
+        # 原会员已在库中，重放时不新建会员、不写记录，但仍复核一次身份（合同 12.7.2）。
+        self.assertEqual(_FakeMemberRepo.instances[-1].created, [])
         self.assertEqual(_FakeOperationRepo.created, [])
+        self.assertEqual(auth.calls, 1)
 
     def test_replay_with_different_payload_raises_conflict(self):
-        _FakeOperationRepo.existing = _Record(payload_hash="b" * 64)
-        service = MemberService(_FakeAuth())
         with self.assertRaises(ConflictError):
-            service.create_member(None, _actor(), MemberInput(name="李四", phone=None), REQUEST_ID)
+            self._replay(_FakeAuth(), lambda payload_hash: _Record(payload_hash="b" * 64))
 
     def test_replay_from_other_actor_raises_conflict(self):
-        _FakeOperationRepo.existing = _Record(actor_id=99, payload_hash="a" * 64)
-        service = MemberService(_FakeAuth())
+        """操作者是唯一差异：操作名和摘要都与原请求一致。"""
         with self.assertRaises(ConflictError):
-            service.create_member(None, _actor(account_id=10), MemberInput(name="张三", phone=None), REQUEST_ID)
+            self._replay(
+                _FakeAuth(), lambda payload_hash: _Record(actor_id=99, payload_hash=payload_hash)
+            )
 
     def test_replay_of_other_operation_raises_conflict(self):
-        _FakeOperationRepo.existing = _Record(operation="sell_gym_card")
-        service = MemberService(_FakeAuth())
+        """操作名是唯一差异：操作者和摘要都与原请求一致。"""
         with self.assertRaises(ConflictError):
-            service.create_member(None, _actor(), MemberInput(name="张三", phone=None), REQUEST_ID)
+            self._replay(
+                _FakeAuth(),
+                lambda payload_hash: _Record(operation="sell_gym_card", payload_hash=payload_hash),
+            )
+
+    def test_replay_still_reverifies_actor(self):
+        """合同 12.7.2：停用账号不能凭既有 request_id 读取结果。"""
+        auth = _FakeAuth(error=AuthenticationError("当前登录身份已失效，请重新登录"))
+
+        with self.assertRaises(AuthenticationError):
+            self._replay(auth, lambda payload_hash: _Record(payload_hash=payload_hash))
+
+        self.assertEqual(_FakeOperationRepo.created, [])
+
+    def test_record_uses_verified_actor_id(self):
+        """操作记录写复核后的身份，不直接信任调用方传入的 actor。
+
+        真实 verify_actor 遇到身份不一致会直接抛错；这里用替身固定服务层只信复核结果。
+        """
+        auth = _FakeAuth(actor=_actor(account_id=99))
+
+        MemberService(auth).create_member(None, _actor(account_id=10), MemberInput(name="张三", phone=None), REQUEST_ID)
+
+        self.assertEqual(_FakeOperationRepo.created[0]["actor_id"], 99)
+
+    def test_replay_when_original_member_missing_raises_storage_error(self):
+        """命中记录但原会员行缺失，属于存储不一致，不能当成未命中重新建档。"""
+        with self.assertRaises(StorageError):
+            self._replay(_FakeAuth(), lambda payload_hash: _Record(payload_hash=payload_hash, result_id=999))
+
+        self.assertEqual(_FakeOperationRepo.created, [])
 
 
 class GetMemberByRequestTest(MemberServiceTestBase):
@@ -296,10 +361,14 @@ class GetMemberByRequestTest(MemberServiceTestBase):
             service.get_member_by_request(None, _actor(), REQUEST_ID)
 
     def test_record_of_other_actor_raises_not_found(self):
+        """合同 12.3.1：只有原操作者和管理员可见，前台同行、会员和教练都按不可见处理。"""
         _FakeOperationRepo.existing = _Record(actor_id=99)
+        # 原会员行存在：若其他身份被放行，这里会返回视图而不是抛错。
+        _FakeMemberRepo.rows[7] = _member()
         service = MemberService(_FakeAuth())
-        with self.assertRaises(NotFoundError):
-            service.get_member_by_request(None, _actor(account_id=10), REQUEST_ID)
+        for actor in (_actor(account_id=10), _actor(role="member", member_id=7), _actor(role="coach")):
+            with self.subTest(role=actor.role), self.assertRaises(NotFoundError):
+                service.get_member_by_request(None, actor, REQUEST_ID)
 
     def test_operation_mismatch_raises_conflict(self):
         _FakeOperationRepo.existing = _Record(operation="sell_gym_card", actor_id=10)
@@ -332,6 +401,19 @@ class GetMemberByRequestTest(MemberServiceTestBase):
             view = service.get_member_by_request(None, _actor(account_id=10), REQUEST_ID)
         self.assertEqual(view.id, 7)
 
+    def test_rejects_non_canonical_request_id(self):
+        """合同 12.8.1：request_id 严格校验 UUID 规范形式。"""
+        service = MemberService(_FakeAuth())
+        for bad in (REQUEST_ID.upper(), "not-a-uuid", None):
+            with self.subTest(request_id=bad), self.assertRaises(InvalidInputError):
+                service.get_member_by_request(None, _actor(), bad)
+
+    def test_missing_original_member_raises_not_found(self):
+        _FakeOperationRepo.existing = _Record(actor_id=10, result_id=999)
+        service = MemberService(_FakeAuth())
+        with self.assertRaises(NotFoundError):
+            service.get_member_by_request(None, _actor(account_id=10), REQUEST_ID)
+
 
 class GetMemberTest(MemberServiceTestBase):
     def _service_with_member(self):
@@ -345,7 +427,21 @@ class GetMemberTest(MemberServiceTestBase):
 
     def test_staff_can_read_any_member(self):
         service = self._service_with_member()
-        self.assertEqual(service.get_member(None, _actor(role="admin"), 7).id, 7)
+        for role in ("receptionist", "admin"):
+            with self.subTest(role=role):
+                self.assertEqual(service.get_member(None, _actor(role=role), 7).id, 7)
+
+    def test_maps_archived_member_fields(self):
+        """合同 12.2.2：MemberView 的状态、归档时刻和两个时间戳逐一取自档案行。"""
+        service = self._service_with_member()
+        _FakeMemberRepo.rows[7] = _member(7, status="archived", archived_at=LATER)
+
+        view = service.get_member(None, _actor(), 7)
+
+        self.assertEqual(view.status, "archived")
+        self.assertEqual(view.archived_at, LATER)
+        self.assertEqual(view.created_at, NOW)
+        self.assertEqual(view.updated_at, LATER)
 
     def test_member_can_read_self(self):
         service = self._service_with_member()
@@ -367,30 +463,30 @@ class GetMemberTest(MemberServiceTestBase):
         with self.assertRaises(NotFoundError):
             service.get_member(None, _actor(), 999)
 
-    def test_rejects_bool_member_id(self):
+    def test_rejects_invalid_member_ids(self):
+        """合同 12.8.1：编号为 1 至 2^63-1 的整数，拒绝 bool、0、负数和非整数。"""
         service = self._service_with_member()
-        with self.assertRaises(InvalidInputError):
-            service.get_member(None, _actor(), True)
+        for bad in (True, 0, -1, 2**63, "7", 7.0):
+            with self.subTest(member_id=bad), self.assertRaises(InvalidInputError):
+                service.get_member(None, _actor(), bad)
 
 
 class ListMembersTest(MemberServiceTestBase):
     def test_staff_filter_is_passed_through(self):
         _FakeMemberRepo.list_result = ([_member(7)], 1)
         service = MemberService(_FakeAuth())
+        query = MemberQuery(member_id=7, keyword="张", status="active", paging=PageRequest(page=2, page_size=5))
 
-        page = service.list_members(
-            None,
-            _actor(role="admin"),
-            MemberQuery(member_id=7, keyword="张", paging=PageRequest(page=2, page_size=5)),
-        )
+        for role in ("receptionist", "admin"):
+            with self.subTest(role=role):
+                page = service.list_members(None, _actor(role=role), query)
 
-        self.assertEqual(page.total, 1)
-        self.assertEqual(page.page, 2)
-        self.assertEqual(page.page_size, 5)
-        self.assertEqual([v.id for v in page.items], [7])
-        scoped = _FakeMemberRepo.last_query
-        self.assertEqual(scoped.member_id, 7)
-        self.assertEqual(scoped.keyword, "张")
+                self.assertEqual(page.total, 1)
+                self.assertEqual(page.page, 2)
+                self.assertEqual(page.page_size, 5)
+                self.assertEqual([v.id for v in page.items], [7])
+                scoped = _FakeMemberRepo.last_query
+                self.assertEqual((scoped.member_id, scoped.keyword, scoped.status), (7, "张", "active"))
 
     def test_member_is_forced_to_own_profile(self):
         _FakeMemberRepo.list_result = ([_member(7)], 1)
@@ -424,9 +520,47 @@ class ListMembersTest(MemberServiceTestBase):
             PageRequest(page=0),
             PageRequest(page_size=0),
             PageRequest(page_size=101),
+            PageRequest(page=True),
+            PageRequest(page_size="20"),
+            None,
         ):
             with self.subTest(paging=paging), self.assertRaises(InvalidInputError):
                 service.list_members(None, _actor(), MemberQuery(paging=paging))
+
+    def test_rejects_invalid_filters(self):
+        """合同 12.8.1：状态只接受 active/archived，关键词必须是字符串；非法筛选在触库前拒绝。"""
+        service = MemberService(_FakeAuth())
+        for query in (
+            MemberQuery(status="enabled"),
+            MemberQuery(keyword=123),
+            MemberQuery(keyword=None),
+            None,
+        ):
+            with self.subTest(query=query), self.assertRaises(InvalidInputError):
+                service.list_members(None, _actor(), query)
+        self.assertIsNone(_FakeMemberRepo.last_query)
+
+    def test_rejects_invalid_member_id_filter(self):
+        """合同 12.8.1：按编号筛选同样校验 1 至 2^63-1 的整数并拒绝 bool，在触库前拒绝。"""
+        service = MemberService(_FakeAuth())
+        for bad in (True, 0, -1, 2**63, "7", 7.0):
+            with self.subTest(member_id=bad), self.assertRaises(InvalidInputError):
+                service.list_members(None, _actor(), MemberQuery(member_id=bad, paging=PageRequest()))
+        self.assertIsNone(_FakeMemberRepo.last_query)
+
+    def test_member_without_linked_profile_is_denied(self):
+        """复核出的会员身份没有档案时按拒绝处理，不能退化成查询全部会员。
+
+        真实 verify_actor 对缺少关联档案的会员账号会直接抛错；这里用替身固定服务层的自保分支。
+        """
+        auth = _FakeAuth(actor=_actor(role="member", member_id=None))
+
+        with self.assertRaises(PermissionDenied):
+            MemberService(auth).list_members(
+                None, _actor(role="member", member_id=7), MemberQuery(paging=PageRequest())
+            )
+
+        self.assertIsNone(_FakeMemberRepo.last_query)
 
     def test_maps_rows_to_views(self):
         _FakeMemberRepo.list_result = ([_member(7), _member(8)], 2)
@@ -455,6 +589,16 @@ class UpdateMemberTest(MemberServiceTestBase):
         with self.assertRaises(NotFoundError):
             service.update_member(None, _actor(), 7, MemberInput(name="李四", phone=None))
         self.assertEqual(_FakeMemberRepo.calls, ["lock"])
+
+    def test_admin_can_update_member(self):
+        """合同 12.3.1：改资料权限是前台与管理员。"""
+        _FakeMemberRepo.rows[7] = _member(7)
+        service = MemberService(_FakeAuth())
+
+        view = service.update_member(None, _actor(role="admin"), 7, MemberInput(name="李四", phone=None))
+
+        self.assertEqual(view.id, 7)
+        self.assertEqual(_FakeMemberRepo.calls, ["lock", "update"])
 
     def test_member_role_cannot_update(self):
         service = MemberService(_FakeAuth())

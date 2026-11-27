@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.db.support import from_db_utc
 from src.models.contracts import OperationName
 from src.models.operation import OperationRecord
 
@@ -21,7 +22,7 @@ _OPERATION_COLUMNS = "id, request_id, actor_id, operation, payload_hash, result_
 class OperationRepository:
     """防重复操作记录访问；只使用传入会话，不提交、不输出提示。
 
-    返回 None 的查询由服务转换异常；写入失败交由服务清理事务。
+    返回 None 的查询由服务转换异常；写入失败时由调用方 Logic 回滚整个事务。
     """
 
     def __init__(self, session: Session) -> None:
@@ -54,8 +55,8 @@ class OperationRepository:
     ) -> OperationRecord:
         """保存请求与结果引用；必须和业务记录一起提交。
 
-        `request_id` 有唯一约束：并发插入同一编号时，后到的事务在 flush/提交阶段
-        抛 `IntegrityError`，由 Logic 回滚整个事务并换新事务回放胜者结果。
+        `request_id` 有唯一约束：并发插入同一编号时，后到的事务在本语句执行时
+        抛 `IntegrityError`（MySQL 1062），由 Logic 回滚整个事务并换新事务回放胜者结果。
 
         返回：OperationRecord。插入后按请求编号回读，返回数据库实际保存的行。
         """
@@ -89,13 +90,6 @@ class OperationRepository:
 
 def _to_record(values: dict) -> OperationRecord:
     """把数据库行转换为 OperationRecord；无时区时间按 UTC 补回时区。"""
-    from datetime import timezone
-
-    created_at = values["created_at"]
-    if created_at is not None:
-        values["created_at"] = (
-            created_at.replace(tzinfo=timezone.utc)
-            if created_at.tzinfo is None
-            else created_at.astimezone(timezone.utc)
-        )
+    if values["created_at"] is not None:
+        values["created_at"] = from_db_utc(values["created_at"])
     return OperationRecord(**values)
