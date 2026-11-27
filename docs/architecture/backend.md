@@ -130,7 +130,7 @@ Logic 持有会话工厂，每次调用创建独立 Session，并在成功或失
 
 后端合同集中维护在本分册，总览入口为 `docs/architecture.md`，参与步骤维护在 `docs/README.md`，工程规范维护在 `docs/project-standards.md`。开发进度、设计决策和测试发现分别记录到 `docs/dev-materials-for-report/development-log.md`、`design-decisions.md` 和 `testing-notes.md`。
 
-日志公共名称由 `src/logging/__init__.py` 导出。生命周期接口在 `lifecycle.py`，操作枚举、脱敏事件与日志失败提示在 `events.py`，固定快照读取和查询在 `snapshots.py`。密码工具由 `src/security/passwords.py` 提供。日志方法按第 11 章合同保留占位状态。
+日志公共名称由 `src/logging/__init__.py` 导出。生命周期接口在 `lifecycle.py`，操作枚举、脱敏事件与日志失败提示在 `events.py`，固定快照读取和查询在 `snapshots.py`。密码工具由 `src/security/passwords.py` 提供。日志生命周期、操作事件和日志快照已按第 11 章合同实现，CLI 与账号用例已接入；Web 入口的结构化错误日志和日志查询路由待 Web/API 负责人接入。
 
 ## 4. 公共接口约定
 
@@ -960,7 +960,7 @@ def login(self, session: Session, username: str, password: str) -> Actor: ...
 - 异常：输入格式、凭据、账号状态、档案关联或档案状态任一校验失败时抛 `AuthenticationError`；密码工具不可用抛 `ResourceError`；存储故障抛 `StorageError`。
 - 数据变更：无业务数据变更；记录一次脱敏登录结果日志。
 
-服务规范化用户名后读取账号，使用 Argon2id 验证密码，并取得关联档案。终端提示对用户名不存在、密码错误和账号状态异常采用一致的认证失败消息。
+服务规范化用户名后读取账号，使用 Argon2id 验证密码，并取得关联档案。取得关联档案时先锁定账号行，再按主键锁定存在的档案行；锁定后对已存在的关联行做一次锁定读复核，关联已移交时按新档案返回。终端提示对用户名不存在、密码错误和账号状态异常采用一致的认证失败消息。
 
 #### `create_account`
 
@@ -5294,7 +5294,7 @@ src/tasks/worker.py  # 单线程周期调度与关停
 
 部署配置增加 Web 监听地址、允许的跨域来源、令牌签发者、受众、有效时长和签名密钥环境变量名。密钥从环境变量读取；配置文件只保存环境变量名。默认 CLI 使用 `requirements/core.txt`；Web API 的 FastAPI、Pydantic 2、Uvicorn 和 PyJWT 依赖由 `requirements/web.txt` 提供，并与核心依赖一起通过 `requirements/all.txt` 安装。测试工具由 `requirements/dev.txt` 安装。
 
-本地运行 API 时，先在仓库根目录安装 `requirements/all.txt`，或依次安装 `requirements/core.txt` 和 `requirements/web.txt`，准备包含 v4 结构的 MySQL 配置，并设置至少 32 字节的随机签名密钥，再执行 `python -m src.web.main`。启动成功后，Uvicorn 按 `web.host` 和 `web.port` 监听，API 文档位于 `/docs`。依赖缺失时安装 `requirements/all.txt`；签名密钥缺失或过短时设置 `web.jwt_secret_env_var` 指定的环境变量；数据库连接或结构检查失败时，先检查 `config.json` 和 v4 初始化结果。登录和当前身份路由调用 `AuthLogic`，退出路由校验令牌并返回客户端会话结束确认。`AuthLogic.login` 与 `AuthLogic.get_current_actor` 仍为占位方法，完成后登录和身份查询才能返回成功结果。
+本地运行 API 时，先在仓库根目录安装 `requirements/all.txt`，或依次安装 `requirements/core.txt` 和 `requirements/web.txt`，准备包含 v4 结构的 MySQL 配置，并设置至少 32 字节的随机签名密钥，再执行 `python -m src.web.main`。启动成功后，Uvicorn 按 `web.host` 和 `web.port` 监听，API 文档位于 `/docs`。依赖缺失时安装 `requirements/all.txt`；签名密钥缺失或过短时设置 `web.jwt_secret_env_var` 指定的环境变量；数据库连接或结构检查失败时，先检查 `config.json` 和 v4 初始化结果。登录和当前身份路由调用 `AuthLogic`，退出路由校验令牌并返回客户端会话结束确认。`AuthLogic.login`、`AuthLogic.get_current_actor`、账号维护和日志查询已实现；Web 路径的结构化错误日志与日志查询路由仍由 Web/API 负责人接入。
 
 浏览器生产资源由静态服务器托管在站点根路径，`/api/` 请求反向代理到 API 并保留路径前缀；页面地址由静态服务器回退到 `index.html`。跨域直连时，`web.allowed_origins` 填写浏览器的准确来源，跨域配置允许 `Authorization` 和 `Content-Type` 请求头。静态服务、代理前提及待部署验证的 Nginx 示例见[前端参与说明](../../frontend/README.md#生产部署)。
 
@@ -5314,7 +5314,7 @@ src/tasks/worker.py  # 单线程周期调度与关停
 
 退出响应确认客户端可以结束当前会话；访问令牌按有效期校验，业务调用继续按账号状态复核。身份失效统一返回 `401` 与 `action="login"`。
 
-当前代码提供这三个认证路由、JWT 校验、跨域来源配置和统一 HTTP 错误结构。登录与身份查询调用的 `AuthLogic` 方法仍为占位；其余业务路由按本节路由表逐项接入 Logic。
+当前代码提供这三个认证路由、JWT 校验、跨域来源配置和统一 HTTP 错误结构。登录与身份查询调用已实现的 `AuthLogic` 方法；账号维护和日志查询通过 CLI 交付，其余业务路由按本节路由表逐项接入 Logic。
 
 ### 17.3 HTTP 类型与序列化
 

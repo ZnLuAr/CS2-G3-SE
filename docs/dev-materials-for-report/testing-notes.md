@@ -7,6 +7,29 @@
 
 ## 测试思路与策略
 
+### [2026-11-28] 合并 origin/dev 后回归
+
+- 将 `origin/dev`（`c23d81b`）合入 `feat/auth-log`，冲突只涉及 `development-log.md`、`testing-notes.md` 和 `feature-list.csv` 三个文档；源码与测试没有冲突。功能清单按行保留 AUTH/LOG 的「待验收」和 MEM-01～03 的「开发中」。
+- 合并后在仓库根目录执行 `python -m pytest tests -m 'not mysql' -q -rs`，458 项通过、29 项 MySQL 用例排除。
+- 在同一 MySQL 8.4.10 专用测试库 `gym_auth_test` 上执行 `python -B -X utf8 -m src.cmd.test mysql --config <临时测试配置路径>`，28 项通过、1 项失败、458 项按模式排除；唯一失败仍是已知的 `test_mysql_cli_reaches_login_and_exits`（周期任务回调占位，两条「后台任务执行失败」写入标准错误）。账号并发用例单独复跑 4 项全部通过。
+- GitHub Actions 在整理提交前的合并结果 `6ef262a` 上的 CI（run `46031637536`）三个 job 全部通过；工作流按既有规则容忍上述已知失败。
+- 测试配置和密码保存在仓库外的临时文件，测试库表由夹具清理。
+
+### [2026-11-27] PR #15 二轮意见修正
+
+- 处理 review 标「需修正」的 4 处：并发停用用例断言改为 `sorted(outcomes) == ["AuthenticationError", "success"]`；锁定范围用例固定两条语句，并校验第二条来自 `lock_many`（`id IN` 前缀、`ORDER BY id FOR UPDATE` 后缀）；移交回滚用例限定错误消息为「关联会员档案失败」，并用替身确认 `delete_member_link` 以账号 3 调用一次；启动成功用例在 `worker.start` 内断言事件仍为空，证明成功日志写在资源就绪之后。
+- 落实不阻塞建议：生命周期替身记录级别，失败事件断言 `logging.ERROR`；日志查询处理器用例断言时区参数和同一快照；补首次教练关联、`open_log_snapshot`/`query_logs` 直接调用和各写操作日志名的用例；新增 `tests/integration/test_auth_queries.py` 覆盖 MySQL 的 `LOCATE` 关键字分支。
+- 登录路径补关联复核：`lock_profile_links(recheck=True)` 在锁定档案行后对已存在的关联行做锁定读，避免登录事务沿用账号锁之前的读视图返回移交前的档案编号。
+- 在仓库根目录执行 `python -m pytest tests -m 'not mysql' -q -rs`，388 项通过、23 项 MySQL 用例排除。
+- 随后在本机仅监听回环地址的 MySQL 8.4.10 实例上，使用独立测试库 `gym_auth_test` 和临时测试配置执行 `python -B -X utf8 -m src.cmd.test mysql --config <临时测试配置路径>`。5 项账号并发、移交回滚与关键字查询用例全部通过；MySQL 套件 22 项通过、1 项失败，388 项按模式排除。失败项为已知的 `test_mysql_cli_reaches_login_and_exits`：候补核对与推荐刷新回调仍是占位，两条「后台任务执行失败」写入标准错误，触发空输出断言。测试配置和密码保存在仓库外的临时文件，测试库表由夹具清理。
+
+### [2026-11-27] AUTH/LOG 合并回归与 PR #15 复审验证
+
+- 环境为 Windows、Python 3.13.12；项目虚拟环境未就绪，使用临时目录安装的 pytest、argon2-cffi 依赖，通过 `PYTHONPATH` 运行，未修改仓库环境。
+- 在仓库根目录执行 `python -m pytest tests -m 'not mysql' -q -rs`，380 项通过、22 项 MySQL 用例排除。新增账号服务用例覆盖重复关联已停用教练、移交释放旧关联、停用恢复、列表筛选和旧身份复核；用例层用例覆盖提交顺序、提交未知保留记录编号和失败不写成功日志；CLI 用例覆盖菜单固定动作、公共日志查询输入和本机日志命令。
+- 日志用例新增 U+2028 不拆行与极端时间戳按损坏行跳过；交互用例覆盖操作名和请求编号超长时重新输入；菜单用例固定停用、恢复两个操作名。生命周期用例覆盖启动成功在装配完成后记录、启动失败记 `failed`、退出失败记 `failed`。
+- 新增 `tests/integration/test_auth_concurrency.py`：两位管理员在空关联表上同时关联不同会员、并发互相停用管理员、锁定语句范围与移交失败回滚。本机没有可用的 MySQL 8.4 测试库，4 项按模式排除，待 `python -m src.cmd.test mysql --config config.test.json` 运行。
+
 ### [2026-11-27] 审计遗留项回归
 
 - **本地**：Windows，仓库 `.venv`（Python 3.13.9、pytest 8.4.2），在独立工作树（分支 `fix/audit-leftovers`，基于 `dev` 的 `218fafe`）根目录运行 `python -B -X utf8 -m src.cmd.test unit`，416 项通过，21 项 MySQL 用例按模式排除。签到单元测试新增 `test_committed_correction_reports_log_exception_and_keeps_result`：`log_event` 抛 `RuntimeError` 时标准错误只有一行固定提示、异常消息不出现，更正结果已提交；该用例在修正前的代码上失败（输出为旧提示文字）。契约测试 `python -B -X utf8 -m unittest discover -s tests/contracts -p "test_*.py"` 9 项通过。
