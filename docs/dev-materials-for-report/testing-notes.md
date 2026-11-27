@@ -7,12 +7,20 @@
 
 ## 测试思路与策略
 
+### [2026-11-28] PR #15 审计：变异测试与补测
+
+- **方法**：PR #15 合并后按审计技能派 5 个子代理分模块审计（日志、服务与仓储、Logic 与入口、测试、文档）。测试部分在 `git archive HEAD` 的临时副本上做 95 个变异（把实现改错后跑测试，看是否仍通过），存活变异再用独立进程探测真实行为；基线 unit 487 项通过。
+- **发现**：8 处变异存活，即错误实现仍能通过全部测试——登录的 5 个拒绝分支、`link_*` 的角色匹配、`relink_coach` 的幂等与停用顺序、日志失败不影响主流程、`log_event` 写失败返回 `False`、翻页沿用同一快照、`AuthLogic.query_logs` 透传快照、日志查询的管理员权限。其中 `relink_coach` 是真实缺陷：停用判断在幂等判断之前，对已停用教练重复提交相同关联会抛 `InvalidState`，与合同 9.2「目标关联已是当前关联时返回当前结果」不符；其余是测试缺口。
+- **修复与验证**：修正 `relink_coach` 顺序；补 22 项单元用例。对每处新用例重做变异（共 10 个）确认全部被捕获。本地 `python -m src.cmd.test unit` 509 项通过、33 项 MySQL 用例排除；`python -m pytest tests/contracts -q` 10 项通过；环境 Windows 11，Python 3.13.9，pytest 8.4.2。专用测试环境（labs）结果见 [2026-11-28] PR #18 评审修正条目。
+- **教训**：变异测试暴露的缺口集中在“分支存在但没有用例走到”，而不是断言写错；补测时按分支列表逐条对照，比按功能点补更可靠。
+
 ### [2026-11-28] 合并 origin/dev 后回归
 
 - 将 `origin/dev`（`c23d81b`）合入 `feat/auth-log`，冲突只涉及 `development-log.md`、`testing-notes.md` 和 `feature-list.csv` 三个文档；源码与测试没有冲突。功能清单按行保留 AUTH/LOG 的「待验收」和 MEM-01～03 的「开发中」。
-- 合并后在仓库根目录执行 `python -m pytest tests -m 'not mysql' -q -rs`，458 项通过、29 项 MySQL 用例排除。
-- 在同一 MySQL 8.4.10 专用测试库 `gym_auth_test` 上执行 `python -B -X utf8 -m src.cmd.test mysql --config <临时测试配置路径>`，28 项通过、1 项失败、458 项按模式排除；唯一失败仍是已知的 `test_mysql_cli_reaches_login_and_exits`（周期任务回调占位，两条「后台任务执行失败」写入标准错误）。账号并发用例单独复跑 4 项全部通过。
-- GitHub Actions 在整理提交前的合并结果 `6ef262a` 上的 CI（run `46031637536`）三个 job 全部通过；工作流按既有规则容忍上述已知失败。
+- 合并后在仓库根目录执行 `python -m pytest tests -m 'not mysql' -q -rs`，变基前 458 项通过、29 项 MySQL 用例排除；变基到 PR #16 合并后的 `dev` 后 487 项通过、33 项排除。
+- 在同一 MySQL 8.4.10 专用测试库 `gym_auth_test` 上执行 `python -B -X utf8 -m src.cmd.test mysql --config <临时测试配置路径>`，变基前 28 项通过、1 项失败、458 项按模式排除；唯一失败仍是已知的 `test_mysql_cli_reaches_login_and_exits`（周期任务回调占位，两条「后台任务执行失败」写入标准错误）。账号并发用例单独复跑 4 项全部通过。
+- 推送后在专用测试环境（labs）以 `all` 模式运行全套（提交 `541d4d4`，报告 `20261127-124856-feat-auth-log-541d4d4.log`）：520 项中 519 项通过、1 项失败，用时 159 秒，唯一失败是同一已知基线。
+- GitHub Actions 在同一提交上的 CI（run `46045144792`）三个 job 全部通过，其中数据库作业按既有规则容忍上述已知失败；更早在整理提交前的合并结果 `6ef262a` 上的 CI（run `46031637536`）同样三个 job 全部通过。
 - 测试配置和密码保存在仓库外的临时文件，测试库表由夹具清理。
 
 ### [2026-11-27] PR #15 二轮意见修正

@@ -559,6 +559,7 @@ class App:
 - 返回：`None`。
 - 异常：重复启动抛 `InvalidState`；日志资源不可用抛 `ResourceError`；数据库连接失败抛 `StorageError`；结构不完整或版本不匹配抛 `InvalidState`。
 - 数据变更：创建数据库引擎和会话工厂，检查数据库结构，装配领域服务、`LogicBundle`、CLI Handlers 和 `GymCLI`；`with_worker=True` 时另行启动候补核对与推荐刷新任务。Worker 任务失败只记录任务名称和异常类型，应用仍可启动。结构升级由数据库维护命令执行，普通启动只读检查结构。
+- 日志：先于装配初始化操作日志（写入 `app.log`）；装配全部完成后记录一条 `app.start` 成功事件，装配抛出任何异常时先记录 `app.start` 失败事件再原样抛出。
 
 #### `App.run`
 
@@ -573,6 +574,7 @@ class App:
 - 返回：`None`。
 - 异常：Worker 在 30 秒内未停止或数据库连接池释放失败抛 `ResourceError` 或 `StorageError`；中断异常向主入口传播。
 - 数据变更：先请求 Worker 停止接收周期任务并等待当前任务结束，再清除身份、界面、Logic 和服务引用，清除会话工厂引用并释放数据库引擎。Worker 超时仍在使用会话工厂时保留 Logic、服务、会话工厂和引擎引用，记录日志并允许再次调用 `close`；引擎成功释放后清空引用。
+- 日志：按引擎释放结果记录一条 `app.exit` 事件（释放成功记成功，释放抛出异常记失败），随后关闭操作日志；Worker 停止超时抛出 `ResourceError` 时不记录 `app.exit`，已保留的资源由再次调用 `close` 释放。
 
 #### `App.get_actor`
 
@@ -1212,6 +1214,8 @@ def close_logging() -> None: ...
 ```
 
 `configure_logging` 创建日志目录和轮转处理器，日志文件为 `settings.log.directory / "app.log"`。初始化失败抛 `ResourceError`，使启动流程停止。
+
+写入与轮转在同一目录的锁文件 `app.log.lock` 上持有跨进程独占锁（Windows 用 `msvcrt`，其他平台用 `fcntl`，非阻塞，拿不到锁即失败），每次写入在锁内打开、追加、关闭，不长期保留日志文件句柄；当前文件加上新日志超过上限时把 `app.log` 依次改名为 `app.log.1` 至 `app.log.<backup_count>`，`backup_count` 为 0 时直接截断。
 
 `log_event` 接收固定操作名、结果类别和非敏感编号，成功返回 `True`，运行期写入失败返回 `False` 并向标准错误输出固定提示。日志字段包括：
 
@@ -2553,7 +2557,75 @@ class MemberAccountLinkRepository(Protocol):
 
 删除关联不删除账号或档案。服务层验证账号 `role="member"`，且账号和档案均没有其他关联。
 
-#### 12.5.3 GymCardProductRepository
+#### 12.5.3 AccountRepository
+
+`AccountRepository` 由 `AuthService` 直接使用（不经过 `Protocol`），负责账号表与两类关联表的读写。带 `lock` 前缀的方法在 MySQL 上追加 `FOR UPDATE` 锁定当前读，SQLite 单元测试不加；均不提交，锁持有到 Logic 事务结束。
+
+```python
+class AccountRepository:
+    def __init__(self, session: Session) -> None: ...
+
+    def get(self, account_id: int) -> Account | None: ...
+    def get_view(self, account_id: int) -> AccountView | None: ...
+    def get_actor(self, account_id: int) -> Actor | None: ...
+    def find_by_username(self, username: str) -> Account | None: ...
+
+    def lock(self, account_id: int) -> Account | None: ...
+    def lock_many(self, account_ids: tuple[int, ...]) -> tuple[Account, ...]: ...
+    def lock_active_admins(
+        self, account_ids: tuple[int, ...]
+    ) -> tuple[Account, ...]: ...
+
+    def lock_profile_links(
+        self, account_id: int, *, recheck: bool = False
+    ) -> tuple[Member | None, Coach | None]: ...
+    def lock_member(self, member_id: int) -> Member | None: ...
+    def lock_coach(self, coach_id: int) -> Coach | None: ...
+    def lock_members(self, member_ids: tuple[int, ...]) -> tuple[Member, ...]: ...
+    def lock_coaches(self, coach_ids: tuple[int, ...]) -> tuple[Coach, ...]: ...
+
+    def get_member_account_id(self, account_id: int) -> int | None: ...
+    def get_coach_account_id(self, account_id: int) -> int | None: ...
+    def get_member_link_owner(self, member_id: int) -> int | None: ...
+    def get_coach_link_owner(self, coach_id: int) -> int | None: ...
+
+    def create(
+        self,
+        *,
+        username: str,
+        password_hash: str,
+        role: Role,
+    ) -> Account: ...
+    def list(self, query: NamedQuery) -> Page[AccountView]: ...
+    def set_active(self, account_id: int, active: bool) -> AccountView: ...
+
+    def create_member_link(
+        self,
+        *,
+        account_id: int,
+        member_id: int,
+        linked_by: int,
+        linked_at: datetime,
+    ) -> None: ...
+    def delete_member_link(self, account_id: int) -> bool: ...
+    def create_coach_link(
+        self,
+        *,
+        account_id: int,
+        coach_id: int,
+        linked_by: int,
+        linked_at: datetime,
+    ) -> None: ...
+    def delete_coach_link(self, account_id: int) -> bool: ...
+```
+
+- `lock_many` 去重后按账号编号升序，用一条 `ORDER BY id` 的锁定读取得全部行；`lock_active_admins` 用一条锁定读取得指定账号与全部启用管理员（`is_active = 1 AND role = 'admin'`）的并集，不锁定会员、教练或前台账号，供停用账号时同时锁住操作者、目标账号并复核最后一名管理员。
+- `lock_profile_links` 要求账号行已加锁：先普通读取两类关联编号，再按主键依次锁定存在的档案行，没有关联时不加间隙锁；返回 `(member, coach)`，未关联项为 `None`。`recheck=True` 供登录使用，对已存在的关联行再做一次锁定读复核，关联已移交时按新档案返回。
+- `get_member_link_owner`、`get_coach_link_owner` 用普通一致性读查档案当前关联的账号编号，不加间隙锁；防重由 12.6.3 的双向唯一约束负责，冲突由服务转换为 `ConflictError`。
+- `list` 按 `a.id` 升序稳定分页，关键字用 `LOCATE` 做字面量匹配（SQLite 用 `instr`），`is_active` 筛选与分页独立生效；返回的 `AccountView` 不含密码哈希。
+- 写入方法不提交：`create` 保存已哈希密码和角色；`create_member_link`、`create_coach_link` 的唯一约束冲突由服务转换；`delete_*_link` 返回是否确实删除了一行。
+
+#### 12.5.4 GymCardProductRepository
 
 ```python
 class GymCardProductRepository(Protocol):
@@ -2606,7 +2678,7 @@ class GymCardProductRepository(Protocol):
 
 Repository 在一次调用中装载根表和与 `kind` 匹配的子表；缺少子表或同时存在两个子表视为持久化完整性错误。修改产品不得改变 `kind`；需要更换种类时创建新产品并停用旧产品。
 
-#### 12.5.4 GymCardRepository
+#### 12.5.5 GymCardRepository
 
 ```python
 class GymCardRepository(Protocol):
@@ -2661,7 +2733,7 @@ class GymCardRepository(Protocol):
 
 详情和分页列表返回完整的 `GymCardAggregate`，包含卡根记录及对应的期限卡或次卡详情；服务可据此构造固定的 `GymCardView`，并通过批量查询避免逐卡读取子表。`latest_term_end_locked` 只扫描未作废期限卡，包括尚未生效的期限卡，以锁定当前读返回最大 `valid_until`。`decrement_visit_entry` 要求已持有次卡行锁，并以 `remaining_entries > 0` 为条件原子减一；未命中时映射为 `GymCardNotEligible`。
 
-#### 12.5.5 LessonPackageProductRepository
+#### 12.5.6 LessonPackageProductRepository
 
 ```python
 class LessonPackageProductRepository(Protocol):
@@ -2694,7 +2766,7 @@ class LessonPackageProductRepository(Protocol):
     ) -> LessonPackageProduct: ...
 ```
 
-#### 12.5.6 LessonPackageGiftRuleRepository
+#### 12.5.7 LessonPackageGiftRuleRepository
 
 ```python
 class LessonPackageGiftRuleRepository(Protocol):
@@ -2738,7 +2810,7 @@ class LessonPackageGiftRuleRepository(Protocol):
 
 规则锁定结果按 `id` 升序返回。服务层先锁触发课包产品，再锁规则，最后锁奖励期限卡产品的根记录和子表；替换规则通过新增版本和停用旧版本完成。
 
-#### 12.5.7 LessonPackageRepository
+#### 12.5.8 LessonPackageRepository
 
 ```python
 class LessonPackageRepository(Protocol):
@@ -2775,7 +2847,7 @@ class LessonPackageRepository(Protocol):
 
 余额方法只发出带条件的更新或在已锁行上更新，不提交。服务层负责先检查状态、归属、日期和异常映射。
 
-#### 12.5.8 SaleOrderRepository 与 SaleItemRepository
+#### 12.5.9 SaleOrderRepository 与 SaleItemRepository
 
 ```python
 class SaleOrderRepository(Protocol):
@@ -2827,7 +2899,7 @@ class SaleItemRepository(Protocol):
 
 `get_detail` 使用固定 JOIN 和有界批量查询装载，不在循环中逐项查询。
 
-#### 12.5.9 PaymentRepository
+#### 12.5.10 PaymentRepository
 
 ```python
 class PaymentRepository(Protocol):
@@ -2866,7 +2938,7 @@ class PaymentRepository(Protocol):
 
 `list_batch` 供导出内部使用，保留时间、会员和收款方式筛选，以 `id > after_id`、主键升序和 `limit` 读取。调用方传入的 UI 页码与页大小由分页列表使用，导出批次由服务单独控制。
 
-#### 12.5.10 GiftGrantRepository
+#### 12.5.11 GiftGrantRepository
 
 ```python
 class GiftGrantRepository(Protocol):
@@ -2892,7 +2964,7 @@ class GiftGrantRepository(Protocol):
     ) -> GiftGrantAggregate | None: ...
 ```
 
-#### 12.5.11 GymEntryRepository
+#### 12.5.12 GymEntryRepository
 
 ```python
 class GymEntryRepository(Protocol):
@@ -2942,7 +3014,7 @@ class GymCardAggregate:
     visit: VisitGymCard | None
 ```
 
-#### 12.5.12 OperationRepository
+#### 12.5.13 OperationRepository
 
 ```python
 # src/db/operation_repo.py
