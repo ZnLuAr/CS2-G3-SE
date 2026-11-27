@@ -7,7 +7,7 @@
 | `contracts/` | 通过静态解析核对类型、公开签名、SQL 与架构合同 | 后端声明与 v4 结构一致性 |
 | `unit/` | 使用替身隔离数据库、输入和外部资源 | 配置、CLI、数据库命令、资源清理、Worker |
 | `api/` | 使用 FastAPI TestClient 与 Logic 替身验证 HTTP 适配 | 登录、身份、退出、令牌和错误响应 |
-| `integration/` | 使用独立 MySQL 测试库验证持久化与完整调用 | CLI 启停、体测、报表、课程评价 |
+| `integration/` | 使用独立 MySQL 测试库验证持久化与完整调用 | CLI 启停、体测、报表、课程评价、MySQL 完整性错误的异常类别 |
 | `support/` | 共享 fixture（测试准备与清理资源） | CLI 子进程回收、MySQL 结构与数据清理 |
 
 浏览器端测试放在 [`frontend/tests/`](../frontend/tests/)，命令见[前端说明](../frontend/README.md)。

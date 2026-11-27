@@ -7,6 +7,12 @@
 
 ## 测试思路与策略
 
+### [2026-11-27] 审计遗留项回归
+
+- **本地**：Windows，仓库 `.venv`（Python 3.13.9、pytest 8.4.2），在独立工作树（分支 `fix/audit-leftovers`，基于 `dev` 的 `218fafe`）根目录运行 `python -B -X utf8 -m src.cmd.test unit`，416 项通过，21 项 MySQL 用例按模式排除。签到单元测试新增 `test_committed_correction_reports_log_exception_and_keeps_result`：`log_event` 抛 `RuntimeError` 时标准错误只有一行固定提示、异常消息不出现，更正结果已提交；该用例在修正前的代码上失败（输出为旧提示文字）。契约测试 `python -B -X utf8 -m unittest discover -s tests/contracts -p "test_*.py"` 9 项通过。
+- **labs 环境运行**：专用测试环境（labs，Debian 13，Python 3.13.5、pytest 8.4.2，本机 MySQL 8.4 的 `gym_system_test` 库）。先在提交前的工作树快照上以 `mysql` 模式只跑 `tests/integration/test_db_error_mapping.py`（经 `PYTEST_ADDOPTS` 指定路径），3 项通过：唯一键重复（1062）与外键失败（1452）为 `IntegrityError`；CHECK 违反（3819）不是 `IntegrityError`，驱动抛出的是 `OperationalError`。再在提交 `4e0d23b` 上以 `all` 模式运行全套，命令 `python -B -X utf8 -m src.cmd.test all --config config.test.json`，440 项中 439 项通过、1 项失败，用时 123 秒，唯一失败是已知基线 `tests/integration/test_cli.py::test_mysql_cli_reaches_login_and_exits`，报告 `20261127-092247-audit-leftovers-4e0d23b.log`。
+- 集成测试中没有覆盖到课更正业务流程的用例，日志失败分支由单元测试覆盖。
+
 ### [2026-11-20] 签到与评价合并回归
 
 - 在评价工作树根目录，使用 Windows 上的 Python 3.10.6 虚拟环境运行 `python -B -X utf8 -m src.cmd.test unit`。契约、单元和 API 共 346 项通过，18 项 MySQL 用例按模式排除，Starlette 发出 1 条 HTTPX 弃用提示。
