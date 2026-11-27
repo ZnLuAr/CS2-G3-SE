@@ -189,6 +189,15 @@ def test_committed_correction_falls_back_if_log_write_fails(attendance, monkeypa
     assert (event["operation"], event["result_id"]) == ("attendance.correct", 1)
 
 
+def test_committed_correction_reports_log_exception_and_keeps_result(attendance, monkeypatch, capsys):
+    logic, sessions, _ = attendance
+    monkeypatch.setattr(attendance_logic, "log_event", Mock(side_effect=RuntimeError("boom")))
+    changed = logic.correct_attendance(COACH, 1, True)
+    assert capsys.readouterr().err == "操作日志记录失败（attendance.correct，RuntimeError）\n"
+    with sessions() as session:
+        assert BookingRepository(session).get(1) == changed
+
+
 @pytest.mark.parametrize("status", ["cancelled", "completed", "no_show"])
 def test_terminal_booking_cannot_be_changed(attendance, status):
     logic, sessions, _ = attendance

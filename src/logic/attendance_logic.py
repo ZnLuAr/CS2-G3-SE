@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.db.connection import transaction
 from src.errors import StorageError
 from src.logging import Operation, Outcome, log_event
+from src.logging.events import report_log_failure
 from src.services.attendance_service import ATTENDANCE_CHANGE_KEY
 
 if TYPE_CHECKING:
@@ -58,7 +59,7 @@ class AttendanceLogic:
 
     @staticmethod
     def _log_correction(actor: Actor, booking_id: int, change: AttendanceChange) -> None:
-        message = None
+        """提交成功后记录实际发生的变更；日志异常只输出固定提示，不影响已提交的更正。"""
         try:
             if log_event(
                 logging.INFO, operation=Operation.ATTENDANCE_CORRECT.value,
@@ -68,24 +69,23 @@ class AttendanceLogic:
                 return
         except NotImplementedError:
             pass
-        except Exception:
-            message = "操作日志记录失败"
-        if message is None:
-            payload = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "level": "INFO",
-                "operation": Operation.ATTENDANCE_CORRECT.value,
-                "outcome": Outcome.SUCCESS.value,
-                "actor_id": actor.account_id,
-                "result_id": booking_id,
-                "attendance_change": {
-                    key: value.isoformat() if isinstance(value, datetime) else value
-                    for key, value in asdict(change).items()
-                },
-            }
-            message = json.dumps(payload)
+        except Exception as exc:
+            report_log_failure(Operation.ATTENDANCE_CORRECT.value, exc)
+            return
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": "INFO",
+            "operation": Operation.ATTENDANCE_CORRECT.value,
+            "outcome": Outcome.SUCCESS.value,
+            "actor_id": actor.account_id,
+            "result_id": booking_id,
+            "attendance_change": {
+                key: value.isoformat() if isinstance(value, datetime) else value
+                for key, value in asdict(change).items()
+            },
+        }
         try:
-            print(message, file=sys.stderr)
+            print(json.dumps(payload), file=sys.stderr)
         except (OSError, ValueError):
             pass
 

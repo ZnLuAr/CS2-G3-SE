@@ -4101,7 +4101,7 @@ def correct_attendance(
 - **数据变更**：`reserved -> checked_in` 时设置当前时刻，`checked_in -> reserved` 时清空 `checked_in_at`；课后补签只能由本课教练或管理员通过本方法执行。结构化审计记录操作者、预约、原状态、目标状态、更正时刻及原/新 `checked_in_at`，不记录联系方式或评价正文；不修改门禁或课包。
 - **事务**：按 `member -> course_session -> booking` 加锁；只允许在消课、缺席或取消之前更正。
 
-更正事务提交成功后，Logic 将状态和 UTC 时刻填入 `AttendanceChange`，预约编号作为 `result_id` 记录。相同选择直接返回当前预约。统一日志尚未接入或写入返回失败时，结构化更正记录输出到标准错误。
+更正事务提交成功后，Logic 将状态和 UTC 时刻填入 `AttendanceChange`，预约编号作为 `result_id` 记录。相同选择直接返回当前预约。统一日志尚未接入或写入返回失败时，结构化更正记录输出到标准错误；`log_event` 抛出其他异常时只输出固定失败提示（操作名与异常类型），不输出结构化记录。两种情况都不改变已提交的更正。
 
 #### 13.4.4 `AttendanceService.complete`
 
