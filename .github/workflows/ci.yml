@@ -1,9 +1,9 @@
 # 持续集成：后端（契约/单元/API 适配）、前端（Vitest/类型检查构建）与 MySQL 集成。
 # MySQL 集成使用 runner 上的一次性 mysql:8.4 service container，与 labs 环境
 # （git push test 通道，真实 MySQL 8.4）互不影响；本工作流不依赖内网连通性。
-# 集成测试当前 6/7：test_mysql_cli_reaches_login_and_exits 因周期任务回调占位
-# （src/logic/reservation_logic.py 与 src/logic/recommendation_logic.py 的
-# NotImplementedError）而失败；运行步骤仅容忍这一项已知失败，其余失败照常
+# MySQL 集成当前唯一已知失败：test_mysql_cli_reaches_login_and_exits 因周期任务
+# 回调占位（src/logic/reservation_logic.py 与 src/logic/recommendation_logic.py
+# 的 NotImplementedError）而失败；运行步骤仅容忍这一项已知失败，其余失败照常
 # 拦截。占位交付后删除该容忍分支。
 name: CI
 
@@ -124,7 +124,7 @@ jobs:
           known_id=$(grep -c '^FAILED tests/integration/test_cli.py::test_mysql_cli_reaches_login_and_exits' /tmp/mysql-test.log || true)
           known_cause=$(grep -c '^E .*assert not .*后台任务执行失败' /tmp/mysql-test.log || true)
           if [ "$outcomes" -eq 1 ] && [ "$known_id" -eq 1 ] && [ "$known_cause" -ge 1 ]; then
-            echo "::warning::数据库集成 363/364：唯一失败为已知占位项（周期任务回调 NotImplementedError），其余全部通过"
+            echo "::warning::数据库集成仅 1 项失败，为已知占位项（周期任务回调 NotImplementedError），其余全部通过"
             exit 0
           fi
           exit "$rc"
