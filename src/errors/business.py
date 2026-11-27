@@ -1,4 +1,4 @@
-"""业务错误与交互取消的类型。当前仅声明字段与签名，方法尚未实现。"""
+"""业务错误与交互取消的类型。"""
 
 from __future__ import annotations
 
@@ -29,12 +29,20 @@ class ConflictError(GymError):
     """唯一数据、重复请求或请求内容冲突。"""
 
 
-class CardNotEligible(GymError):
-    """会员卡归属、有效期或适用课程不满足要求。"""
+class GymCardNotEligible(GymError):
+    """已确认归属的健身房卡状态或日期不满足入场。"""
 
 
-class InsufficientCredits(GymError):
-    """可用私教课节或门禁入场次数不足。"""
+class BookingEntryNotEligible(GymError):
+    """已确认归属的预约状态或业务日期不满足入场。"""
+
+
+class LessonPackageNotEligible(GymError):
+    """已确认归属的课包状态或课次日期不满足预约。"""
+
+
+class InsufficientLessonCredits(GymError):
+    """私教课包可用课节不足。"""
 
 
 class ScheduleConflict(GymError):
@@ -51,3 +59,8 @@ class InputCancelled(Exception):
 
 class ResourceError(GymError):
     """文件、终端能力或外部工具不可用。"""
+
+
+# 兼容仓库内较早使用的短名称；新代码使用架构分册中的完整名称。
+CardNotEligible = GymCardNotEligible
+InsufficientCredits = InsufficientLessonCredits

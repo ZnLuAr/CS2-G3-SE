@@ -53,10 +53,41 @@ class CliHandlers:
 
 
 def auth_menu(handler: AuthHandler) -> list[MenuItem]:
-    """构造本模块的已实现菜单入口。
-
-    只返回界面菜单项；业务列表仍使用 Page。当前不注册可执行操作。"""
-    return []
+    """管理员账号维护与日志查询入口；权限仍由 Logic/Service 校验。"""
+    return [
+        MenuItem(
+            key="1", label="创建账号",
+            operation=Operation.ACCOUNT_CREATE.value, action=handler.create_account,
+        ),
+        MenuItem(
+            key="2", label="账号详情",
+            operation=Operation.ACCOUNT_QUERY.value, action=handler.get_account,
+        ),
+        MenuItem(
+            key="3", label="账号列表",
+            operation=Operation.ACCOUNT_QUERY.value, action=handler.list_accounts,
+        ),
+        MenuItem(
+            key="4", label="停用账号",
+            operation=Operation.ACCOUNT_DEACTIVATE.value, action=handler.deactivate_account,
+        ),
+        MenuItem(
+            key="5", label="恢复账号",
+            operation=Operation.ACCOUNT_ACTIVATE.value, action=handler.activate_account,
+        ),
+        MenuItem(
+            key="6", label="关联会员或教练档案",
+            operation=Operation.ACCOUNT_LINK.value, action=handler.link_profile,
+        ),
+        MenuItem(
+            key="7", label="移交档案关联",
+            operation=Operation.ACCOUNT_LINK.value, action=handler.relink_profile,
+        ),
+        MenuItem(
+            key="8", label="查询操作日志",
+            operation=Operation.LOG_QUERY.value, action=handler.query_logs,
+        ),
+    ]
 
 
 def member_menu(handler: MemberHandler) -> list[MenuItem]:

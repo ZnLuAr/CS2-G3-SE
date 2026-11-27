@@ -9,7 +9,7 @@ import main as entrypoint
 from src.app import App
 from src.cmd import db as db_command
 from src.cmd import test as test_command
-from src.config import AppSettings, DatabaseConfig
+from src.config import AppSettings, DatabaseConfig, LogConfig
 from src.db import connection
 from src.errors.business import AuthenticationError, InvalidState, ResourceError
 from src.errors.storage import OutcomeUnknownError, StorageError
@@ -18,10 +18,13 @@ from src.models.contracts import Actor
 
 
 @pytest.fixture
-def settings():
-    return AppSettings(database=DatabaseConfig(
-        host="localhost", port=3306, database="cleanup_test", username="test", password="",
-    ))
+def settings(tmp_path):
+    return AppSettings(
+        database=DatabaseConfig(
+            host="localhost", port=3306, database="cleanup_test", username="test", password="",
+        ),
+        log=LogConfig(directory=tmp_path),
+    )
 
 
 @pytest.fixture

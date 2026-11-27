@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+from src.config import AppSettings, DatabaseConfig, LogConfig
+from src.errors.business import InvalidInputError
+from src.logging import close_logging, configure_logging, log_event
+from src.logging.snapshots import query_log_snapshot, read_log_snapshot
+from src.models.contracts import LogQuery
+
+
+def _settings(directory: Path) -> AppSettings:
+    return AppSettings(
+        database=DatabaseConfig(
+            host="localhost", port=3306, database="gym", username="tester", password="",
+        ),
+        log=LogConfig(directory=directory, backup_count=0),
+    )
+
+
+def test_log_event_writes_safe_json_and_snapshot_can_filter(tmp_path):
+    configure_logging(_settings(tmp_path))
+    try:
+        assert log_event(
+            logging.INFO, operation="auth.login", outcome="success", actor_id=7,
+        )
+        assert log_event(
+            logging.WARNING, operation="member.create", outcome="rejected",
+            actor_id=7, error=InvalidInputError("输入不合法"),
+        )
+        assert log_event(
+            logging.ERROR, operation="member.create", outcome="failed",
+            error=RuntimeError("password=secret"),
+        )
+    finally:
+        close_logging()
+
+    raw = (tmp_path / "app.log").read_text(encoding="utf-8")
+    assert "secret" not in raw
+    assert "输入不合法" in raw
+    lines = [json.loads(line) for line in raw.splitlines()]
+    assert lines[0]["operation"] == "auth.login"
+    assert lines[2]["error_message"] is None
+
+    snapshot = read_log_snapshot(tmp_path, backup_count=0)
+    assert len(snapshot.entries) == 3
+    page = query_log_snapshot(snapshot, LogQuery(level="WARNING"))
+    assert page.total == 1
+    assert page.items[0].operation == "member.create"
+
+
+def test_corrupt_line_is_counted_and_long_message_is_truncated(tmp_path):
+    configure_logging(_settings(tmp_path))
+    try:
+        with (tmp_path / "app.log").open("a", encoding="utf-8") as output:
+            output.write("{broken\n")
+    finally:
+        close_logging()
+    snapshot = read_log_snapshot(tmp_path, backup_count=0)
+    assert snapshot.skipped_lines == 1
+
+    configure_logging(_settings(tmp_path))
+    try:
+        assert log_event(
+            logging.ERROR, operation="app.start", outcome="failed",
+            error=InvalidInputError("长" * 20000),
+        )
+    finally:
+        close_logging()
+    raw_lines = (tmp_path / "app.log").read_text(encoding="utf-8").splitlines()
+    last = json.loads(raw_lines[-1])
+    assert last["truncated"] is True
+    assert len(raw_lines[-1].encode("utf-8")) <= 16 * 1024
+
+
+def test_unicode_line_separator_stays_inside_one_event(tmp_path):
+    """U+2028 等字符不是事件分隔符，不能把一条记录拆成损坏行。"""
+    configure_logging(_settings(tmp_path))
+    try:
+        assert log_event(
+            logging.INFO, operation="log.query", outcome="success",
+            error=InvalidInputError("分隔符 仍在消息中"),
+        )
+    finally:
+        close_logging()
+    snapshot = read_log_snapshot(tmp_path, backup_count=0)
+    assert snapshot.skipped_lines == 0
+    assert len(snapshot.entries) == 1
+    assert " " in snapshot.entries[0].error_message
+
+
+def test_out_of_range_timestamp_is_skipped_instead_of_failing_snapshot(tmp_path):
+    configure_logging(_settings(tmp_path))
+    close_logging()
+    with (tmp_path / "app.log").open("a", encoding="utf-8") as output:
+        output.write(json.dumps({
+            "timestamp": "0001-01-01T00:00:00+14:00",
+            "level": "INFO",
+            "operation": "app.start",
+            "outcome": "success",
+        }, ensure_ascii=False) + "\n")
+        output.write(json.dumps({
+            "timestamp": "2026-11-01T00:00:00+00:00",
+            "level": "INFO",
+            "operation": "app.exit",
+            "outcome": "success",
+        }, ensure_ascii=False) + "\n")
+    snapshot = read_log_snapshot(tmp_path, backup_count=0)
+    assert snapshot.skipped_lines == 1
+    assert [entry.operation for entry in snapshot.entries] == ["app.exit"]
+
+
+def test_overlong_operation_cannot_bypass_line_limit(tmp_path):
+    configure_logging(_settings(tmp_path))
+    try:
+        assert log_event(
+            logging.INFO, operation="op" * 20000, outcome="success",
+        )
+    finally:
+        close_logging()
+    raw_lines = (tmp_path / "app.log").read_text(encoding="utf-8").splitlines()
+    last = json.loads(raw_lines[-1])
+    assert len(raw_lines[-1].encode("utf-8")) <= 16 * 1024
+    assert last["truncated"] is True
+    assert len(last["operation"]) <= 64

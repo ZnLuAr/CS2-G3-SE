@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
+import logging
+
 from src.config import AppSettings
+from src.logging import (
+    Operation,
+    Outcome,
+    close_logging,
+    configure_logging,
+    log_event,
+)
+from src.logging.events import report_log_failure
+from src.logging.lifecycle import get_logger
 from src.logic import LogicBundle
 from src.logic.access_logic import AccessLogic
 from src.logic.attendance_logic import AttendanceLogic
@@ -42,6 +53,17 @@ from src.services.sales_service import SalesService
 from src.services.waitlist_service import WaitlistService
 
 
+def _log_app_event(operation: str, outcome: Outcome) -> None:
+    """记录启动或退出结果；日志未配置或写入失败时保留主流程。"""
+    if get_logger() is None:
+        return
+    level = logging.INFO if outcome is Outcome.SUCCESS else logging.ERROR
+    try:
+        log_event(level, operation=operation, outcome=outcome.value)
+    except Exception as exc:
+        report_log_failure(operation, exc)
+
+
 class App:
     """管理应用生命周期及当前登录身份。"""
 
@@ -56,6 +78,20 @@ class App:
 
     def start(self, *, with_worker: bool = True) -> None:
         """检查结构并装配服务与 CLI，默认同时启动候补核对和推荐刷新。"""
+        from src.errors.business import InvalidState
+
+        if self._engine is not None:
+            raise InvalidState("应用已经启动，请先关闭")
+        configure_logging(self.settings)
+        try:
+            self._assemble(with_worker=with_worker)
+        except BaseException:
+            _log_app_event(Operation.APP_START.value, Outcome.FAILED)
+            raise
+        _log_app_event(Operation.APP_START.value, Outcome.SUCCESS)
+
+    def _assemble(self, *, with_worker: bool) -> None:
+        """创建数据库资源、领域服务和 CLI；失败由 start 记录并原样抛出。"""
         from src.db.connection import (
             CURRENT_SCHEMA_VERSION,
             check_connection,
@@ -63,12 +99,9 @@ class App:
             create_engine,
             create_session_factory,
         )
-        from src.errors.business import InvalidState
         from src.ui.cli.app import GymCLI
         from src.ui.cli import menus
 
-        if self._engine is not None:
-            raise InvalidState("应用已经启动，请先关闭")
         self._engine = create_engine(self.settings)
         check_connection(self._engine)
         check_schema(self._engine, required_version=CURRENT_SCHEMA_VERSION)
@@ -183,9 +216,20 @@ class App:
         self._cli = None
         self._logic_bundle = None
         engine = self._engine
-        if engine is not None:
-            close_engine(engine)
-            self._engine = None
+        failed = False
+        try:
+            if engine is not None:
+                close_engine(engine)
+                self._engine = None
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            _log_app_event(
+                Operation.APP_EXIT.value,
+                Outcome.FAILED if failed else Outcome.SUCCESS,
+            )
+            close_logging()
 
     @property
     def logic_bundle(self) -> LogicBundle:
