@@ -13,6 +13,7 @@ from src.models.contracts import (
     AccountInput,
     Actor,
     CoachAccountLinkInput,
+    LogQuery,
     MemberAccountLinkInput,
 )
 
@@ -172,3 +173,55 @@ def test_each_write_operation_logs_its_registered_name(monkeypatch, action, oper
     monkeypatch.setattr("src.logic.auth_logic.log_event", _record(events))
     action(_logic(events))
     assert events == ["service", "flush", "commit", ("log", operation, "success", 1, 5)]
+
+
+def test_log_failure_does_not_change_committed_result(monkeypatch):
+    """日志写入抛异常时业务结果照常返回，只向 stderr 输出固定提示。"""
+    events = []
+    reported = []
+
+    def broken_log(*args, **kwargs):
+        raise OSError("磁盘已满")
+
+    monkeypatch.setattr("src.logic.auth_logic.log_event", broken_log)
+    monkeypatch.setattr(
+        "src.logic.auth_logic.report_log_failure",
+        lambda operation, exc: reported.append((operation, type(exc).__name__)),
+    )
+    view = _logic(events).create_account(
+        ADMIN, AccountInput(username="new_user", password="secret_1", role="member"),
+    )
+    assert view.id == 5
+    assert events == ["service", "flush", "commit"]
+    assert reported == [("account.create", "OSError")]
+
+
+class FakeLogService(FakeService):
+    """记录 Logic 传入的快照对象，验证筛选和翻页沿用同一份快照。"""
+
+    def __init__(self, events):
+        super().__init__(events)
+        self.snapshots = []
+
+    def open_log_snapshot(self, session, actor):
+        self.events.append("open")
+        return SimpleNamespace(entries=(), captured_at=None, skipped_lines=0)
+
+    def query_logs(self, session, actor, query, *, snapshot):
+        self.events.append("query")
+        self.snapshots.append(snapshot)
+        return SimpleNamespace(items=[], total=0, page=1, page_size=20)
+
+
+def test_query_logs_passes_the_given_snapshot_through(monkeypatch):
+    """AuthLogic.query_logs 把调用方传入的快照原样交给服务层，不自行重读。"""
+    events = []
+    service = FakeLogService(events)
+    logic = _logic(events, service=service)
+    opened = logic.open_log_snapshot(ADMIN)
+    external = SimpleNamespace(entries=(), captured_at=None, skipped_lines=0)
+    logic.query_logs(ADMIN, LogQuery(), snapshot=external)
+    logic.query_logs(ADMIN, LogQuery(), snapshot=opened)
+    assert service.snapshots[0] is external
+    assert service.snapshots[1] is opened
+    assert events == ["open", "flush", "commit", "query", "flush", "commit", "query", "flush", "commit"]
