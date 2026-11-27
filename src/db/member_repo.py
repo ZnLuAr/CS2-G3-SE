@@ -1,4 +1,4 @@
-"""会员数据访问；体测所用的会员锁定、建档写入与详情读取已实现。
+"""会员数据访问；会员锁定、建档、详情读取、分页列表与资料更新已实现，设置状态尚未实现。
 
 仓储只使用调用方传入的会话：不提交、不输出提示、不转业务异常。
 未命中查询返回 None，由服务层转换成 NotFoundError。
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.db.support import from_db_utc
 from src.models.contracts import MemberInput, MemberQuery, MemberStatus
 from src.models.member import Member
 
@@ -67,8 +68,6 @@ class MemberRepository:
 
         数据库以无时区 DATETIME(6) 存 UTC，读取时补回 UTC 时区。
         """
-        from datetime import timezone
-
         from sqlalchemy import text
 
         row = self._session.execute(
@@ -77,12 +76,10 @@ class MemberRepository:
         ).mappings().first()
         if row is None:
             return None
-        return _to_member(dict(row), timezone)
+        return _to_member(dict(row))
 
     def lock(self, member_id: int) -> Member | None:
         """锁定并读取最新会员记录；用于服务事务。"""
-        from datetime import timezone
-
         from sqlalchemy import DateTime, Integer, String, column, select, table
 
         members = table(
@@ -95,7 +92,7 @@ class MemberRepository:
         ).mappings().first()
         if row is None:
             return None
-        return _to_member(dict(row), timezone)
+        return _to_member(dict(row))
 
     def list(self, query: MemberQuery) -> tuple[list[Member], int]:
         """按 id 升序稳定分页，返回（当页记录, 总数）；权限范围由服务在 query 中约束。
@@ -103,8 +100,6 @@ class MemberRepository:
         关键字按姓名包含匹配，输入里的 LIKE 通配符按字面量处理。
         COUNT 与当页查询使用同一组筛选条件，避免总数与分页口径不一致。
         """
-        from datetime import timezone
-
         from sqlalchemy import text
 
         where, params = _member_filters(query)
@@ -120,7 +115,7 @@ class MemberRepository:
             ),
             {**params, "limit": query.paging.page_size, "offset": offset},
         ).mappings().all()
-        return [_to_member(dict(row), timezone) for row in rows], int(total)
+        return [_to_member(dict(row)) for row in rows], int(total)
 
     def update_profile(self, member_id: int, name: str, phone: str | None) -> Member:
         """更新会员姓名与电话；phone=None 表示清空。
@@ -178,14 +173,9 @@ def _member_filters(query: MemberQuery) -> tuple[str, dict]:
     return (" AND ".join(clauses) if clauses else "1 = 1"), params
 
 
-def _to_member(values: dict, timezone) -> Member:
+def _to_member(values: dict) -> Member:
     """把数据库行转换为 Member；无时区时间按 UTC 补回时区。"""
     for key in ("archived_at", "created_at", "updated_at"):
-        value = values[key]
-        if value is not None:
-            values[key] = (
-                value.replace(tzinfo=timezone.utc)
-                if value.tzinfo is None
-                else value.astimezone(timezone.utc)
-            )
+        if values[key] is not None:
+            values[key] = from_db_utc(values[key])
     return Member(**values)

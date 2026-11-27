@@ -1,6 +1,6 @@
-"""会员档案服务；建档、按请求编号核实与详情查询已实现。
+"""会员档案服务；建档、按请求编号核实、详情、分页列表与改资料已实现。
 
-其余方法（列表、改资料、启停）属 MEM-02 / MEM-03 / MEM-06，保留显式占位。
+设置会员状态（MEM-06）保留显式占位。
 权限在服务层校验：调用方传入的 actor 先经 AuthService.verify_actor 在当前事务内复核。
 """
 
@@ -66,7 +66,7 @@ class MemberService:
             raise PermissionDenied("当前角色不能登记会员档案")
 
         normalized = _normalize_member_input(data)
-        canonical_request_id = _normalize_request_id(request_id)
+        canonical_request_id = normalize_request_id(request_id)
         payload_hash = _payload_hash(normalized)
 
         members = MemberRepository(session)
@@ -96,7 +96,7 @@ class MemberService:
         或结果对当前身份不可见；ConflictError 该编号对应其他操作。
         """
         current = self._auth.verify_actor(session, actor)
-        canonical_request_id = _normalize_request_id(request_id)
+        canonical_request_id = normalize_request_id(request_id)
 
         record = OperationRepository(session).get_by_request(canonical_request_id)
         if record is None:
@@ -117,7 +117,7 @@ class MemberService:
         会员只能查看本人；前台与管理员可查看任意会员。教练查看学员资料
         由 BOOK-04 学员名单入口提供，这里拒绝。
         返回：MemberView。不修改业务数据。
-        异常：NotFoundError 记录不存在或对操作者不可见。
+        异常：NotFoundError 记录不存在或对操作者不可见；InvalidInputError 会员编号不合法。
         """
         current = self._auth.verify_actor(session, actor)
         if not _can_read(current, member_id):
@@ -227,7 +227,7 @@ class MemberService:
 # ---------- 校验与转换 ----------
 
 def _normalize_member_input(data: MemberInput) -> MemberInput:
-    """去首尾空白并校验长度；联系方式为空串时视为未填写。"""
+    """去首尾空白并校验长度；联系方式未填写时传 None，空白字符串不合法（12.2.2）。"""
     if not isinstance(data, MemberInput):
         raise InvalidInputError("会员资料格式不合法")
 
@@ -259,8 +259,12 @@ def _normalize_member_id(member_id: int) -> int:
     return member_id
 
 
-def _normalize_request_id(request_id: str) -> str:
-    """请求编号必须是标准小写 UUID 字符串（36 位、带短横线）。"""
+def normalize_request_id(request_id: str) -> str:
+    """请求编号必须是标准小写 UUID 字符串（36 位、带短横线）。
+
+    合同 4.2 要求格式校验在进入事务前完成：Logic 开启会话前调用本函数，
+    服务方法内保留同一校验作为防线。
+    """
     if not isinstance(request_id, str):
         raise InvalidInputError("请求编号格式不合法")
     try:

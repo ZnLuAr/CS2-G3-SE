@@ -4,7 +4,7 @@
 
 开发一个业务功能时，先在本分册找到对应的 Input、View 或 Page、权限和事务边界，再沿“交互入口 → Logic → Service → DB”实现。数据库操作使用调用方传入的 Session；Logic 统一管理一次用例的会话与提交。列表返回 `Page[T]`，详情返回固定 View，失败抛项目异常。
 
-本分册定义后端合同。当前已实现体测、收款查询、经营统计与 CSV 导出的 CLI、Logic、Service 和仓储，以及这些入口使用的身份复核、会员锁定和授课关系检查。登录、销售编排及其余领域按各文件与功能清单标记实现状态。数据库脚本、初始化和结构检查使用 v4；真实 MySQL 建表、锁与业务联调待验证。浏览器业务路由与 TUI 的当前状态见总架构与功能清单。
+本分册定义后端合同。当前已实现体测、收款查询、经营统计与 CSV 导出的 CLI、Logic、Service 和仓储，以及这些入口使用的身份复核、会员锁定和授课关系检查。登录、销售编排及其余领域按各文件与功能清单标记实现状态。数据库脚本、初始化和结构检查使用 v4，建表与结构检查已随 CI（持续集成）在 MySQL 8.4 上运行；业务联调待验证。浏览器业务路由与 TUI 的当前状态见总架构与功能清单。
 
 ## 后端目录
 
@@ -130,7 +130,7 @@ Logic 持有会话工厂，每次调用创建独立 Session，并在成功或失
 
 后端合同集中维护在本分册，总览入口为 `docs/architecture.md`，参与步骤维护在 `docs/README.md`，工程规范维护在 `docs/project-standards.md`。开发进度、设计决策和测试发现分别记录到 `docs/dev-materials-for-report/development-log.md`、`design-decisions.md` 和 `testing-notes.md`。
 
-日志公共名称由 `src/logging/__init__.py` 导出。生命周期接口在 `lifecycle.py`，操作枚举与脱敏事件在 `events.py`，固定快照读取和查询在 `snapshots.py`。密码工具由 `src/security/passwords.py` 提供。日志方法按第 11 章合同保留占位状态。
+日志公共名称由 `src/logging/__init__.py` 导出。生命周期接口在 `lifecycle.py`，操作枚举、脱敏事件与日志失败提示在 `events.py`，固定快照读取和查询在 `snapshots.py`。密码工具由 `src/security/passwords.py` 提供。日志方法按第 11 章合同保留占位状态。
 
 ## 4. 公共接口约定
 
@@ -1206,6 +1206,8 @@ def log_event(
     attendance_change: AttendanceChange | None = None,
 ) -> bool: ...
 
+def report_log_failure(operation: str, error: Exception) -> None: ...
+
 def close_logging() -> None: ...
 ```
 
@@ -1224,6 +1226,10 @@ def close_logging() -> None: ...
 - 截断标记。
 
 单条日志最大 16 KiB。密码、连接串、完整联系方式、SQL 参数、完整 SQL、体测明细和课包余额不进入日志。`GymError.message` 可作为安全消息；未知异常只记录类型和脱敏堆栈位置。
+
+`report_log_failure(operation, error)` 输出日志失败的固定提示：向标准错误写一行 `操作日志记录失败（{operation}，{异常类型名}）`，只含操作名和异常类型；标准错误流不可写时直接返回。
+
+调用方约定：日志失败不改变业务结果。`log_event` 抛出异常时，调用方捕获后以同一操作名调用 `report_log_failure`，不自行打印、记录堆栈或另写日志；返回 `False` 时固定提示已由 `log_event` 输出，调用方不重复提示。两种情况下异常都不进入业务流程。业务合同另有规定的输出除外，例如 13.4.3 的结构化更正记录。
 
 `close_logging` 刷新并释放日志文件句柄，允许重复调用。关闭失败向标准错误输出固定安全提示。
 
@@ -1850,32 +1856,42 @@ class MemberService:
 #### create_member
 
 - 权限：前台、管理员。
-- 输入：姓名去首尾空白后 1 至 100 字；phone 为 None 或去首尾空白后 1 至 32 字；request_id 为规范 UUID。
+- 输入：姓名去首尾空白后 1 至 100 字；phone 为 None 或去首尾空白后 1 至 32 字；request_id 为规范 UUID，格式在进入事务前校验（见 4.2）。
 - 返回：新建的 active 档案；相同操作者、操作名和输入重试返回原 `MemberView`。
 - 异常：PermissionDenied、InvalidInputError、ConflictError、StorageError、OutcomeUnknownError。
 - 数据变更：创建 members 和 `operation_records(operation='create_member', result_id=members.id)`；不自动创建账号或会员资格。
 - 事务：身份复核、建档和操作记录同一事务；提交结果未知时用原 request_id 调用 `get_member_by_request` 核实。核实接口仅允许原操作者和管理员，不存在或不可见抛 `NotFoundError`，操作类型不符抛 `ConflictError`。
 
+#### get_member_by_request
+
+- 权限：原操作者和管理员；其他身份按不可见处理。
+- 输入：request_id 为规范 UUID，格式在进入事务前校验（见 4.2）。
+- 返回：该编号对应的 `MemberView`。
+- 异常：InvalidInputError、NotFoundError、ConflictError、StorageError。
+- 数据变更：无。
+- 事务：只读短事务；复核身份后普通读取 `operation_records` 和原会员行，不额外加锁。
+
 #### get_member
 
 - 权限：会员只能查询与当前账号关联的档案；前台和管理员可查询全部。
 - 返回：固定 `MemberView`。
-- 异常：`NotFoundError` 用于不存在和越权，避免泄露档案存在性。
+- 异常：`NotFoundError` 用于不存在和越权，避免泄露档案存在性；member_id 不是 1 至 2^63-1 的整数时抛 `InvalidInputError`；数据库读取失败抛 `StorageError`。
 - 数据变更：无。
 
 #### list_members
 
 - 权限：会员只能得到自己的档案；前台、管理员可按条件分页。
 - 返回：按 id 升序稳定分页；空结果返回空 Page。
+- 异常：PermissionDenied 教练或缺少关联档案的会员身份；InvalidInputError 筛选或分页参数不合法；数据库读取失败抛 `StorageError`。
 - 数据变更：无。
 
 #### update_member
 
 - 权限：前台、管理员。
 - 输入：完整提交姓名和 phone。
-- 异常：PermissionDenied、NotFoundError、InvalidInputError。
+- 异常：PermissionDenied、NotFoundError、InvalidInputError、StorageError、OutcomeUnknownError。
 - 数据变更：只修改会员档案字段，不修改账号、卡和课包。
-- 事务：锁定档案，写入后返回锁内最新值。
+- 事务：锁定档案，写入后返回锁内最新值；提交结果未知时带上会员编号（record_id），界面按编号核实。
 
 #### set_member_status
 
@@ -2925,6 +2941,29 @@ class GymCardAggregate:
     duration: DurationGymCard | None
     visit: VisitGymCard | None
 ```
+
+#### 12.5.12 OperationRepository
+
+```python
+# src/db/operation_repo.py
+class OperationRepository(Protocol):
+    def __init__(self, session: Session) -> None: ...
+
+    def get_by_request(self, request_id: str) -> OperationRecord | None: ...
+
+    def create(
+        self,
+        *,
+        request_id: str,
+        actor_id: int,
+        operation: OperationName,
+        payload_hash: str,
+        result_id: int,
+    ) -> OperationRecord: ...
+```
+
+`get_by_request` 按 `request_id` 普通一致性读取 `operation_records`，未命中返回 `None`，由服务决定新建还是回放。`create` 写入操作者、操作名、内容摘要和结果编号，必须与业务记录在同一事务提交，`created_at` 由应用按 UTC 生成；插入后按请求编号回读数据库实际保存的行。`request_id` 上的唯一约束 `uq_operation_request` 拒绝后到的事务，抛出的 `IntegrityError`（MySQL 1062）由 Logic 回滚整个事务并按 12.7.3 处理。返回的 `OperationRecord` 对应 `operation_records` 的存储字段：`id、request_id、actor_id、operation、payload_hash、result_id、created_at`。
+
 ### 12.6 SQL 表、字段、约束和索引
 
 以下为 MySQL 8.4 目标结构。金额统一使用 `DECIMAL(10,2)`，业务时刻使用 UTC `DATETIME(6)`，门店业务日期使用 `DATE`。表和约束按外键依赖顺序建立。
@@ -3701,6 +3740,8 @@ CREATE TABLE operation_records (
 3. 四项完全匹配则返回胜者结果。
 4. 不匹配抛 ConflictError。
 5. 回滚后仍查不到胜者记录时抛 StorageError。
+
+会员建档不取得业务行锁（见 12.4.2），并发提交由 `operation_records` 的唯一约束 `uq_operation_request` 截断：后到的事务写入操作记录时收到唯一键重复（MySQL 1062，`IntegrityError`），Logic 回滚后换新事务重试一次。重试仍走建档用例：新事务读到胜者记录，按第 3、4 步回放结果或抛 `ConflictError`；重试仍遇到唯一键冲突时抛 `StorageError`。其他完整性错误不属于并发回放，和其他数据库错误一样转成 `StorageError`。
 
 #### 12.7.4 OutcomeUnknownError
 

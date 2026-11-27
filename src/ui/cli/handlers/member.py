@@ -56,7 +56,7 @@ class MemberHandler:
         raise NotImplementedError("MemberHandler.edit 尚未实现")
 
     def set_active(self) -> None:
-        """组织 MemberService.set_member_active 的交互步骤。
+        """组织 MemberService.set_member_status 的交互步骤。
 
         输入由 prompts 采集；成功结果交给 formatters 展示。
         异常交给 CLI 操作边界处理；取消输入不写业务数据。"""
