@@ -74,7 +74,9 @@ def test_query_logs_uses_shared_prompt_and_same_snapshot(monkeypatch):
         return captured[-1]
 
     def browse(fetch, format_page, **_):
+        # 翻两页：第二页必须仍查询打开时取得的快照，不能每页重新读取。
         fetch(PageRequest())
+        fetch(PageRequest(page=2))
 
     monkeypatch.setattr("src.ui.cli.handlers.auth.prompt_log_query", prompt)
     monkeypatch.setattr("src.ui.cli.menus.browse_pages", browse)
@@ -84,7 +86,5 @@ def test_query_logs_uses_shared_prompt_and_same_snapshot(monkeypatch):
 
     assert timezone_names == ["Asia/Shanghai"]
     assert len(captured) == 1
-    assert len(logic.query_calls) == 1
-    assert logic.query_calls[0][0].paging == PageRequest()
-    # 翻页查询必须使用打开时取得的同一份快照，不能每次重新读取。
-    assert logic.query_calls[0][1] is logic.opened
+    assert [query.paging for query, _ in logic.query_calls] == [PageRequest(), PageRequest(page=2)]
+    assert all(snapshot is logic.opened for _, snapshot in logic.query_calls)

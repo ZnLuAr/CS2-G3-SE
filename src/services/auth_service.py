@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 import re
 from typing import TYPE_CHECKING
@@ -35,7 +36,13 @@ from src.models.contracts import (
     PageRequest,
     Role,
 )
-from src.security.passwords import PASSWORD_PATTERN, hash_password, verify_password
+from src.security.passwords import (
+    PASSWORD_PATTERN,
+    hash_password,
+    prepare_dummy_hash,
+    verify_against_dummy,
+    verify_password,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -82,8 +89,12 @@ class AuthService:
     """
 
     def __init__(self, *, log_config: LogConfig) -> None:
-        """接收配置解析后的日志配置。"""
+        """接收配置解析后的日志配置；同时预热登录等时校验用的占位哈希。
+
+        预热在装配阶段完成，请求路径内不再生成哈希；哈希工具不可用抛 ResourceError。
+        """
         self._log_config = log_config
+        prepare_dummy_hash()
 
     def login(self, session: Session, username: str, password: str) -> Actor:
         """校验凭据并取得当前操作者。
@@ -92,7 +103,8 @@ class AuthService:
         密码原样处理，允许 A–Z、a–z、0–9、短横线和下划线，共 6–32 位。
         member 角色关联唯一会员档案，active 与 archived 档案均可登录；coach 角色关联启用教练档案。
         返回：Actor。不修改业务数据。
-        异常：格式、凭据、账号状态或档案关联无效时抛 AuthenticationError；存储故障抛 StorageError。
+        异常：格式、凭据、账号状态或档案关联无效时抛 AuthenticationError；
+        密码工具不可用抛 ResourceError；存储故障或密码数据损坏抛 StorageError。
         """
         if not isinstance(username, str):
             raise AuthenticationError(_AUTH_FAILED)
@@ -111,6 +123,8 @@ class AuthService:
         except SQLAlchemyError as exc:
             raise StorageError("登录失败") from exc
         if account is None:
+            # 账号不存在时也执行一次同参数的哈希校验，避免响应时间暴露账号是否存在。
+            verify_against_dummy(password)
             raise AuthenticationError(_AUTH_FAILED)
 
         if not verify_password(password, account.password_hash):
@@ -153,7 +167,7 @@ class AuthService:
 
         返回：AccountView。数据变更由调用方 Logic 在本次事务中提交。
         异常：非管理员抛 PermissionDenied；输入非法抛 InvalidInputError；
-        用户名重复抛 ConflictError；身份或存储故障按账号服务统一异常处理。
+        用户名重复抛 ConflictError；哈希工具不可用抛 ResourceError；身份或存储故障按账号服务统一异常处理。
         """
         current = self._require_admin(session, actor)
         if not isinstance(data, AccountInput):
@@ -222,8 +236,6 @@ class AuthService:
             or not 1 <= query.paging.page_size <= 100
         ):
             raise InvalidInputError("分页条件必须是第 1 页起、每页 1～100 条")
-
-        from dataclasses import replace
 
         normalized = replace(
             query,
@@ -400,7 +412,8 @@ class AuthService:
         """管理员为教练账号更换关联档案，返回最新 AccountView。
 
         输入目标账号和新教练编号；先升序锁操作者与目标账号，再升序锁旧、新教练档案。
-        同一事务释放原关联并建立新关联；教练停用抛 InvalidState，档案已关联其他账号抛 ConflictError。
+        同一事务释放原关联并建立新关联；目标已是当前关联时返回当前结果（档案已停用也返回），
+        新关联的教练停用抛 InvalidState，档案已关联其他账号抛 ConflictError。
         """
         _positive_id(account_id, "账号编号")
         _positive_id(coach_id, "教练编号")
@@ -417,10 +430,10 @@ class AuthService:
             coaches = {item.id: item for item in repository.lock_coaches(identifiers)}
             if coach_id not in coaches:
                 raise NotFoundError("教练档案不存在")
-            if not coaches[coach_id].is_active:
-                raise InvalidState("教练档案已停用")
             if current_coach_id == coach_id:
                 return self._view_for(repository, target)
+            if not coaches[coach_id].is_active:
+                raise InvalidState("教练档案已停用")
             owner = repository.get_coach_link_owner(coach_id)
             if owner is not None and owner != account_id:
                 raise ConflictError("教练档案已关联其他账号")

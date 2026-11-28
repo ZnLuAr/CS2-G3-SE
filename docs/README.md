@@ -92,6 +92,8 @@ python -m src.web.main
 
 启动成功后，Uvicorn 按 `config.json` 的 `web.host` 和 `web.port` 监听，`/docs` 提供 OpenAPI 页面。Ctrl+C 关闭 Worker 与数据库连接池。缺少签名密钥或密钥过短时，检查当前终端的 `GYM_JWT_SECRET`；连接失败或结构版本不符时，检查数据库配置并先执行 v4 初始化。登录用例已实现；启动结果不代表真实数据库和 Web 错误日志路径已验证。
 
+启动时在 `config.json` 的 `log.directory`（默认 `logs/`，相对路径以 `config.json` 所在目录为基准）生成操作日志 `app.log` 与锁文件 `app.log.lock`；日志超过 `log.max_bytes` 时轮转为 `app.log.1` 至 `app.log.<backup_count>`。`logs/` 不进入版本库，CLI 与 Web API 共用同一份日志。管理员在本机用 `python -m src.cmd.logs --config config.json` 按文件权限读取并查询日志。
+
 测试至少说明“准备了什么数据、做了什么、希望结果是什么”。例如：“姓名为空时建档被拒绝，数据库会员数量不变。”不要只写“测试通过”。把未运行的检查如实标出来。
 
 ### 启动浏览器应用

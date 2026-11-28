@@ -125,3 +125,58 @@ def test_overlong_operation_cannot_bypass_line_limit(tmp_path):
     assert len(raw_lines[-1].encode("utf-8")) <= 16 * 1024
     assert last["truncated"] is True
     assert len(last["operation"]) <= 64
+
+
+def test_log_event_returns_false_and_reports_when_write_fails(tmp_path, capsys):
+    """文件 handler 写入抛异常时 log_event 返回 False 并向 stderr 输出固定提示，不向外抛出。"""
+    configure_logging(_settings(tmp_path))
+    try:
+        file_handler = logging.getLogger("gym.app").handlers[0]
+
+        def broken_emit(record):
+            raise OSError("磁盘已满")
+
+        original_emit, file_handler.emit = file_handler.emit, broken_emit
+        try:
+            assert log_event(logging.INFO, operation="auth.login", outcome="success") is False
+        finally:
+            file_handler.emit = original_emit
+    finally:
+        close_logging()
+    assert "操作日志记录失败" in capsys.readouterr().err
+
+
+def test_rotation_keeps_backups_and_snapshot_reads_them_newest_first(tmp_path):
+    """超过 max_bytes 时轮转为 app.log.N；快照读取当前文件与全部备份，最新条目排在最前。"""
+    settings = AppSettings(
+        database=DatabaseConfig(
+            host="localhost", port=3306, database="gym", username="tester", password="",
+        ),
+        log=LogConfig(directory=tmp_path, backup_count=2, max_bytes=700),
+    )
+    configure_logging(settings)
+    try:
+        for index in range(12):
+            assert log_event(
+                logging.INFO, operation="auth.login", outcome="success", result_id=index,
+            )
+    finally:
+        close_logging()
+    names = sorted(
+        p.name for p in tmp_path.iterdir()
+        if p.name.startswith("app.log") and not p.name.endswith(".lock")
+    )
+    assert names == ["app.log", "app.log.1", "app.log.2"]
+    # 期望值直接从三个文件里的记录推导，不依赖快照结果本身，这样快照漏读任何一份备份、
+    # 或为空，都会与期望不一致。文件内按写入顺序（旧→新），备份编号越大越旧；
+    # 快照按新→旧返回，所以把「app.log.2, app.log.1, app.log」依次拼接后反转。
+    expected_ids = []
+    for name in ("app.log.2", "app.log.1", "app.log"):
+        for line in (tmp_path / name).read_text(encoding="utf-8").splitlines():
+            expected_ids.append(json.loads(line)["result_id"])
+    expected_ids.reverse()
+    assert expected_ids, "轮转后三个文件不应全部为空"
+    result_ids = [entry.result_id for entry in read_log_snapshot(tmp_path, backup_count=2).entries]
+    assert result_ids == expected_ids
+    # 备份有上限，最早的条目被丢弃；保留下来的严格按新到旧排列且没有空洞。
+    assert result_ids[0] == 11 and len(result_ids) < 12

@@ -12,18 +12,23 @@ from src.db.account_repo import AccountRepository
 from src.errors.business import (
     AuthenticationError,
     ConflictError,
+    InvalidInputError,
     InvalidState,
+    NotFoundError,
     PermissionDenied,
+    ResourceError,
 )
 from src.models.contracts import (
     AccountInput,
-    Actor,
     CoachAccountLinkInput,
     LogQuery,
     MemberAccountLinkInput,
     NamedQuery,
+    PageRequest,
 )
+from src.security import passwords
 from src.security.passwords import hash_password
+from src.services import auth_service
 from src.services.auth_service import AuthService
 
 
@@ -222,6 +227,12 @@ def test_list_accounts_filters_by_keyword_and_state(db):
     assert [item.id for item in members.items] == [3, 5]
     admins = _service().list_accounts(db, admin, NamedQuery(keyword="admin"))
     assert [item.id for item in admins.items] == [1, 2]
+    # 状态筛选与分页独立生效：停用两个会员账号后启用筛选只剩四个；每页 2 条时按编号升序切分。
+    db.execute(text("UPDATE accounts SET is_active = 0 WHERE id IN (3, 5)"))
+    active = _service().list_accounts(db, admin, NamedQuery(is_active=True))
+    assert [item.id for item in active.items] == [1, 2, 4, 6] and active.total == 4
+    page2 = _service().list_accounts(db, admin, NamedQuery(paging=PageRequest(page=2, page_size=2)))
+    assert [item.id for item in page2.items] == [3, 4] and page2.total == 6
 
 
 def test_first_coach_link_creates_link_and_repeat_returns_current_result(db):
@@ -277,3 +288,165 @@ def test_transferred_profile_invalidates_admin_operations_for_stale_actor(db):
         _service().get_account(db, member, 1)
     with pytest.raises(AuthenticationError):
         _service().set_account_active(db, member, 5, False)
+
+
+def _assert_rejected_after_one_hash(monkeypatch, service, db, username, password):
+    """登录被拒且恰好执行一次 Argon2 校验：所有失败分支响应时间一致。"""
+    calls = []
+    real_verify = auth_service.verify_password
+
+    def counting_verify(password, password_hash):
+        calls.append(password)
+        return real_verify(password, password_hash)
+
+    monkeypatch.setattr(auth_service, "verify_password", counting_verify)
+    with pytest.raises(AuthenticationError):
+        service.login(db, username, password)
+    assert len(calls) == 1
+
+
+def test_login_rejects_inactive_account_and_profile_mismatches(db, monkeypatch):
+    """账号停用、档案停用或关联形状不符时都抛 AuthenticationError，且都先跑一次密码校验。
+
+    每个拒绝分支都必须在 Argon2 之后返回：若某个分支提前返回，响应时间会比
+    密码错误分支短，可据此判断账号状态。 AuthService 直接绑定 verify_password，
+    所以计数器要打在 auth_service 模块上。
+    """
+    service = _service()
+    db.execute(text("UPDATE accounts SET is_active = 0 WHERE id = 1"))
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "admin_1", "admin_1")
+    db.execute(text("UPDATE accounts SET is_active = 1 WHERE id = 1"))
+
+    # 教练账号关联的教练档案停用后不能登录。
+    db.execute(text("UPDATE coaches SET is_active = 0 WHERE id = 20"))
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "coach_1", "coach_1")
+    db.execute(text("UPDATE coaches SET is_active = 1 WHERE id = 20"))
+
+    # 会员账号同时带教练关联：身份不变量被破坏。
+    db.execute(text(
+        "INSERT INTO coach_account_links VALUES (3, 22, :now, 1)"
+    ), {"now": datetime.now(timezone.utc)})
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "member_1", "member_1")
+    db.execute(text("DELETE FROM coach_account_links WHERE account_id = 3"))
+
+    # 教练账号没有关联档案。
+    db.execute(text("DELETE FROM coach_account_links WHERE account_id = 4"))
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "coach_1", "coach_1")
+    db.execute(text(
+        "INSERT INTO coach_account_links VALUES (4, 20, :now, 1)"
+    ), {"now": datetime.now(timezone.utc)})
+
+    # 未知角色不能按管理员放行。
+    db.execute(text("UPDATE accounts SET role = 'owner' WHERE id = 1"))
+    _assert_rejected_after_one_hash(monkeypatch, service, db, "admin_1", "admin_1")
+
+
+def test_unknown_username_still_runs_password_hashing(db, monkeypatch):
+    """账号不存在时也执行一次哈希校验，响应时间不随账号是否存在而变化。"""
+    calls = []
+    real_verify = passwords.verify_password
+
+    def counting_verify(password, password_hash):
+        calls.append(password_hash)
+        return real_verify(password, password_hash)
+
+    monkeypatch.setattr(passwords, "verify_password", counting_verify)
+    with pytest.raises(AuthenticationError):
+        _service().login(db, "nobody_here", "whatever_1")
+    assert len(calls) == 1
+
+
+def test_dummy_hash_is_prepared_before_login_requests(db, monkeypatch):
+    """占位哈希在 AuthService 构造时生成；请求路径内只校验、不生成哈希。
+
+    若留到请求内惰性生成，进程内第一个账号不存在的请求会多一次 Argon2 运算，
+    耗时仍可与其他请求区分。
+    """
+    monkeypatch.setattr(passwords, "_DUMMY_HASH", None)
+    service = _service()
+    assert passwords._DUMMY_HASH is not None
+
+    hashes: list[str] = []
+    real_hash = passwords.hash_password
+
+    def counting_hash(password):
+        hashes.append(password)
+        return real_hash(password)
+
+    monkeypatch.setattr(passwords, "hash_password", counting_hash)
+    with pytest.raises(AuthenticationError):
+        service.login(db, "nobody_here", "whatever_1")
+    with pytest.raises(AuthenticationError):
+        service.login(db, "nobody_here_2", "whatever_1")
+    assert hashes == []
+
+
+def test_verify_against_dummy_requires_preparation(monkeypatch):
+    """未预热时 verify_against_dummy 抛 ResourceError，而不是在请求内生成哈希。"""
+    monkeypatch.setattr(passwords, "_DUMMY_HASH", None)
+    with pytest.raises(ResourceError):
+        passwords.verify_against_dummy("whatever_1")
+
+
+def test_link_rejects_account_with_wrong_role(db):
+    """会员档案只能关联会员账号，教练档案只能关联教练账号。"""
+    admin = _service().login(db, "admin_1", "admin_1")
+    with pytest.raises(InvalidState):
+        _service().link_member(
+            db, admin, MemberAccountLinkInput(account_id=1, member_id=11),
+        )
+    with pytest.raises(InvalidState):
+        _service().link_coach(
+            db, admin, CoachAccountLinkInput(account_id=3, coach_id=22),
+        )
+
+
+def test_repeating_same_relink_after_deactivation_returns_current_result(db):
+    """对已停用教练重复提交相同移交仍返回当前结果，与 link_coach 一致。"""
+    admin = _service().login(db, "admin_1", "admin_1")
+    db.execute(text("UPDATE coaches SET is_active = 0 WHERE id = 20"))
+    view = _service().relink_coach(db, admin, 4, 20)
+    assert view.coach_id == 20
+    # 换成另一名停用教练才是新的关联，应当拒绝。
+    with pytest.raises(InvalidState, match="教练档案已停用"):
+        _service().relink_coach(db, admin, 4, 21)
+
+
+def test_log_query_denies_non_admin(db, tmp_path):
+    """open_log_snapshot 与 query_logs 都只允许管理员。"""
+    (tmp_path / "app.log").write_text("", encoding="utf-8")
+    service = AuthService(log_config=LogConfig(directory=tmp_path))
+    member = service.login(db, "member_1", "member_1")
+    with pytest.raises(PermissionDenied):
+        service.open_log_snapshot(db, member)
+    admin = service.login(db, "admin_1", "admin_1")
+    snapshot = service.open_log_snapshot(db, admin)
+    with pytest.raises(PermissionDenied):
+        service.query_logs(db, member, LogQuery(), snapshot=snapshot)
+
+
+@pytest.mark.parametrize(
+    ("call", "error"),
+    [
+        pytest.param(lambda s, a, db: s.create_account(
+            db, a, AccountInput(username="role_x", password="secret_1", role="owner"),
+        ), InvalidInputError, id="create-role"),
+        pytest.param(lambda s, a, db: s.set_account_active(db, a, 5, "yes"), InvalidInputError, id="active-type"),
+        pytest.param(lambda s, a, db: s.get_account(db, a, True), InvalidInputError, id="id-bool"),
+        pytest.param(lambda s, a, db: s.get_account(db, a, 999), NotFoundError, id="account-missing"),
+        pytest.param(lambda s, a, db: s.set_account_active(db, a, 999, False), NotFoundError, id="target-missing"),
+        pytest.param(lambda s, a, db: s.link_member(
+            db, a, MemberAccountLinkInput(account_id=5, member_id=999),
+        ), NotFoundError, id="member-missing"),
+        pytest.param(lambda s, a, db: s.link_coach(
+            db, a, CoachAccountLinkInput(account_id=6, coach_id=999),
+        ), NotFoundError, id="coach-missing"),
+        pytest.param(lambda s, a, db: s.relink_member(db, a, 5, 999), NotFoundError, id="relink-member-missing"),
+        pytest.param(lambda s, a, db: s.relink_coach(db, a, 6, 999), NotFoundError, id="relink-coach-missing"),
+    ],
+)
+def test_service_rejects_invalid_inputs_and_missing_records(db, call, error):
+    """输入校验分支与 NotFoundError 分支按合同 9.2 抛出对应异常。"""
+    admin = _service().login(db, "admin_1", "admin_1")
+    with pytest.raises(error):
+        call(_service(), admin, db)
